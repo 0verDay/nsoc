@@ -3,7 +3,7 @@
 前身为soul of card，是一款卡牌+战棋对战游戏，原仓库在：
 
 ```
-
+https://github.com/qfwj-lyy/soc
 ```
 
 现依据ai进行重置，当前游戏名可能不是最终版游戏名
