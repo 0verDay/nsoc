@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="game-container">
+        <div class="health-ui enemy-health" id="enemyHealth"><span id="enemyHealthValue">30</span></div>
+        <button class="end-turn-btn" id="endTurnBtn">结束回合</button>
+        <div class="top-grid grid-3x3">
+            <div class="cell" data-row="0" data-col="0"></div>
+            <div class="cell" data-row="0" data-col="1"></div>
+            <div class="cell" data-row="0" data-col="2"></div>
+            <div class="cell" data-row="1" data-col="0"></div>
+            <div class="cell" data-row="1" data-col="1"></div>
+            <div class="cell" data-row="1" data-col="2"></div>
+            <div class="cell" data-row="2" data-col="0"></div>
+            <div class="cell" data-row="2" data-col="1"></div>
+            <div class="cell" data-row="2" data-col="2"></div>
+        </div>
+        <div class="bottom-grid grid-3x3">
+            <div class="cell" data-row="3" data-col="0"></div>
+            <div class="cell" data-row="3" data-col="1"></div>
+            <div class="cell" data-row="3" data-col="2"></div>
+            <div class="cell" data-row="4" data-col="0"></div>
+            <div class="cell" data-row="4" data-col="1"></div>
+            <div class="cell" data-row="4" data-col="2"></div>
+            <div class="cell" data-row="5" data-col="0"></div>
+            <div class="cell" data-row="5" data-col="1"></div>
+            <div class="cell" data-row="5" data-col="2"></div>
+        </div>
+        <div class="bottom-bar">
+            <div class="player-info">
+                <div class="player-health" id="playerHealth"><span id="playerHealthValue">30</span></div>
+                <div class="indicator-panel" id="indicatorPanel">指示</div>
+            </div>
+            <div class="card-area" id="cardArea"></div>
+        </div>
+    </div>
+    <script src="player_config.js"></script>
+    <script src="test_card.js"></script>
+    <script src="test_level_config.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
