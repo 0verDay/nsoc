@@ -1,8 +1,8 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://lwjsappnycks"]
 
-[ext_resource type="Script" path="res://scripts/main.gd" id="1_m5jxw"]
+[ext_resource type="Script" uid="uid://d2h36dq3c0iij" path="res://scripts/main.gd" id="1_m5jxw"]
 
-[node name="Main" type="Control"]
+[node name="Main" type="Control" unique_id=801146258]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -11,7 +11,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_m5jxw")
 
-[node name="Bg" type="Panel" parent="."]
+[node name="Bg" type="Panel" parent="." unique_id=713701461]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -19,14 +19,18 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="EnemyHpPnl" type="Panel" parent="."]
-layout_mode = 0
-offset_left = 210.0
+[node name="EnemyHpPnl" type="Panel" parent="." unique_id=1348457210]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -40.0
 offset_top = 15.0
-offset_right = 290.0
+offset_right = 40.0
 offset_bottom = 55.0
+grow_horizontal = 2
 
-[node name="EnemyHealthLabel" type="Label" parent="EnemyHpPnl"]
+[node name="EnemyHealthLabel" type="Label" parent="EnemyHpPnl" unique_id=1092376193]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -39,14 +43,18 @@ text = "30"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="TopGridBg" type="Panel" parent="."]
-layout_mode = 0
-offset_left = 125.0
+[node name="TopGridBg" type="Panel" parent="." unique_id=1039800972]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -125.0
 offset_top = 90.0
-offset_right = 375.0
+offset_right = 125.0
 offset_bottom = 340.0
+grow_horizontal = 2
 
-[node name="TopGrid" type="GridContainer" parent="TopGridBg"]
+[node name="TopGrid" type="GridContainer" parent="TopGridBg" unique_id=2017633900]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -63,14 +71,18 @@ theme_override_constants/h_separation = 10
 theme_override_constants/v_separation = 10
 columns = 3
 
-[node name="BottomGridBg" type="Panel" parent="."]
-layout_mode = 0
-offset_left = 125.0
+[node name="BottomGridBg" type="Panel" parent="." unique_id=197458544]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -125.0
 offset_top = 350.0
-offset_right = 375.0
+offset_right = 125.0
 offset_bottom = 600.0
+grow_horizontal = 2
 
-[node name="BottomGrid" type="GridContainer" parent="BottomGridBg"]
+[node name="BottomGrid" type="GridContainer" parent="BottomGridBg" unique_id=1284809393]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -87,21 +99,28 @@ theme_override_constants/h_separation = 10
 theme_override_constants/v_separation = 10
 columns = 3
 
-[node name="BottomBar" type="Panel" parent="."]
-layout_mode = 0
-offset_left = 10.0
-offset_top = 610.0
-offset_right = 490.0
-offset_bottom = 740.0
+[node name="BottomBar" type="Panel" parent="." unique_id=149762453]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -240.0
+offset_top = -140.0
+offset_right = 240.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 0
 
-[node name="PHpPnl" type="Panel" parent="BottomBar"]
+[node name="PHpPnl" type="Panel" parent="BottomBar" unique_id=2043617128]
 layout_mode = 0
 offset_left = 15.0
 offset_top = 10.0
 offset_right = 80.0
 offset_bottom = 60.0
 
-[node name="PlayerHealthLabel" type="Label" parent="BottomBar/PHpPnl"]
+[node name="PlayerHealthLabel" type="Label" parent="BottomBar/PHpPnl" unique_id=2079591640]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -114,14 +133,14 @@ text = "30"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="ManaPnl" type="Panel" parent="BottomBar"]
+[node name="ManaPnl" type="Panel" parent="BottomBar" unique_id=613423958]
 layout_mode = 0
 offset_left = 15.0
 offset_top = 75.0
 offset_right = 80.0
 offset_bottom = 120.0
 
-[node name="ManaLabel" type="Label" parent="BottomBar/ManaPnl"]
+[node name="ManaLabel" type="Label" parent="BottomBar/ManaPnl" unique_id=302280237]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -134,7 +153,7 @@ text = "10"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="HandClip" type="Control" parent="BottomBar"]
+[node name="HandClip" type="Control" parent="BottomBar" unique_id=1162785072]
 layout_mode = 1
 anchors_preset = 0
 offset_left = 90.0
@@ -142,7 +161,7 @@ offset_top = 10.0
 offset_right = 380.0
 offset_bottom = 120.0
 
-[node name="HandContainer" type="HBoxContainer" parent="BottomBar/HandClip"]
+[node name="HandContainer" type="HBoxContainer" parent="BottomBar/HandClip" unique_id=350133975]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -152,7 +171,7 @@ grow_vertical = 2
 theme_override_constants/separation = 10
 alignment = 1
 
-[node name="EndTurnBtn" type="Button" parent="BottomBar"]
+[node name="EndTurnBtn" type="Button" parent="BottomBar" unique_id=337214859]
 layout_mode = 0
 offset_left = 395.0
 offset_top = 10.0

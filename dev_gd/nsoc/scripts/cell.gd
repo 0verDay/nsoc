@@ -88,6 +88,9 @@ func clear_card():
 	inner_panel.scale = Vector2.ONE
 	inner_panel.modulate.a = 1.0
 	
+	if get_tree() and get_tree().current_scene and get_tree().current_scene.has_method("update_phantoms"):
+		get_tree().current_scene.update_phantoms()
+	
 func play_damage_effect():
 	inner_panel.self_modulate = Color("#ffc9c9") if is_enemy else Color("#ffe3e3")
 	if get_tree():

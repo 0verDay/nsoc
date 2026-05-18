@@ -1,8 +1,9 @@
 extends Control
 
 const MIN_HAND_SIZE = 5
-const MAX_MANA = 10
-var current_mana = 10
+const MAX_MANA_CAP = 10
+var max_mana = 1
+var current_mana = 1
 var card_counter = 1
 
 var player_health = 30
@@ -56,6 +57,7 @@ func _ready():
 	_init_units()
 	update_phantoms()
 	ensure_min_hand_size()
+	update_mana()
 	end_turn_btn.pressed.connect(_on_end_turn_pressed)
 
 func _load_game_data():
@@ -194,16 +196,20 @@ func apply_damage_to_hero(is_enemy, damage):
 		tween.tween_property(pnl, "self_modulate", Color.WHITE, 0.5)
 
 func update_mana():
-	mana_label.text = str(current_mana)
+	mana_label.text = str(current_mana) + "/" + str(max_mana)
 
 func _on_end_turn_pressed():
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "行动中"
-	current_mana = MAX_MANA
-	update_mana()
 	is_action_running = true
 	await run_turn_sequence()
 	is_action_running = false
+	
+	if max_mana < MAX_MANA_CAP:
+		max_mana += 1
+	current_mana = max_mana
+	update_mana()
+	
 	end_turn_btn.disabled = false
 	end_turn_btn.text = "结束回合"
 	
