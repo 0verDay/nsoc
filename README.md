@@ -1,5 +1,7 @@
 # nsoc
 
+neo soul of card
+
 前身为soul of card，是一款卡牌+战棋对战游戏，原仓库在：
 
 ```
