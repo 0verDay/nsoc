@@ -1,0 +1,8 @@
+{
+  "player": {
+    "health": 30
+  },
+  "enemy": {
+    "health": 30
+  }
+}

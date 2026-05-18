@@ -7,7 +7,8 @@ html, body {
     justify-content: center;
     align-items: center;
     overflow: hidden;
-    background: #f0f0f0;
+    background: #f7f9fa; /* 轻量化清爽浅色背景 */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 .game-wrapper {
     width: 100%;
@@ -17,100 +18,116 @@ html, body {
     align-items: center;
 }
 .game-container {
-    width: 400px;
-    height: 600px;
-    border: 2px solid #333;
+    width: 500px;
+    height: 750px;
+    border: 1px solid #e1e8ed;
+    border-radius: 24px;
     position: relative;
-    background: #fff;
+    background: #ffffff;
+    background-image: radial-gradient(circle at 100% 100%, #f0f3f5 0%, transparent 60%), radial-gradient(circle at 0% 0%, #f0f3f5 0%, transparent 60%);
     transform-origin: center center;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.08); /* 柔和的弥散阴影 */
 }
 .grid-3x3 {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     grid-template-rows: repeat(3, 1fr);
     gap: 3%;
-    padding: 5%;
-    background: #eee;
-    border-radius: 8px;
+    padding: 4%;
+    background: #f0f3f5;
+    border: 1px solid #e1e8ed;
+    border-radius: 16px;
     width: 45%;
     aspect-ratio: 1;
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
+    box-sizing: border-box;
 }
 .cell {
-    background: #fff;
-    border: 2px solid #ccc;
-    border-radius: 4px;
+    background: #ffffff;
+    border: 2px dashed #d1d9e0;
+    border-radius: 12px;
     display: flex;
     justify-content: center;
     align-items: flex-start;
     padding-top: 8%;
     font-size: 55%;
-    font-weight: bold;
-    color: #333;
+    font-weight: 600;
+    color: #aab8c2;
     overflow: hidden;
     flex-shrink: 0;
     position: relative;
+    transition: background-color 0.2s, border-color 0.2s;
 }
 .cell.has-card {
-    background: #fff;
-    border: 2px solid #333;
-    border-radius: 4px;
+    background: #ffffff;
+    border: 1px solid #e1e8ed;
+    border-radius: 12px;
+    color: #495057;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05); /* 轻微悬浮感 */
 }
 .cell-attack {
     position: absolute;
-    bottom: 2px;
-    left: 2px;
-    background: #e74c3c;
+    bottom: 4px;
+    left: 4px;
+    background: #ff6b6b;
     color: white;
-    border-radius: 3px;
-    padding: 1px 3px;
+    border-radius: 8px;
+    padding: 2px 6px;
     font-size: 8px;
+    font-weight: 600;
 }
 .cell-health {
     position: absolute;
-    bottom: 2px;
-    right: 2px;
-    background: #2ecc71;
+    bottom: 4px;
+    right: 4px;
+    background: #51cf66;
     color: white;
-    border-radius: 3px;
-    padding: 1px 3px;
+    border-radius: 8px;
+    padding: 2px 6px;
     font-size: 8px;
+    font-weight: 600;
 }
 .cell.enemy-card {
-    background: #999 !important;
+    background: #fff5f5 !important;
+    border-color: #ffc9c9;
+    color: #fa5252;
 }
 .cell.attacking {
-    background: #ff4444 !important;
+    background: #ffe3e3 !important;
     transition: background 0.1s ease-in;
 }
 .cell.attacked {
-    background: #ff8888 !important;
+    background: #ffc9c9 !important;
     transition: background 0.5s ease-out;
 }
 .health-ui.attacking, .player-health.attacking {
-    background: #ff4444 !important;
-    transition: background 0.1s ease-in;
+    background: #ffe3e3 !important;
+    color: #fa5252;
+    transition: background 0.1s ease-in, color 0.1s;
 }
 .health-ui.attacked, .player-health.attacked {
-    background: #ff8888 !important;
-    transition: background 0.5s ease-out;
+    background: #ffc9c9 !important;
+    color: #fa5252;
+    transition: background 0.5s ease-out, color 0.5s;
 }
 .top-grid {
-    top: 8%;
+    top: 13%;
 }
 .bottom-grid {
-    bottom: 20%;
+    bottom: 22%;
 }
 .health-ui {
     position: absolute;
-    padding: 2% 4%;
-    background: #222;
-    color: #fff;
-    border-radius: 8px;
-    font-size: 4%;
-    font-weight: bold;
+    padding: 3% 6%;
+    background: #ffffff;
+    color: #ff6b6b;
+    border-radius: 30px;
+    border: 2px solid #ff6b6b;
+    font-size: 5%;
+    font-weight: 800;
+    box-shadow: 0 4px 12px rgba(255, 107, 107, 0.15);
 }
 .enemy-health {
     top: 2%;
@@ -118,139 +135,174 @@ html, body {
     transform: translateX(-50%);
 }
 .end-turn-btn {
-    position: absolute;
-    top: 2%;
-    right: 2%;
-    padding: 2% 4%;
-    background: #ff6b6b;
-    color: white;
+    height: 100%;
+    width: 15%;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #339af0;
+    color: #fff;
     border: none;
-    border-radius: 8px;
-    font-size: 4%;
-    font-weight: bold;
+    border-radius: 12px;
+    font-size: 5%;
+    font-weight: 700;
     cursor: pointer;
+    box-shadow: 0 4px 12px rgba(51, 154, 240, 0.25);
+    transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+    box-sizing: border-box;
+}
+.end-turn-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(51, 154, 240, 0.35);
+    background: #228be6;
+}
+.end-turn-btn:active {
+    transform: translateY(1px);
+    box-shadow: 0 2px 6px rgba(51, 154, 240, 0.25);
 }
 .bottom-bar {
     position: absolute;
     bottom: 2%;
-    left: 2%;
+    left: 2%; /* 向左右留出了更多的容纳空间 */
     right: 2%;
-    height: 12%;
+    height: 18%; /* 稍微加高底栏 */
     display: flex;
     align-items: center;
-    gap: 3%;
+    gap: 4%; /* 加大了卡牌区与左右UI的间距，防止重叠 */
+    background: rgba(240, 243, 245, 0.85); /* 半透明浅灰 */
+    backdrop-filter: blur(8px); /* 磨砂玻璃效果 */
+    padding: 3%;
+    border-radius: 20px;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.6);
 }
 .player-info {
-    width: 12%;
+    width: 15%;
     height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 2%;
+    gap: 8%;
 }
 .player-health {
     width: 100%;
-    height: 50%;
+    height: 46%;
     display: flex;
     justify-content: center;
     align-items: center;
-    background: #222;
-    color: #fff;
-    border-radius: 8px;
+    background: #ffffff;
+    color: #ff6b6b;
+    border-radius: 12px;
+    border: 1.5px solid #ff6b6b;
     font-size: 5%;
-    font-weight: bold;
+    font-weight: 800;
+    box-shadow: 0 2px 8px rgba(255, 107, 107, 0.1);
 }
 .indicator-panel {
     width: 100%;
-    height: 50%;
+    height: 46%;
     display: flex;
     justify-content: center;
     align-items: center;
-    background: #444;
-    color: #fff;
-    border-radius: 8px;
+    background: #ffffff;
+    color: #339af0;
+    border-radius: 12px;
+    border: 1.5px solid #339af0;
     font-size: 5%;
-    font-weight: bold;
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(51, 154, 240, 0.1);
 }
 .card-area {
     flex: 1;
     height: 100%;
     display: flex;
-    gap: 3%;
-    justify-content: center;
-    align-items: center;
-    padding: 2%;
-    background: #ddd;
-    border-radius: 8px;
+    gap: 2%;
+    justify-content: center; /* 居中排放手牌 */
+    align-items: center; /* 改为中间对齐，因为现在卡牌会绝对随着底栏变高变小 */
+    background: transparent;
+    overflow: visible; /* 恢复可见溢出，防止卡牌弹起时被截断 */
+    padding: 0;
 }
 .card {
-    width: 14%;
-    height: 90%;
-    background: #fff;
-    border: 2px solid #333;
-    border-radius: 4px;
+    flex: 1; /* 让所有卡牌平分剩下的宽度！这是保证它们完全一样大的神级属性 */
+    max-width: 65px; /* 限制最大宽度，防止只有1-2张牌时变得巨大 */
+    height: auto; /* 让高度根据宽度自动生成 */
+    aspect-ratio: 2 / 3; /* 维持竖直长方形比例 */
+    background: #ffffff;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px; /* 让卡牌边缘稍显锐利，更像真牌 */
     display: flex;
     flex-direction: column;
     justify-content: space-between;
     align-items: center;
     font-size: 10px;
-    font-weight: bold;
+    font-weight: 600;
+    color: #495057;
     cursor: grab;
     user-select: none;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
     position: relative;
     padding: 2px;
     box-sizing: border-box;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.1);
 }
 .card:active {
     cursor: grabbing;
 }
 .card.dragging {
-    opacity: 0.5;
-    transform: scale(1.1);
+    opacity: 0.6;
+    transform: scale(1.05);
 }
 .card-cost {
     position: absolute;
-    top: 2px;
-    right: 2px;
-    background: #3498db;
+    top: -4px;
+    right: -4px;
+    background: #339af0;
     color: white;
     border-radius: 50%;
-    width: 14px;
-    height: 14px;
+    width: 18px;
+    height: 18px;
     display: flex;
     justify-content: center;
     align-items: center;
-    font-size: 9px;
+    font-size: 10px;
+    font-weight: 700;
+    box-shadow: 0 2px 6px rgba(51, 154, 240, 0.3);
 }
 .card-name {
-    margin-top: 12px;
-    font-size: 9px;
+    margin-top: 14px;
+    font-size: 10px;
     text-align: center;
 }
 .card-attack {
     position: absolute;
     bottom: 2px;
     left: 2px;
-    background: #e74c3c;
+    background: #ff6b6b;
     color: white;
-    border-radius: 3px;
-    padding: 1px 3px;
-    font-size: 8px;
+    border-radius: 6px;
+    padding: 2px 4px;
+    font-size: 9px;
+    font-weight: 700;
 }
 .card-health {
     position: absolute;
     bottom: 2px;
     right: 2px;
-    background: #2ecc71;
+    background: #51cf66;
     color: white;
-    border-radius: 3px;
-    padding: 1px 3px;
-    font-size: 8px;
+    border-radius: 6px;
+    padding: 2px 4px;
+    font-size: 9px;
+    font-weight: 700;
 }
 .cell.drop-target {
-    background: #aaf;
-    border-color: #44f;
+    background: #e7f5ff;
+    border-color: #74c0fc;
 }
 #moving-card {
     position: fixed !important;
@@ -259,12 +311,12 @@ html, body {
     align-items: flex-start !important;
     padding: 8% 2% 2% 2% !important;
     font-size: 12px !important;
-    font-weight: bold !important;
+    font-weight: 700 !important;
     color: #333 !important;
-    background: #fff !important;
-    border: 2px solid #333 !important;
-    border-radius: 4px !important;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+    background: #ffffff !important;
+    border: 1px solid #e1e8ed !important;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 32px rgba(0,0,0,0.12) !important;
     cursor: default !important;
     user-select: none !important;
     white-space: normal !important;
@@ -274,11 +326,13 @@ html, body {
     z-index: 1000 !important;
 }
 
-@media (max-width: 400px), (max-height: 600px) {
+@media (max-width: 500px), (max-height: 750px) {
     .game-container {
         width: 100vw;
         height: calc(100vw * 1.5);
         max-height: 100vh;
         max-width: calc(100vh / 1.5);
+        border: none;
+        border-radius: 0;
     }
 }

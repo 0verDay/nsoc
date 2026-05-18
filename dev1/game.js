@@ -118,43 +118,40 @@ function drop(e) {
     }
 }
 
+function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
 function lerp(start, end, t) {
     return start + (end - start) * t;
 }
 
-function createMovingCard(cellText, width, height, isEnemy = false) {
+function createMovingCard(innerHTML, width, height, isEnemy = false) {
     const card = document.createElement('div');
     
     const style = card.style;
     style.position = 'fixed';
     style.width = width + 'px';
     style.height = height + 'px';
-    style.minWidth = width + 'px';
-    style.maxWidth = width + 'px';
-    style.minHeight = height + 'px';
-    style.maxHeight = height + 'px';
     style.boxSizing = 'border-box';
     style.overflow = 'hidden';
-    style.background = isEnemy ? '#999' : '#fff';
-    style.border = '2px solid #333';
-    style.borderRadius = '4px';
+    
+    // 更贴近轻量化的样式
+    style.background = isEnemy ? '#fff5f5' : '#ffffff';
+    style.border = isEnemy ? '1px solid #ffc9c9' : '1px solid #e1e8ed';
+    style.color = isEnemy ? '#fa5252' : '#495057';
+    style.borderRadius = '12px';
     style.display = 'flex';
     style.justifyContent = 'center';
     style.alignItems = 'flex-start';
     style.paddingTop = Math.floor(height * 0.08) + 'px';
-    style.fontSize = '12px';
-    style.fontWeight = 'bold';
-    style.fontFamily = 'sans-serif';
-    style.color = '#333';
-    style.lineHeight = '1.2';
-    style.textAlign = 'center';
-    style.wordBreak = 'break-word';
-    style.whiteSpace = 'normal';
+    style.fontSize = '55%';
+    style.fontWeight = '600';
     style.zIndex = '1000';
-    style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+    style.boxShadow = '0 10px 24px rgba(0,0,0,0.1)';
     style.margin = '0';
     
-    card.textContent = cellText;
+    card.innerHTML = innerHTML;
     
     return card;
 }
@@ -272,11 +269,12 @@ function animateCardMove(card, startRow, startCol, endRow, endCol, duration = 50
         const startRect = startCell.getBoundingClientRect();
         const endRect = endCell.getBoundingClientRect();
         
+        const innerHTML = startCell.innerHTML;
         const cardText = startCell.querySelector('.cell-text').textContent;
         const cardAttack = startCell.dataset.attack;
         const cardHealth = startCell.dataset.health;
         const isEnemy = startCell.dataset.isEnemy;
-        const movingCard = createMovingCard(cardText, startRect.width, startRect.height, isEnemy === "true");
+        const movingCard = createMovingCard(innerHTML, startRect.width, startRect.height, isEnemy === "true");
         
         movingCard.style.left = startRect.left + 'px';
         movingCard.style.top = startRect.top + 'px';
@@ -295,12 +293,17 @@ function animateCardMove(card, startRow, startCol, endRow, endCol, duration = 50
         function animate(currentTime) {
             const elapsed = currentTime - startTime;
             const t = Math.min(elapsed / duration, 1);
+            const easeT = easeInOutCubic(t);
             
-            const currentX = lerp(startRect.left, endRect.left, t);
-            const currentY = lerp(startRect.top, endRect.top, t);
+            const currentX = lerp(startRect.left, endRect.left, easeT);
+            const currentY = lerp(startRect.top, endRect.top, easeT);
+            
+            // 添加跳跃缩放效果：在移动到中间时放大
+            const scale = 1 + Math.sin(easeT * Math.PI) * 0.15;
             
             movingCard.style.left = currentX + 'px';
             movingCard.style.top = currentY + 'px';
+            movingCard.style.transform = `scale(${scale})`;
             
             if (t < 1) {
                 requestAnimationFrame(animate);

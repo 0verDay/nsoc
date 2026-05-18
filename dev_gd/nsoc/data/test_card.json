@@ -1,0 +1,18 @@
+[
+  {
+    "name": "blanket",
+    "type": "单位",
+    "cost": 1,
+    "health": 1,
+    "attack": 1,
+    "count": 5
+  },
+  {
+    "name": "pro",
+    "type": "单位",
+    "cost": 2,
+    "health": 2,
+    "attack": 2,
+    "count": 3
+  }
+]
