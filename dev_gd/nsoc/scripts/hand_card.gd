@@ -56,18 +56,11 @@ func _on_mouse_exit() -> void:
 		tween.tween_property(self, "scale", Vector2.ONE, 0.1)
 
 func _process(_delta) -> void:
-	# 通过 Engine 取 autoload 状态；无需依赖 current_scene。
 	var locked := _is_action_running()
 	mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN if locked else Control.CURSOR_ARROW
 
 func _is_action_running() -> bool:
-	# Game.turn 中可以加 is_running 字段；现在 main 仍有 is_action_running，通过 root 节点取。
-	var loop := Engine.get_main_loop()
-	if loop is SceneTree:
-		var main = (loop as SceneTree).current_scene
-		if main and "is_action_running" in main:
-			return main.is_action_running
-	return false
+	return Game.turn.is_running
 
 func setup(data, id: int) -> void:
 	card_data = data
@@ -111,7 +104,7 @@ func _get_drag_data(_pos):
 	pl.text = name_lbl.text
 	pl.add_theme_color_override("font_color", Color("#339af0"))
 	pl.add_theme_font_size_override("font_size", 24)
-	pl.set_anchors_preset(PRESET_FULL_RECT)
+	pl.set_anchors_preset(PRESET_FULL_RECT, false)
 	pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	preview.add_child(pl)

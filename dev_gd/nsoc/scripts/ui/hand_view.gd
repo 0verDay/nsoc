@@ -25,9 +25,15 @@ func ensure_min_hand_size() -> void:
 		var c = _hand_card_scene.instantiate()
 		_container.add_child(c)
 		c.setup(data, _card_counter)
-		# cell/hand_card 通过信号上报长按
+		# 信号链式转发：hand_card 的信号直接调用 HandView 的 emit（无 lambda 闭包，便于 GC）
 		if c.has_signal("long_press_requested"):
-			c.long_press_requested.connect(func(d): hand_card_long_press_requested.emit(d))
+			c.long_press_requested.connect(_on_card_long_press_requested)
 		if c.has_signal("long_press_canceled"):
-			c.long_press_canceled.connect(func(): hand_card_long_press_canceled.emit())
+			c.long_press_canceled.connect(_on_card_long_press_canceled)
 		_card_counter += 1
+
+func _on_card_long_press_requested(data) -> void:
+	hand_card_long_press_requested.emit(data)
+
+func _on_card_long_press_canceled() -> void:
+	hand_card_long_press_canceled.emit()

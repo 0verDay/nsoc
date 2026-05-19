@@ -8,8 +8,6 @@ extends Control
 #
 # 业务全部委托给 GameContext (autoload "Game") + Effects 注册表 + UI 控制器。
 
-var is_action_running: bool = false       # 兼容 hand_card.gd 读取
-
 @onready var hand_container = $BottomBar/HandClip/HandContainer
 @onready var enemy_health_label = $EnemyHpPnl/EnemyHealthLabel
 @onready var player_health_label = $BottomBar/PHpPnl/PlayerHealthLabel
@@ -52,6 +50,7 @@ func _ready() -> void:
 	# 业务控制器
 	play_controller = PlayController.new(); play_controller.name = "PlayController"; add_child(play_controller)
 	play_controller.setup(self, cell_scene)
+	Game.play = play_controller
 
 	combat = CombatSystem.new(); combat.name = "Combat"; add_child(combat)
 	combat.setup(self, cell_scene, play_controller, Callable(self, "_resolve_hero_panel"))
@@ -79,6 +78,7 @@ func _ready() -> void:
 # ---------------- 信号连接 ----------------
 func _wire_signals() -> void:
 	Game.hero.health_changed.connect(_on_hero_health_changed)
+	Game.hero.hero_died.connect(_on_hero_died)
 	Game.mana.mana_changed.connect(_on_mana_changed)
 
 	end_turn_btn.pressed.connect(_on_end_turn_pressed)
@@ -107,14 +107,36 @@ func _on_hero_health_changed(is_enemy: bool, new_value: int) -> void:
 func _on_mana_changed(current: int, maximum: int) -> void:
 	mana_label.text = str(current) + "/" + str(maximum)
 
+func _on_hero_died(is_enemy: bool) -> void:
+	end_turn_btn.disabled = true
+	end_turn_btn.text = "胜利" if is_enemy else "失败"
+	_show_game_over(is_enemy)
+
+func _show_game_over(victory: bool) -> void:
+	var overlay := ColorRect.new()
+	overlay.color = Color(0, 0, 0, 0.6)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(overlay)
+	var lbl := Label.new()
+	lbl.text = "胜利" if victory else "失败"
+	lbl.add_theme_font_size_override("font_size", 96)
+	lbl.add_theme_color_override("font_color", Color.WHITE if victory else Color("#ff6b6b"))
+	lbl.set_anchors_preset(Control.PRESET_CENTER, false)
+	lbl.offset_left = -200
+	lbl.offset_top = -80
+	lbl.offset_right = 200
+	lbl.offset_bottom = 80
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	overlay.add_child(lbl)
+
 # ---------------- 回合 ----------------
 func _on_end_turn_pressed() -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "行动中"
-	is_action_running = true
 	await Game.turn.run()
-	is_action_running = false
-	Game.mana.advance_turn()
+	Game.mana.start_new_turn()
 	end_turn_btn.disabled = false
 	end_turn_btn.text = "结束回合"
 
@@ -138,14 +160,7 @@ func _init_grid() -> void:
 			cell.cleared.connect(_on_cell_cleared)
 
 func _init_units() -> void:
-	for cfg in Game.initial_units:
-		var cdata = Game.get_card(cfg.name)
-		if cdata == null:
-			continue
-		for pos in cfg.positions:
-			var cell = Game.board.get_cell(pos)
-			if cell:
-				cell.set_card(cdata.name, cdata.attack, cdata.health, cfg.faction == 1, cdata.effects)
+	Game.board.populate_initial_units(Game.initial_units, Callable(Game, "get_card"))
 
 func _on_cell_long_press_requested(payload) -> void:
 	detail_panel.start_long_press(payload)

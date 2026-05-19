@@ -19,7 +19,7 @@ func _build_button() -> void:
 	_btn.name = "SettingsBtn"
 	_btn.text = "设置"
 	_btn.add_theme_font_size_override("font_size", 32)
-	_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_btn.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
 	_btn.offset_left = 20
 	_btn.offset_top = 20
 	_btn.offset_right = 180
@@ -33,7 +33,7 @@ func _build_overlay_and_panel() -> void:
 	_overlay = ColorRect.new()
 	_overlay.name = "SettingsOverlay"
 	_overlay.color = Color(0, 0, 0, 0.5)
-	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	_overlay.visible = false
 	_parent.add_child(_overlay)
@@ -41,7 +41,7 @@ func _build_overlay_and_panel() -> void:
 
 	_panel = Panel.new()
 	_panel.name = "SettingsPanel"
-	_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_panel.set_anchors_preset(Control.PRESET_CENTER, false)
 	_panel.offset_left = -300
 	_panel.offset_top = -200
 	_panel.offset_right = 300
@@ -52,7 +52,7 @@ func _build_overlay_and_panel() -> void:
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "SettingsVBox"
-	vbox.set_anchors_preset(Control.PRESET_CENTER)
+	vbox.set_anchors_preset(Control.PRESET_CENTER, false)
 	vbox.offset_left = -140
 	vbox.offset_top = -135
 	vbox.offset_right = 140

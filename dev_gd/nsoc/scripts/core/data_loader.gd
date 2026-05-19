@@ -8,12 +8,25 @@ const HERO_JSON := "res://data/test_hero.json"
 const CARD_JSON := "res://data/test_card.json"
 const LEVEL_JSON := "res://data/test_level.json"
 
+# 读取并 parse 一个 JSON 文件。失败返回 null（带 push_error）。
+static func _read_json(path: String):
+	if not FileAccess.file_exists(path):
+		push_warning("DataLoader: file not found: " + path)
+		return null
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		push_error("DataLoader: cannot open " + path)
+		return null
+	var text := f.get_as_text()
+	f.close()
+	var parsed = JSON.parse_string(text)
+	if parsed == null:
+		push_error("DataLoader: malformed JSON: " + path)
+	return parsed
+
 static func load_hero_health(default_player: int = 30, default_enemy: int = 30) -> Dictionary:
 	var out := {"player": default_player, "enemy": default_enemy}
-	if not FileAccess.file_exists(HERO_JSON):
-		return out
-	var f := FileAccess.open(HERO_JSON, FileAccess.READ)
-	var j = JSON.parse_string(f.get_as_text())
+	var j = _read_json(HERO_JSON)
 	if typeof(j) == TYPE_DICTIONARY:
 		if j.has("player"):
 			out.player = int(j["player"].get("health", default_player))
@@ -22,14 +35,14 @@ static func load_hero_health(default_player: int = 30, default_enemy: int = 30) 
 	return out
 
 static func load_cards() -> Array:
-	if not FileAccess.file_exists(CARD_JSON):
-		return _fallback_cards()
-	var f := FileAccess.open(CARD_JSON, FileAccess.READ)
-	var j = JSON.parse_string(f.get_as_text())
-	if typeof(j) != TYPE_ARRAY or j.size() == 0:
+	var j = _read_json(CARD_JSON)
+	if typeof(j) != TYPE_ARRAY or (j as Array).size() == 0:
 		return _fallback_cards()
 	var out: Array = []
 	for card in j:
+		if typeof(card) != TYPE_DICTIONARY:
+			push_warning("DataLoader: skipping non-dict card entry")
+			continue
 		out.append(_parse_card(card))
 	return out
 
@@ -62,10 +75,7 @@ static func _parse_card(card: Dictionary):
 
 static func load_level() -> Dictionary:
 	var out := {"initial_units": [], "spawners": []}
-	if not FileAccess.file_exists(LEVEL_JSON):
-		return out
-	var f := FileAccess.open(LEVEL_JSON, FileAccess.READ)
-	var j = JSON.parse_string(f.get_as_text())
+	var j = _read_json(LEVEL_JSON)
 	if typeof(j) != TYPE_DICTIONARY:
 		return out
 	if j.has("initial_units") and typeof(j["initial_units"]) == TYPE_ARRAY:

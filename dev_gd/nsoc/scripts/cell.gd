@@ -41,7 +41,8 @@ func _ready() -> void:
 	for d in hp_labels.values():
 		d.add_theme_stylebox_override("normal", ThemeFactory.pill(Color("#51cf66"), 10))
 
-	clear_card()
+	# 初始化期不发 cleared（无监听者，且语义错误）
+	_do_clear()
 	inner_panel.pivot_offset = custom_minimum_size / 2.0
 	gui_input.connect(_on_gui_input)
 	mouse_exited.connect(_on_mouse_exit)
@@ -100,7 +101,20 @@ func _update_hp_labels() -> void:
 	for d in hp_labels.keys():
 		hp_labels[d].text = str(health[d])
 
+# 清除实卡（敌/我方死亡 或 棋子被替换）。
+# 会 emit cleared 通知外部"格子空了"，触发 phantom 重算等副作用。
 func clear_card() -> void:
+	_do_clear()
+	cleared.emit(self)
+
+# 清除 phantom 预告。不发 cleared 信号，避免与 SpawnerSystem.refresh_phantoms 形成循环回调。
+func clear_phantom() -> void:
+	if not is_phantom:
+		return
+	_do_clear()
+
+# 共用清理逻辑。不触发信号。
+func _do_clear() -> void:
 	if active_tween:
 		active_tween.kill()
 		active_tween = null
@@ -112,7 +126,6 @@ func clear_card() -> void:
 	inner_panel.scale = Vector2.ONE
 	inner_panel.modulate.a = 1.0
 	inner_panel.self_modulate = Color.WHITE
-	cleared.emit(self)
 
 func play_damage_effect() -> void:
 	if active_tween:
@@ -176,22 +189,12 @@ func _process(_delta) -> void:
 			set_drag_hover(false)
 
 func _can_drop_data(_pos, data) -> bool:
-	if typeof(data) == TYPE_DICTIONARY and data.has("type"):
-		# 法力检查交由 GameContext，避免对 main 的硬依赖
-		if Game.mana.current < data.cost:
-			return false
-		var can_drop := false
-		if data.type == "法术":
-			can_drop = true
-		elif has_card:
-			can_drop = false
-		elif data.type == "单位" and row <= 2:
-			can_drop = false
-		else:
-			can_drop = true
-		if can_drop:
-			set_drag_hover(true)
-			return true
+	# 业务规则由 PlayController 统一裁决，cell 仅询问并响应视觉。
+	if Game.play == null:
+		return false
+	if Game.play.can_play_at(self, data):
+		set_drag_hover(true)
+		return true
 	return false
 
 func _drop_data(_pos, data) -> void:

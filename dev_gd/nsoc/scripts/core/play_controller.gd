@@ -3,8 +3,12 @@ extends Node
 
 # 集中处理 cell.card_dropped 事件。
 # 取代原 cell.gd:_drop_data 中扣 mana / 销毁手牌 / 触发出牌效果 / 动画飞入 / 入墓除外 等逻辑。
+# 同时是出牌规则的唯一来源（can_play_at），cell 仅询问不裁决。
 
 signal hand_consumed                       # 通知 HandView 补手牌
+
+# 业务规则：单位最大可下行（row 索引）。row <= PLAYER_DEPLOY_MIN_ROW 视为敌方半场。
+const PLAYER_DEPLOY_MIN_ROW: int = 2
 
 var _root: Control                          # 用于挂载飞入动画 visual
 var _cell_scene: PackedScene
@@ -13,8 +17,27 @@ func setup(root: Control, cell_scene: PackedScene) -> void:
 	_root = root
 	_cell_scene = cell_scene
 
-func handle_drop(cell, data) -> void:
+# 是否允许在 cell 上释放该卡。供 cell._can_drop_data 调用。
+# data 形态约定见 hand_card._get_drag_data 构造的 drag_dict。
+func can_play_at(cell, data) -> bool:
+	if typeof(data) != TYPE_DICTIONARY or not data.has("type"):
+		return false
+	if Game.turn.is_running:
+		return false
 	if not Game.mana.can_spend(data.cost):
+		return false
+	if data.type == "法术":
+		return true
+	# 单位
+	if cell.has_card:
+		return false
+	if cell.row <= PLAYER_DEPLOY_MIN_ROW:
+		return false
+	return true
+
+func handle_drop(cell, data) -> void:
+	# 落地最后一次校验，避免拖拽期间状态变化
+	if not can_play_at(cell, data):
 		return
 	Game.mana.spend(data.cost)
 
@@ -37,7 +60,7 @@ func handle_drop(cell, data) -> void:
 	_trigger_unit_play_effects(full_data)
 	hand_consumed.emit()
 
-	var effs := _extract_effects(full_data)
+	var effs := _get_effects(full_data)
 	await _animate_drop(cell, data, drop_global_pos, effs)
 	cell.set_card(data.card_name, data.attack, data.health, false, effs)
 
@@ -65,8 +88,7 @@ func _play_spell(spell_data, _target_cell) -> void:
 		return
 	var ctx := Game.make_effect_context()
 	var destination := "graveyard"
-	for eff in _extract_effects(spell_data):
-		# 询问该效果是否决定卡的去向
+	for eff in _get_effects(spell_data):
 		var dest := Effects.resolve_destination(eff, spell_data, ctx)
 		if dest != "":
 			destination = dest
@@ -74,14 +96,13 @@ func _play_spell(spell_data, _target_cell) -> void:
 
 	match destination:
 		"banish": Game.deck.banish(spell_data)
-		"graveyard": Game.deck.send_to_graveyard(spell_data)
 		_: Game.deck.send_to_graveyard(spell_data)
 
 func _trigger_unit_play_effects(unit_data) -> void:
 	if unit_data == null:
 		return
 	var ctx := Game.make_effect_context()
-	for eff in _extract_effects(unit_data):
+	for eff in _get_effects(unit_data):
 		Effects.trigger_play(eff, unit_data, ctx)
 
 func handle_unit_death(cell) -> void:
@@ -93,18 +114,20 @@ func handle_unit_death(cell) -> void:
 		return
 	var ctx := Game.make_effect_context()
 	var handled := false
-	for eff in _extract_effects(cdata):
+	for eff in _get_effects(cdata):
 		if Effects.trigger_death(eff, cdata, ctx):
 			handled = true
 	if not handled:
 		Game.deck.send_to_graveyard(cdata)
 
-static func _extract_effects(card_data) -> Array:
+# DataLoader 已统一输出 CardBase 对象。此函数只剩对 CardBase 的读取。
+static func _get_effects(card_data) -> Array:
 	if card_data == null:
 		return []
+	if card_data is CardBase:
+		return card_data.effects
+	# 兜底：若仍是字典则按 effects 字段读
 	if typeof(card_data) == TYPE_DICTIONARY:
 		var v = card_data.get("effects", [])
 		return v if v != null else []
-	if "effects" in card_data and card_data.effects != null:
-		return card_data.effects
 	return []

@@ -59,3 +59,15 @@ func find_adjacent_enemies(cell, for_enemy: bool) -> Array:
 func reset_attack_flags() -> void:
 	for cell in grid_cells.values():
 		cell.has_attacked = false
+
+# 按关卡配置摆放初始单位。configs 来自 DataLoader.load_level().initial_units。
+# card_resolver: name -> CardBase
+func populate_initial_units(configs: Array, card_resolver: Callable) -> void:
+	for cfg in configs:
+		var cdata = card_resolver.call(cfg.name)
+		if cdata == null:
+			continue
+		for pos in cfg.positions:
+			var cell = get_cell(pos)
+			if cell:
+				cell.set_card(cdata.name, cdata.attack, cdata.health, cfg.faction == 1, cdata.effects)
