@@ -1,18 +1,28 @@
 [
   {
-	"name": "blanket",
+	"name": "填线宝宝",
 	"type": "单位",
 	"cost": 1,
-	"health": 1,
+	"health": {"top": 1, "bottom": 1, "left": 1, "right": 1},
 	"attack": 1,
-	"count": 5
+	"count": 3
   },
   {
-	"name": "pro",
+	"name": "灰烬填线宝宝",
 	"type": "单位",
 	"cost": 2,
-	"health": 2,
+	"health": {"top": 2, "bottom": 2, "left": 2, "right": 2},
 	"attack": 2,
-	"count": 3
+	"count": 3,
+	"effects": ["ash"]
+  },
+  {
+	"name": "pro哥",
+	"type": "单位",
+	"cost": 10,
+	"health": {"top": 10, "bottom": 10, "left": 10, "right": 10},
+	"attack": 10,
+	"count": 2,
+	"effects": ["ash", "autophagy"]
   }
 ]
