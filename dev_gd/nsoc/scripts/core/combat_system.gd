@@ -1,7 +1,14 @@
 class_name CombatSystem
 extends Node
 
-# 战斗动画与伤害结算。原 main.attack_cells / move_card / apply_damage_to_hero 迁移。
+# 战斗动画与伤害结算。
+
+const HERO_HIT_FADE: float = 0.5
+const ATTACK_HIT_DELAY: float = 0.45
+const DEATH_DELAY: float = 0.45
+const MOVE_HALF_DURATION: float = 0.2
+const MOVE_ARC_OFFSET: Vector2 = Vector2(0, -70)
+const SCALE_PEAK: Vector2 = Vector2(1.08, 1.08)
 
 var _root: Control                          # 用于挂载移动动画 visual / 闪烁面板
 var _cell_scene: PackedScene
@@ -22,7 +29,7 @@ func apply_damage_to_hero(is_enemy: bool, damage: int) -> void:
 	pnl.self_modulate = Color("#ffc9c9")
 	if get_tree():
 		var tween := get_tree().create_tween()
-		tween.tween_property(pnl, "self_modulate", Color.WHITE, 0.5)
+		tween.tween_property(pnl, "self_modulate", Color.WHITE, HERO_HIT_FADE)
 
 func attack_cells(attacker, defender_data_list: Array) -> void:
 	var a_atk: int = attacker.attack
@@ -35,7 +42,7 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 		defender._update_hp_labels()
 		defender.play_damage_effect()
 
-	await get_tree().create_timer(0.45).timeout
+	await get_tree().create_timer(ATTACK_HIT_DELAY).timeout
 
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
@@ -46,7 +53,7 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 	if dead_cells.size() > 0:
 		for dc in dead_cells:
 			dc.play_death_effect()
-		await get_tree().create_timer(0.45).timeout
+		await get_tree().create_timer(DEATH_DELAY).timeout
 		for dc in dead_cells:
 			_play_controller.handle_unit_death(dc)
 			if dc.has_card:
@@ -71,12 +78,11 @@ func move_card(start, end) -> void:
 
 	var tween := get_tree().create_tween()
 	var mid_pos: Vector2 = (start.global_position + end.global_position) / 2.0
-	var offset := Vector2(0, -70)
 
-	tween.tween_property(visual, "global_position", mid_pos + offset, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(visual, "scale", Vector2(1.08, 1.08), 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.tween_property(visual, "global_position", end.global_position, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tween.parallel().tween_property(visual, "scale", Vector2(1.0, 1.0), 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.tween_property(visual, "global_position", mid_pos + MOVE_ARC_OFFSET, MOVE_HALF_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(visual, "scale", SCALE_PEAK, MOVE_HALF_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property(visual, "global_position", end.global_position, MOVE_HALF_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.parallel().tween_property(visual, "scale", Vector2.ONE, MOVE_HALF_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
 	await tween.finished
 	visual.queue_free()

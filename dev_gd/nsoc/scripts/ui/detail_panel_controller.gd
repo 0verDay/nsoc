@@ -30,7 +30,7 @@ func _build_panel() -> void:
 	_clip = Control.new()
 	_clip.name = "DetailPanelClip"
 	_parent.add_child(_clip)
-	_clip.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	_clip.set_anchors_preset(Control.PRESET_LEFT_WIDE, false)
 	_clip.offset_left = 10
 	_clip.offset_right = 330
 	_clip.offset_top = 10
@@ -42,7 +42,7 @@ func _build_panel() -> void:
 	_panel = Panel.new()
 	_panel.name = "DetailPanel"
 	_clip.add_child(_panel)
-	_panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	_panel.set_anchors_preset(Control.PRESET_LEFT_WIDE, false)
 	_panel.offset_left = -PANEL_WIDTH
 	_panel.offset_right = 0
 	_panel.offset_top = 0
@@ -52,7 +52,7 @@ func _build_panel() -> void:
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "DetailVBox"
-	vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vbox.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	vbox.offset_left = 20
 	vbox.offset_right = -20
 	vbox.offset_top = 30
@@ -114,7 +114,7 @@ func show_for(data) -> void:
 
 	var cname: String = ""
 	if typeof(data) == TYPE_DICTIONARY:
-		cname = String(data.get("name", "")).split(" x ")[0]
+		cname = String(data.get("name", ""))
 	else:
 		cname = data.name
 

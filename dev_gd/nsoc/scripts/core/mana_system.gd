@@ -23,8 +23,8 @@ func spend(amount: int) -> bool:
 	mana_changed.emit(current, maximum)
 	return true
 
-# 回合开始：上限 +1（不超过 cap），current 重置为 maximum。
-func advance_turn() -> void:
+# 进入新回合：上限 +1（不超过 cap），current 重置为 maximum。
+func start_new_turn() -> void:
 	if maximum < MAX_MANA_CAP:
 		maximum += 1
 	current = maximum

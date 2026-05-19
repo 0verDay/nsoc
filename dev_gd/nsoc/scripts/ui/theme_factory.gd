@@ -94,3 +94,19 @@ static func badge() -> StyleBoxFlat:
 	sb.content_margin_top = 4
 	sb.content_margin_bottom = 4
 	return sb
+
+# 侧栏列表项三态样式。
+static func list_item_styles() -> Dictionary:
+	var base := StyleBoxFlat.new()
+	base.bg_color = Color(1, 1, 1, 0.6)
+	base.corner_radius_top_left = 8
+	base.corner_radius_top_right = 8
+	base.corner_radius_bottom_left = 8
+	base.corner_radius_bottom_right = 8
+	base.content_margin_top = 10
+	base.content_margin_bottom = 10
+	var hover := base.duplicate()
+	hover.bg_color = Color(1, 1, 1, 0.8)
+	var pressed := base.duplicate()
+	pressed.bg_color = Color(0.9, 0.9, 0.9, 0.9)
+	return {"normal": base, "hover": hover, "pressed": pressed, "focus": StyleBoxEmpty.new()}

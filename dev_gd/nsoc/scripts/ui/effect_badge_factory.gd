@@ -42,6 +42,3 @@ static func _resolve_name(eff_id: String) -> String:
 		if node and node.has_method("get_display_name"):
 			return node.get_display_name(eff_id)
 	return eff_id
-
-static func _fallback_display(eff_id: String) -> String:
-	return eff_id

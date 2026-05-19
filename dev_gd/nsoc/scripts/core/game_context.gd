@@ -25,6 +25,9 @@ var counters: Dictionary = {}
 # 关卡初始单位配置缓存（main 初始化棋盘时用）。
 var initial_units: Array = []
 
+# 由 main.gd 创建后注入。cell._can_drop_data 通过 Game.play 查询规则，避免对 main 的反向耦合。
+var play: PlayController
+
 func _ready() -> void:
 	deck = DeckManager.new(); deck.name = "Deck"; add_child(deck)
 	hero = HeroState.new(); hero.name = "Hero"; add_child(hero)

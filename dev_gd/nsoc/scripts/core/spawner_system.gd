@@ -37,7 +37,11 @@ func advance(board: BoardModel, card_resolver: Callable) -> bool:
 	return any_spawned
 
 # 在 spawner 即将触发时显示半透明 phantom 预告。
+# 调用前先清理所有 phantom cell（用 clear_phantom 而非 clear_card，后者会触发 cleared 信号造成回调循环）。
 func refresh_phantoms(board: BoardModel, card_resolver: Callable) -> void:
+	for cell in board.grid_cells.values():
+		if cell.is_phantom:
+			cell.clear_phantom()
 	for sp in spawners:
 		if sp.timer >= sp.interval - 1:
 			var target_cell = board.get_cell(sp.position)
