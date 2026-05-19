@@ -1,0 +1,96 @@
+class_name DataLoader
+extends RefCounted
+
+# 静态方法集合：负责把 JSON 解析为 CardBase 子类/关卡配置。
+# 不依赖任何节点；输入路径，输出纯数据。
+
+const HERO_JSON := "res://data/test_hero.json"
+const CARD_JSON := "res://data/test_card.json"
+const LEVEL_JSON := "res://data/test_level.json"
+
+static func load_hero_health(default_player: int = 30, default_enemy: int = 30) -> Dictionary:
+	var out := {"player": default_player, "enemy": default_enemy}
+	if not FileAccess.file_exists(HERO_JSON):
+		return out
+	var f := FileAccess.open(HERO_JSON, FileAccess.READ)
+	var j = JSON.parse_string(f.get_as_text())
+	if typeof(j) == TYPE_DICTIONARY:
+		if j.has("player"):
+			out.player = int(j["player"].get("health", default_player))
+		if j.has("enemy"):
+			out.enemy = int(j["enemy"].get("health", default_enemy))
+	return out
+
+static func load_cards() -> Array:
+	if not FileAccess.file_exists(CARD_JSON):
+		return _fallback_cards()
+	var f := FileAccess.open(CARD_JSON, FileAccess.READ)
+	var j = JSON.parse_string(f.get_as_text())
+	if typeof(j) != TYPE_ARRAY or j.size() == 0:
+		return _fallback_cards()
+	var out: Array = []
+	for card in j:
+		out.append(_parse_card(card))
+	return out
+
+static func _parse_card(card: Dictionary):
+	var c_name: String = card.get("name", "Unknown")
+	var c_type: String = card.get("type", "单位")
+	var c_cost: int = int(card.get("cost", 0))
+	var c_effects: Array = card.get("effects", [])
+	var c_count: int = int(card.get("count", 1))
+	var new_card
+	if c_type == "单位":
+		var c_atk: int = int(card.get("attack", 0))
+		var hp := {"top": 1, "bottom": 1, "left": 1, "right": 1}
+		if card.has("health"):
+			if typeof(card["health"]) == TYPE_DICTIONARY:
+				hp = {
+					"top": int(card["health"].get("top", 1)),
+					"bottom": int(card["health"].get("bottom", 1)),
+					"left": int(card["health"].get("left", 1)),
+					"right": int(card["health"].get("right", 1)),
+				}
+			else:
+				var hv: int = int(card["health"])
+				hp = {"top": hv, "bottom": hv, "left": hv, "right": hv}
+		new_card = CardUnit.new(c_name, c_cost, c_atk, hp, c_effects)
+	else:
+		new_card = CardSpell.new(c_name, c_cost, c_effects)
+	new_card.count = c_count
+	return new_card
+
+static func load_level() -> Dictionary:
+	var out := {"initial_units": [], "spawners": []}
+	if not FileAccess.file_exists(LEVEL_JSON):
+		return out
+	var f := FileAccess.open(LEVEL_JSON, FileAccess.READ)
+	var j = JSON.parse_string(f.get_as_text())
+	if typeof(j) != TYPE_DICTIONARY:
+		return out
+	if j.has("initial_units") and typeof(j["initial_units"]) == TYPE_ARRAY:
+		for cfg in j["initial_units"]:
+			var positions: Array = []
+			for pos in cfg["positions"]:
+				positions.append(Vector2(int(pos["row"]), int(pos["col"])))
+			out.initial_units.append({
+				"name": cfg["name"],
+				"faction": int(cfg["faction"]),
+				"positions": positions,
+			})
+	if j.has("spawners") and typeof(j["spawners"]) == TYPE_ARRAY:
+		for sp in j["spawners"]:
+			out.spawners.append({
+				"name": sp["name"],
+				"faction": int(sp["faction"]),
+				"position": Vector2(int(sp["position"]["row"]), int(sp["position"]["col"])),
+				"interval": int(sp["interval"]),
+			})
+	return out
+
+static func _fallback_cards() -> Array:
+	var a = CardUnit.new("填线宝宝", 1, 1, {"top": 1, "bottom": 1, "left": 1, "right": 1}, [])
+	a.count = 5
+	var b = CardUnit.new("灰烬填线宝宝", 2, 2, {"top": 2, "bottom": 2, "left": 2, "right": 2}, ["ash"])
+	b.count = 3
+	return [a, b]
