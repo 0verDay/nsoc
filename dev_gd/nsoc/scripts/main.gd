@@ -10,14 +10,17 @@ extends Control
 
 @onready var hand_container = $BottomBar/HandClip/HandContainer
 @onready var enemy_health_label = $EnemyHpPnl/EnemyHealthLabel
-@onready var player_health_label = $BottomBar/PHpPnl/PlayerHealthLabel
+@onready var player_health_label = $LeftSidePnl/PHpPnl/PlayerHealthLabel
 @onready var mana_label = $BottomBar/ManaPnl/ManaLabel
 @onready var end_turn_btn = $BottomBar/EndTurnBtn
-@onready var deck_btn = $BottomBar/SideButtonsBox/DeckBtn
-@onready var grave_btn = $BottomBar/SideButtonsBox/GraveBtn
-@onready var banished_btn = $BottomBar/SideButtonsBox/BanishedBtn
 @onready var top_grid = $TopGridBg/TopGrid
 @onready var bottom_grid = $BottomGridBg/BottomGrid
+@onready var hero_name_lbl = $LeftSidePnl/HeroNameLbl
+
+# 玩家"牌库 / 墓地 / 除外"按钮（动态创建，置于玩家半场底部，与敌方按钮上下对称）
+var deck_btn: Button
+var grave_btn: Button
+var banished_btn: Button
 
 var cell_scene := preload("res://scenes/Cell.tscn")
 var hand_card_scene := preload("res://scenes/HandCard.tscn")
@@ -25,24 +28,40 @@ var hand_card_scene := preload("res://scenes/HandCard.tscn")
 var hand_view: HandView
 var detail_panel: DetailPanelController
 var side_panels: SidePanelManager
+var enemy_side_panels: EnemySidePanelManager
 var settings_panel: SettingsPanelController
 var play_controller: PlayController
 var combat: CombatSystem
 
+# 敌方"墓地 / 除外"按钮（动态创建，挂在 EnemyHpPnl 左右）
+var enemy_grave_btn: Button
+var enemy_banished_btn: Button
+
+# 玩家英雄面板按钮（动态创建，挂在 LeftSidePnl 内）
+var hero_ability_btn: Button
+
 func _ready() -> void:
+	await _apply_editor_window_scale()
 	Game.bootstrap()
 
 	_apply_styles()
 
 	# UI 控制器（detail_panel 必须在 _init_grid 之前，因 cell 信号会连到它）
 	hand_view = HandView.new(); hand_view.name = "HandView"; add_child(hand_view)
-	hand_view.setup(hand_container, hand_card_scene)
+	hand_view.setup(hand_container, hand_card_scene, self)
 
 	detail_panel = DetailPanelController.new(); detail_panel.name = "DetailPanel"; add_child(detail_panel)
 	detail_panel.setup(self, hand_card_scene)
 
 	side_panels = SidePanelManager.new(); side_panels.name = "SidePanels"; add_child(side_panels)
 	side_panels.setup(self)
+
+	enemy_side_panels = EnemySidePanelManager.new(); enemy_side_panels.name = "EnemySidePanels"; add_child(enemy_side_panels)
+	enemy_side_panels.setup(self)
+
+	_create_enemy_pile_buttons()
+	_create_player_pile_buttons()
+	_create_hero_ability_button()
 
 	settings_panel = SettingsPanelController.new(); settings_panel.name = "SettingsPanel"; add_child(settings_panel)
 	settings_panel.setup(self)
@@ -54,6 +73,7 @@ func _ready() -> void:
 
 	combat = CombatSystem.new(); combat.name = "Combat"; add_child(combat)
 	combat.setup(self, cell_scene, play_controller, Callable(self, "_resolve_hero_panel"))
+	Game.combat = combat
 
 	Game.turn.setup(Game.board, combat, Game.spawners, Callable(Game, "get_card"))
 
@@ -69,9 +89,12 @@ func _ready() -> void:
 	_on_hero_health_changed(false, Game.hero.player_health)
 	_on_hero_health_changed(true, Game.hero.enemy_health)
 	_on_mana_changed(Game.mana.current, Game.mana.maximum)
+	hero_name_lbl.text = Game.hero.player_name
 
 	# 设置面板 + 详情面板需要显示在侧边栏之上
 	for clip in side_panels.get_clip_nodes():
+		clip.move_to_front()
+	for clip in enemy_side_panels.get_clip_nodes():
 		clip.move_to_front()
 	detail_panel.get_clip().move_to_front()
 
@@ -85,17 +108,29 @@ func _wire_signals() -> void:
 	deck_btn.pressed.connect(func(): side_panels.toggle("deck"))
 	grave_btn.pressed.connect(func(): side_panels.toggle("grave"))
 	banished_btn.pressed.connect(func(): side_panels.toggle("banished"))
+	enemy_grave_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_grave"))
+	enemy_banished_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_banished"))
+	hero_ability_btn.pressed.connect(_on_hero_ability_pressed)
 
 	# 侧栏长按 → 详情面板
 	side_panels.long_press_requested.connect(detail_panel.start_long_press)
 	side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
+	enemy_side_panels.long_press_requested.connect(detail_panel.start_long_press)
+	enemy_side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
 
 	# 手牌长按 → 详情面板
 	hand_view.hand_card_long_press_requested.connect(detail_panel.start_long_press)
 	hand_view.hand_card_long_press_canceled.connect(detail_panel.cancel_long_press)
 
 	# 出牌后补手牌
-	play_controller.hand_consumed.connect(hand_view.ensure_min_hand_size)
+	play_controller.hand_consumed.connect(hand_view.draw_into_slot)
+
+	# 英雄技能按钮的可用性：受回合状态/费用/每回合次数 影响。
+	Game.turn.turn_started.connect(_refresh_hero_ability_button)
+	Game.turn.turn_ended.connect(_refresh_hero_ability_button)
+	Game.mana.mana_changed.connect(func(_c, _m): _refresh_hero_ability_button())
+	HeroAbilities.ability_used.connect(func(_id): _refresh_hero_ability_button())
+	HeroAbilities.turn_reset.connect(_refresh_hero_ability_button)
 
 # ---------------- UI 刷新槽 ----------------
 func _on_hero_health_changed(is_enemy: bool, new_value: int) -> void:
@@ -137,6 +172,7 @@ func _on_end_turn_pressed() -> void:
 	end_turn_btn.text = "行动中"
 	await Game.turn.run()
 	Game.mana.start_new_turn()
+	HeroAbilities.reset_turn_usage()
 	end_turn_btn.disabled = false
 	end_turn_btn.text = "结束回合"
 
@@ -180,17 +216,50 @@ func _input(event) -> void:
 		if not event.pressed:
 			detail_panel.cancel_long_press()
 			detail_panel.hide_panel()
+			_animate_hero_panel_release()
 		else:
+			var p := get_global_mouse_position()
 			if side_panels.has_open_panel():
-				var p := get_global_mouse_position()
 				if side_panels.is_panel_hit(p):
 					return
 				if deck_btn.get_global_rect().has_point(p): return
 				if grave_btn.get_global_rect().has_point(p): return
 				if banished_btn.get_global_rect().has_point(p): return
 				side_panels.close_current()
+			if enemy_side_panels.has_open_panel():
+				if enemy_side_panels.is_panel_hit(p):
+					return
+				if enemy_grave_btn.get_global_rect().has_point(p): return
+				if enemy_banished_btn.get_global_rect().has_point(p): return
+				enemy_side_panels.close_current()
 
 # ---------------- 样式 ----------------
+# 仅在编辑器/调试运行时缩放：
+# 优先尝试改窗口尺寸；若处于嵌入模式则改 root viewport 的 content_scale_factor 0.5，
+# 视觉等效"半分辨率"，不依赖窗口能否 resize。
+func _apply_editor_window_scale() -> void:
+	if not OS.has_feature("editor"):
+		return
+	var win := get_window()
+	if win == null:
+		return
+	var vp_w: int = int(ProjectSettings.get_setting("display/window/size/viewport_width"))
+	var vp_h: int = int(ProjectSettings.get_setting("display/window/size/viewport_height"))
+	var half: Vector2i = Vector2i(vp_w / 2, vp_h / 2)
+
+	# 1) 尝试改物理窗口大小（浮动窗口模式有效）。
+	win.size = half
+	await get_tree().process_frame
+	# 2) 若 size 没变（被嵌入限制），退而用内容缩放（嵌入/导出后均生效，视觉同小屏）。
+	if win.size != half:
+		get_tree().root.content_scale_factor = 0.5
+		return
+
+	# 浮动窗口模式：居中到主屏。
+	var screen_size: Vector2i = DisplayServer.screen_get_size(DisplayServer.SCREEN_PRIMARY)
+	var screen_pos: Vector2i = DisplayServer.screen_get_position(DisplayServer.SCREEN_PRIMARY)
+	win.position = screen_pos + (screen_size - half) / 2
+
 func _apply_styles() -> void:
 	$Bg.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#e1e8ed"), 1, 0))
 	$EnemyHpPnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#ff6b6b"), 2, 20, true))
@@ -198,12 +267,169 @@ func _apply_styles() -> void:
 	$TopGridBg.add_theme_stylebox_override("panel", grid_bg_style)
 	$BottomGridBg.add_theme_stylebox_override("panel", grid_bg_style)
 	$BottomBar.add_theme_stylebox_override("panel", ThemeFactory.panel(Color(0.94, 0.95, 0.96, 0.85), Color(1, 1, 1, 0.6), 1, 20))
+	$LeftSidePnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color(1, 1, 1, 0.6), 1, 20, true))
 	hand_container.add_theme_constant_override("separation", 50)
-	$BottomBar/PHpPnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#ff6b6b"), 2, 12, true))
+	$LeftSidePnl/PHpPnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#ff6b6b"), 2, 12, true))
 	$BottomBar/ManaPnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#339af0"), 2, 12, true))
 
 	var styles := ThemeFactory.primary_button_styles()
 	ThemeFactory.apply_button_styles(end_turn_btn, styles)
-	ThemeFactory.apply_button_styles(deck_btn, styles)
-	ThemeFactory.apply_button_styles(grave_btn, styles)
-	ThemeFactory.apply_button_styles(banished_btn, styles)
+	# deck/grave/banished 三按钮在 _create_player_pile_buttons 内自行应用样式。
+
+# 创建敌方"墓地 / 除外"两个按钮，挂在 EnemyHpPnl 左右。
+# 高 40，宽度撑到棋盘左/右边沿：墓地左边对齐棋盘左、除外右边对齐棋盘右；
+# 内侧仍距画面中心 GAP+EnemyHpPnl 半宽（=50）以避让血条。
+func _create_enemy_pile_buttons() -> void:
+	const BTN_H: float = 40.0
+	const GAP: float = 10.0
+	const HP_HALF_W: float = 40.0       # EnemyHpPnl 半宽（offset 见 Main.tscn）
+	const BOARD_HALF_W: float = 230.0   # TopGridBg 半宽（见 Main.tscn）
+
+	enemy_grave_btn = Button.new()
+	enemy_grave_btn.name = "EnemyGraveBtn"
+	enemy_grave_btn.text = "墓地"
+	enemy_grave_btn.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
+	enemy_grave_btn.anchor_left = 0.5
+	enemy_grave_btn.anchor_right = 0.5
+	enemy_grave_btn.offset_left = -BOARD_HALF_W
+	enemy_grave_btn.offset_right = -HP_HALF_W - GAP
+	enemy_grave_btn.offset_top = 15.0
+	enemy_grave_btn.offset_bottom = 15.0 + BTN_H
+	add_child(enemy_grave_btn)
+
+	enemy_banished_btn = Button.new()
+	enemy_banished_btn.name = "EnemyBanishedBtn"
+	enemy_banished_btn.text = "除外"
+	enemy_banished_btn.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
+	enemy_banished_btn.anchor_left = 0.5
+	enemy_banished_btn.anchor_right = 0.5
+	enemy_banished_btn.offset_left = HP_HALF_W + GAP
+	enemy_banished_btn.offset_right = BOARD_HALF_W
+	enemy_banished_btn.offset_top = 15.0
+	enemy_banished_btn.offset_bottom = 15.0 + BTN_H
+	add_child(enemy_banished_btn)
+
+	var btn_styles := ThemeFactory.primary_button_styles()
+	ThemeFactory.apply_button_styles(enemy_grave_btn, btn_styles)
+	ThemeFactory.apply_button_styles(enemy_banished_btn, btn_styles)
+
+# 创建玩家"牌库 / 墓地 / 除外"三按钮，置于玩家半场底部，与敌方上方两按钮上下对称。
+# 三按钮等宽平分棋盘宽度，高度同敌方按钮 (40)。
+func _create_player_pile_buttons() -> void:
+	const BTN_H: float = 40.0
+	const GAP: float = 10.0
+	const BOARD_HALF_W: float = 230.0   # BottomGridBg 半宽
+	const BTN_W: float = (BOARD_HALF_W * 2.0 - GAP * 2.0) / 3.0   # ≈ 146.67
+	const BOTTOM_OFFSET: float = 15.0   # 距画面底部，与敌方按钮顶部 15.0 对称
+
+	deck_btn = Button.new()
+	deck_btn.name = "DeckBtn"
+	deck_btn.text = "牌库"
+	grave_btn = Button.new()
+	grave_btn.name = "GraveBtn"
+	grave_btn.text = "墓地"
+	banished_btn = Button.new()
+	banished_btn.name = "BanishedBtn"
+	banished_btn.text = "除外"
+
+	var btns: Array[Button] = [deck_btn, grave_btn, banished_btn]
+	var x_start: float = -BOARD_HALF_W
+	for i in btns.size():
+		var b: Button = btns[i]
+		b.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
+		b.anchor_left = 0.5
+		b.anchor_right = 0.5
+		b.anchor_top = 1.0
+		b.anchor_bottom = 1.0
+		b.offset_left = x_start + (BTN_W + GAP) * float(i)
+		b.offset_right = b.offset_left + BTN_W
+		b.offset_top = -BOTTOM_OFFSET - BTN_H
+		b.offset_bottom = -BOTTOM_OFFSET
+		b.add_theme_font_size_override("font_size", 22)
+		add_child(b)
+
+	var pile_styles := ThemeFactory.primary_button_styles()
+	ThemeFactory.apply_button_styles(deck_btn, pile_styles)
+	ThemeFactory.apply_button_styles(grave_btn, pile_styles)
+	ThemeFactory.apply_button_styles(banished_btn, pile_styles)
+
+# 创建玩家英雄面板按钮，挂在 LeftSidePnl 底部居中。
+# 复用 ThemeFactory.primary_button_styles 与项目蓝色主按钮风格一致。
+func _create_hero_ability_button() -> void:
+	const BTN_W: float = 240.0
+	const BTN_H: float = 56.0
+	const BOTTOM_MARGIN: float = 30.0
+
+	hero_ability_btn = Button.new()
+	hero_ability_btn.name = "HeroAbilityBtn"
+	hero_ability_btn.text = _get_player_ability_label()
+	# 锚定到 LeftSidePnl 底部水平居中。
+	hero_ability_btn.anchor_left = 0.5
+	hero_ability_btn.anchor_right = 0.5
+	hero_ability_btn.anchor_top = 1.0
+	hero_ability_btn.anchor_bottom = 1.0
+	hero_ability_btn.offset_left = -BTN_W * 0.5
+	hero_ability_btn.offset_right = BTN_W * 0.5
+	hero_ability_btn.offset_top = -BTN_H - BOTTOM_MARGIN
+	hero_ability_btn.offset_bottom = -BOTTOM_MARGIN
+	hero_ability_btn.add_theme_font_size_override("font_size", 22)
+	hero_ability_btn.add_theme_color_override("font_color", Color.WHITE)
+	hero_ability_btn.add_theme_color_override("font_hover_color", Color.WHITE)
+	hero_ability_btn.add_theme_color_override("font_pressed_color", Color.WHITE)
+	$LeftSidePnl.add_child(hero_ability_btn)
+
+	ThemeFactory.apply_button_styles(hero_ability_btn, ThemeFactory.primary_button_styles())
+
+	# 初始刷新一次按钮状态（费用够用 + 非运行中 + 未用过 → 可用）。
+	_refresh_hero_ability_button()
+
+	# LeftSidePnl 长按监听（按钮区由按钮自身消费事件，不会冒泡到 panel）。
+	$LeftSidePnl.gui_input.connect(_on_player_hero_panel_gui_input)
+
+# 玩家英雄面板长按 → 详情面板显示英雄名字。
+func _on_player_hero_panel_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		detail_panel.start_long_press_hero(Game.hero.player_name, Game.hero.player_ability_id(), Game.hero.player_max_health)
+		_animate_hero_panel_press()
+
+# 复用 hand_card / cell 长按按压的放大动画（0.1s 缩放到 1.08）。
+func _animate_hero_panel_press() -> void:
+	var pnl: Control = $LeftSidePnl
+	var tween := pnl.create_tween()
+	tween.tween_property(pnl, "scale", Vector2(1.08, 1.08), 0.1)
+
+func _animate_hero_panel_release() -> void:
+	var pnl: Control = $LeftSidePnl
+	if pnl.scale == Vector2.ONE:
+		return
+	var tween := pnl.create_tween()
+	tween.tween_property(pnl, "scale", Vector2.ONE, 0.1)
+
+# 英雄能力按钮点击处理。委托给 HeroAbilityRegistry.activate。
+func _on_hero_ability_pressed() -> void:
+	var ability_id: String = Game.hero.player_ability_id()
+	if ability_id == "" or not HeroAbilities.has(ability_id):
+		return
+	var ctx := {"main": self, "hand_view": hand_view, "hero": Game.hero}
+	if not HeroAbilities.can_activate(ability_id, ctx):
+		return
+	await HeroAbilities.activate(ability_id, ctx)
+
+# 取按钮显示文字：仅技能名，未注册则回退默认。
+func _get_player_ability_label() -> String:
+	var ability_id: String = Game.hero.player_ability_id()
+	if ability_id != "" and HeroAbilities.has(ability_id):
+		return HeroAbilities.get_display_name(ability_id)
+	return "英雄能力"
+
+# 刷新英雄技能按钮 disabled 状态：回合运行中、费用不足、本回合用过 都置灰。
+# 信号源：turn_started / turn_ended / mana_changed / ability_used / turn_reset。
+func _refresh_hero_ability_button() -> void:
+	if hero_ability_btn == null:
+		return
+	var ability_id: String = Game.hero.player_ability_id()
+	if ability_id == "" or not HeroAbilities.has(ability_id):
+		hero_ability_btn.disabled = true
+		return
+	var ctx := {"main": self, "hand_view": hand_view, "hero": Game.hero}
+	hero_ability_btn.disabled = not HeroAbilities.can_activate(ability_id, ctx)

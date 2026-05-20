@@ -11,6 +11,7 @@ var _clip: Control
 var _panel: Panel
 var _long_press_timer: Timer
 var _long_press_target = null
+var _long_press_kind: String = "card"  # "card" | "hero"
 var _is_open: bool = false
 
 const LONG_PRESS_TIME: float = 0.4
@@ -38,6 +39,8 @@ func _build_panel() -> void:
 	_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_clip.clip_contents = true
 	_clip.visible = false
+	# 高 z_index 压住战斗动画 visual（visual.z_index = 100）。
+	_clip.z_index = 200
 
 	_panel = Panel.new()
 	_panel.name = "DetailPanel"
@@ -72,6 +75,15 @@ func _build_panel() -> void:
 	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(name_lbl)
 
+	# 英雄专用：血量行（不随战斗扣减），插在名字与费用/技能行之间。
+	var hp_lbl := Label.new()
+	hp_lbl.name = "HpLbl"
+	hp_lbl.add_theme_font_size_override("font_size", 20)
+	hp_lbl.add_theme_color_override("font_color", Color(0.85, 0.3, 0.3, 1))
+	hp_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp_lbl.visible = false
+	vbox.add_child(hp_lbl)
+
 	var cost_lbl := Label.new()
 	cost_lbl.name = "CostLbl"
 	cost_lbl.add_theme_font_size_override("font_size", 20)
@@ -82,11 +94,19 @@ func _build_panel() -> void:
 	effect_lbl.name = "EffectLbl"
 	effect_lbl.add_theme_font_size_override("font_size", 18)
 	effect_lbl.add_theme_color_override("font_color", Color(0.4, 0.4, 0.4, 1))
-	effect_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	effect_lbl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	vbox.add_child(effect_lbl)
 
 func start_long_press(target_data) -> void:
 	_long_press_target = target_data
+	_long_press_kind = "card"
+	if _long_press_timer:
+		_long_press_timer.start()
+
+# 英雄长按。target 为字典 {name, ability_id, hp}。
+func start_long_press_hero(hero_name: String, ability_id: String = "", display_hp: int = -1) -> void:
+	_long_press_target = {"name": hero_name, "ability_id": ability_id, "hp": display_hp}
+	_long_press_kind = "hero"
 	if _long_press_timer:
 		_long_press_timer.start()
 
@@ -96,7 +116,14 @@ func cancel_long_press() -> void:
 	_long_press_target = null
 
 func _on_long_press_timeout() -> void:
-	show_for(_long_press_target)
+	if _long_press_kind == "hero":
+		var t = _long_press_target
+		if typeof(t) == TYPE_DICTIONARY:
+			show_hero(String(t.get("name", "")), String(t.get("ability_id", "")), int(t.get("hp", -1)))
+		else:
+			show_hero(String(t))
+	else:
+		show_for(_long_press_target)
 
 func show_for(data) -> void:
 	if data == null:
@@ -104,10 +131,16 @@ func show_for(data) -> void:
 	var vbox := _panel.get_node_or_null("DetailVBox")
 	if vbox == null:
 		return
-	var card_center := vbox.get_node("CardCenter")
+	var card_center := vbox.get_node("CardCenter") as Control
 	var name_lbl := vbox.get_node("NameLbl") as Label
+	var hp_lbl := vbox.get_node("HpLbl") as Label
 	var cost_lbl := vbox.get_node("CostLbl") as Label
 	var effect_lbl := vbox.get_node("EffectLbl") as Label
+
+	# 卡牌模式：恢复 CardCenter 占位，隐藏英雄专用血量行。
+	card_center.visible = true
+	card_center.custom_minimum_size = Vector2(0, 240)
+	hp_lbl.visible = false
 
 	for c in card_center.get_children():
 		c.queue_free()
@@ -136,6 +169,47 @@ func show_for(data) -> void:
 		for eff in cdata.effects:
 			effect_texts.append(Effects.get_description(eff))
 		effect_lbl.text = "\n".join(effect_texts) if effect_texts.size() > 0 else "无附加效果"
+
+	if _is_open:
+		return
+	_is_open = true
+	_clip.visible = true
+	_panel.offset_left = -PANEL_WIDTH
+	_panel.offset_right = 0
+	var tween := get_tree().create_tween()
+	tween.tween_property(_panel, "offset_left", 0.0, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_panel, "offset_right", PANEL_WIDTH, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+# 英雄详情：显示名字 + 血量 + 技能名/描述，复用同一弹出动画。
+# 不显示费用括号；CardCenter 隐藏让文字整体上移。血量传 -1 表示走默认从 Game.hero 取初始 max。
+func show_hero(hero_name: String, ability_id: String = "", display_hp: int = -1) -> void:
+	if hero_name == "":
+		return
+	var vbox := _panel.get_node_or_null("DetailVBox")
+	if vbox == null:
+		return
+	var card_center := vbox.get_node("CardCenter") as Control
+	var name_lbl := vbox.get_node("NameLbl") as Label
+	var hp_lbl := vbox.get_node("HpLbl") as Label
+	var cost_lbl := vbox.get_node("CostLbl") as Label
+	var effect_lbl := vbox.get_node("EffectLbl") as Label
+
+	for c in card_center.get_children():
+		c.queue_free()
+	# 英雄模式：CardCenter 隐藏并清零占位，让 Name/Hp/Skill 整体上移。
+	card_center.visible = false
+	card_center.custom_minimum_size = Vector2.ZERO
+
+	name_lbl.text = hero_name
+	hp_lbl.visible = true
+	hp_lbl.text = "血量：%d" % display_hp
+
+	if ability_id != "" and HeroAbilities.has(ability_id):
+		cost_lbl.text = "技能：%s" % HeroAbilities.get_display_name(ability_id)
+		effect_lbl.text = HeroAbilities.get_description(ability_id)
+	else:
+		cost_lbl.text = ""
+		effect_lbl.text = ""
 
 	if _is_open:
 		return

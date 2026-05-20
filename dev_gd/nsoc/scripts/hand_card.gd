@@ -138,4 +138,6 @@ func _get_drag_data(_pos):
 
 func _notification(what) -> void:
 	if what == NOTIFICATION_DRAG_END:
+		if get_meta("consumed", false):
+			return
 		modulate.a = 1.0

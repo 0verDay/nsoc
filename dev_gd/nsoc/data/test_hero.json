@@ -1,8 +1,12 @@
 {
   "player": {
-	"health": 30
+	"name": "A",
+	"health": 30,
+	"abilities": ["restart"]
   },
   "enemy": {
-	"health": 30
+	"name": "B",
+	"health": 30,
+	"abilities": []
   }
 }

@@ -18,26 +18,37 @@ func _scan_and_register() -> void:
 	if dir == null:
 		push_warning("EffectRegistry: cannot open %s" % EFFECTS_DIR)
 		return
+	var seen: Dictionary = {}
 	dir.list_dir_begin()
 	var fname := dir.get_next()
 	while fname != "":
-		if not dir.current_is_dir() and fname.ends_with(".gd"):
-			# 跳过工具类自身（即将下线的 effect_utils.gd 仍存在则忽略）
-			if fname == "effect_utils.gd":
-				fname = dir.get_next()
-				continue
-			var eff_id := fname.get_basename()
-			var path := EFFECTS_DIR + fname
-			var script := load(path) as Script
-			if script == null:
-				push_warning("EffectRegistry: failed to load %s" % path)
-			else:
-				var inst = script.new()
-				if inst is Effect:
-					_instances[eff_id] = inst
-				else:
-					# 兼容旧未继承 Effect 的脚本（仍走鸭子调用）
-					_instances[eff_id] = inst
+		if not dir.current_is_dir():
+			# 兼容三种情形：源码 .gd / 字节码 .gdc / 重映射占位 .remap
+			# 安卓导出 script_export_mode=2 时实际只剩 .gdc + .remap。
+			var ext: String = ""
+			if fname.ends_with(".gd"):
+				ext = ".gd"
+			elif fname.ends_with(".gdc"):
+				ext = ".gdc"
+			elif fname.ends_with(".remap"):
+				ext = ".remap"
+			if ext != "":
+				var stem: String = fname.substr(0, fname.length() - ext.length())
+				# .remap 形如 foo.gd.remap → 去掉再剥一次 .gd
+				if ext == ".remap" and stem.ends_with(".gd"):
+					stem = stem.substr(0, stem.length() - 3)
+				if stem == "effect_utils":
+					fname = dir.get_next()
+					continue
+				if not seen.has(stem):
+					seen[stem] = true
+					var path := EFFECTS_DIR + stem + ".gd"
+					var script := load(path) as Script
+					if script == null:
+						push_warning("EffectRegistry: failed to load %s" % path)
+					else:
+						var inst = script.new()
+						_instances[stem] = inst
 		fname = dir.get_next()
 	dir.list_dir_end()
 
@@ -69,6 +80,11 @@ func trigger_death(eff_id: String, card_data, ctx) -> bool:
 	if inst and inst.has_method("on_death"):
 		return inst.on_death(card_data, ctx)
 	return false
+
+func trigger_kill(eff_id: String, attacker_cell, victim_cells: Array, ctx) -> void:
+	var inst = _instances.get(eff_id)
+	if inst and inst.has_method("on_kill"):
+		await inst.on_kill(attacker_cell, victim_cells, ctx)
 
 # 法术结算去向，返回 "" 时由调用者使用默认（入墓）。
 func resolve_destination(eff_id: String, card_data, ctx) -> String:

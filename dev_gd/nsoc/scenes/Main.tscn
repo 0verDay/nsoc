@@ -105,6 +105,58 @@ theme_override_constants/h_separation = 25
 theme_override_constants/v_separation = 25
 columns = 3
 
+[node name="LeftSidePnl" type="Panel" parent="." unique_id=4711000001]
+layout_mode = 1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -640.0
+offset_top = -210.0
+offset_right = -340.0
+offset_bottom = -30.0
+grow_horizontal = 0
+grow_vertical = 0
+pivot_offset = Vector2(150, 90)
+
+[node name="HeroNameLbl" type="Label" parent="LeftSidePnl" unique_id=4711000002]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -135.0
+offset_bottom = 70.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0.2, 0.2, 0.2, 1)
+theme_override_font_sizes/font_size = 32
+text = "Player"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PHpPnl" type="Panel" parent="LeftSidePnl" unique_id=2043617128]
+layout_mode = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -125.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 70.0
+grow_horizontal = 0
+
+[node name="PlayerHealthLabel" type="Label" parent="LeftSidePnl/PHpPnl" unique_id=2079591640]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.419608, 0.419608, 1)
+theme_override_font_sizes/font_size = 26
+text = "30"
+horizontal_alignment = 1
+vertical_alignment = 1
+
 [node name="BottomBar" type="Panel" parent="." unique_id=149762453]
 layout_mode = 1
 anchors_preset = 11
@@ -118,32 +170,15 @@ offset_bottom = -10.0
 grow_horizontal = 0
 grow_vertical = 2
 
-[node name="PHpPnl" type="Panel" parent="BottomBar" unique_id=2043617128]
-layout_mode = 0
-offset_left = 30.0
-offset_top = 20.0
-offset_right = 145.0
-offset_bottom = 80.0
-
-[node name="PlayerHealthLabel" type="Label" parent="BottomBar/PHpPnl" unique_id=2079591640]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(1, 0.419608, 0.419608, 1)
-theme_override_font_sizes/font_size = 26
-text = "30"
-horizontal_alignment = 1
-vertical_alignment = 1
-
 [node name="ManaPnl" type="Panel" parent="BottomBar" unique_id=613423958]
-layout_mode = 0
-offset_left = 165.0
-offset_top = 20.0
+layout_mode = 1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 30.0
+offset_top = -100.0
 offset_right = 280.0
-offset_bottom = 80.0
+offset_bottom = -40.0
+grow_vertical = 0
 
 [node name="ManaLabel" type="Label" parent="BottomBar/ManaPnl" unique_id=302280237]
 layout_mode = 1
@@ -182,49 +217,12 @@ alignment = 1
 
 [node name="EndTurnBtn" type="Button" parent="BottomBar" unique_id=337214859]
 layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
+anchors_preset = 10
 anchor_right = 1.0
-anchor_bottom = 1.0
 offset_left = 30.0
-offset_top = -140.0
+offset_top = 30.0
 offset_right = -30.0
-offset_bottom = -60.0
+offset_bottom = 110.0
 grow_horizontal = 2
-grow_vertical = 0
 theme_override_font_sizes/font_size = 28
 text = "结束回合"
-
-[node name="SideButtonsBox" type="VBoxContainer" parent="BottomBar" unique_id=798455250]
-layout_mode = 1
-anchors_preset = 4
-anchor_top = 0.5
-anchor_bottom = 0.5
-offset_left = -60.0
-offset_top = -300.0
-offset_bottom = 300.0
-grow_horizontal = 0
-grow_vertical = 2
-theme_override_constants/separation = 120
-alignment = 1
-
-[node name="BanishedBtn" type="Button" parent="BottomBar/SideButtonsBox" unique_id=347114464]
-layout_mode = 2
-size_flags_vertical = 3
-theme_override_font_sizes/font_size = 24
-text = "除
-外"
-
-[node name="GraveBtn" type="Button" parent="BottomBar/SideButtonsBox" unique_id=1904407077]
-layout_mode = 2
-size_flags_vertical = 3
-theme_override_font_sizes/font_size = 24
-text = "墓
-地"
-
-[node name="DeckBtn" type="Button" parent="BottomBar/SideButtonsBox" unique_id=1507054667]
-layout_mode = 2
-size_flags_vertical = 3
-theme_override_font_sizes/font_size = 24
-text = "牌
-堆"

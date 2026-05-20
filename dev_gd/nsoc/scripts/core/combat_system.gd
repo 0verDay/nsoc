@@ -38,7 +38,12 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 	attacker.play_attack_effect()
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
-		defender.health[defender_data.opp_dir] -= a_atk
+		# "虚弱"：受到任意方向伤害时，同步扣除四维血量
+		if defender.effects.has("frail"):
+			for d in ["top", "bottom", "left", "right"]:
+				defender.health[d] -= a_atk
+		else:
+			defender.health[defender_data.opp_dir] -= a_atk
 		defender._update_hp_labels()
 		defender.play_damage_effect()
 
@@ -46,18 +51,38 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
-		if defender.health[defender_data.opp_dir] <= 0:
-			if not dead_cells.has(defender):
-				dead_cells.append(defender)
+		var dead: bool = false
+		if defender.effects.has("frail"):
+			# 任一面 <=0 即视为阵亡
+			for d in ["top", "bottom", "left", "right"]:
+				if defender.health[d] <= 0:
+					dead = true
+					break
+		else:
+			dead = defender.health[defender_data.opp_dir] <= 0
+		if dead and not dead_cells.has(defender):
+			dead_cells.append(defender)
 
 	if dead_cells.size() > 0:
 		for dc in dead_cells:
 			dc.play_death_effect()
 		await get_tree().create_timer(DEATH_DELAY).timeout
+		# 收集 victim 快照（card_name / is_enemy）供 handle_kills 使用，
+		# 因 clear_card 会清空这些字段。
+		var victims: Array = []
 		for dc in dead_cells:
+			var snap := {
+				"cell": dc,
+				"card_name": dc.card_name,
+				"is_enemy": dc.is_enemy,
+			}
 			_play_controller.handle_unit_death(dc)
 			if dc.has_card:
 				dc.clear_card()
+			victims.append(snap)
+		# 攻击者击杀回调（冲阵等）。attacker 自身可能因警戒等被打死，需校验 has_card。
+		if attacker != null and attacker.has_card:
+			await _play_controller.handle_kills(attacker, victims)
 
 func move_card(start, end) -> void:
 	var cname: String = start.card_name
@@ -65,6 +90,7 @@ func move_card(start, end) -> void:
 	var hp: Dictionary = start.health
 	var is_e: bool = start.is_enemy
 	var effs: Array = start.effects
+	var charged: bool = start.has_charged
 
 	var visual = _cell_scene.instantiate()
 	_root.add_child(visual)
@@ -77,14 +103,33 @@ func move_card(start, end) -> void:
 	start.clear_card()
 
 	var tween := get_tree().create_tween()
-	var mid_pos: Vector2 = (start.global_position + end.global_position) / 2.0
+	var total_duration: float = MOVE_HALF_DURATION * 2.0
+	var start_pos: Vector2 = start.global_position
+	var end_pos: Vector2 = end.global_position
 
-	tween.tween_property(visual, "global_position", mid_pos + MOVE_ARC_OFFSET, MOVE_HALF_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(visual, "scale", SCALE_PEAK, MOVE_HALF_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.tween_property(visual, "global_position", end.global_position, MOVE_HALF_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tween.parallel().tween_property(visual, "scale", Vector2.ONE, MOVE_HALF_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	# 水平/整体位移：单段 sine 缓动，全程匀畅，无中点速度归零
+	tween.tween_property(visual, "global_position", end_pos, total_duration) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	# 弧形拱起：用 method tween 输出 0→1 进度，依抛物 sin(pi*t) 叠加 y 偏移
+	tween.parallel().tween_method(
+		func(t: float) -> void:
+			if not is_instance_valid(visual):
+				return
+			var base: Vector2 = start_pos.lerp(end_pos, t)
+			var arc_y: float = sin(PI * t) * MOVE_ARC_OFFSET.y
+			visual.global_position = base + Vector2(0.0, arc_y),
+		0.0, 1.0, total_duration)
+	# 缩放：先放大再回落，整段单 tween 用 sine 平滑
+	tween.parallel().tween_method(
+		func(t: float) -> void:
+			if not is_instance_valid(visual):
+				return
+			var s: float = 1.0 + (SCALE_PEAK.x - 1.0) * sin(PI * t)
+			visual.scale = Vector2(s, s),
+		0.0, 1.0, total_duration)
 
 	await tween.finished
 	visual.queue_free()
 
 	end.set_card(cname, atk, hp, is_e, effs)
+	end.has_charged = charged
