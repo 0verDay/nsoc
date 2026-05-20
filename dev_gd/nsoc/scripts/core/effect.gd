@@ -22,6 +22,12 @@ func on_play(card_data, ctx) -> void:
 func on_death(card_data, ctx) -> bool:
 	return false
 
+# 击杀时触发。attacker_cell 为发起攻击的单位所在格，victim_cells 为本次被
+# 击杀的敌方 cell 数组（已 clear_card，可视为空地）。
+# 用于"冲阵"类效果：击杀后做后续行动（移动、追击等）。
+func on_kill(attacker_cell, victim_cells: Array, ctx) -> void:
+	pass
+
 # 法术解析后该卡的去向。返回 "graveyard" / "banish" / "" (不处理)。
 # 用于替代 main.gd 中硬编码的 "exhaust" 分支。
 func resolve_destination(card_data, ctx) -> String:

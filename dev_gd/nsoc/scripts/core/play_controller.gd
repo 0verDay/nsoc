@@ -5,7 +5,7 @@ extends Node
 # 取代原 cell.gd:_drop_data 中扣 mana / 销毁手牌 / 触发出牌效果 / 动画飞入 / 入墓除外 等逻辑。
 # 同时是出牌规则的唯一来源（can_play_at），cell 仅询问不裁决。
 
-signal hand_consumed                       # 通知 HandView 补手牌
+signal hand_consumed(slot_index: int, source_card)            # 通知 HandView 在指定槽位补手牌；source_card 为占位旧卡（HandView 负责 free）
 
 # 业务规则：单位最大可下行（row 索引）。row <= PLAYER_DEPLOY_MIN_ROW 视为敌方半场。
 const PLAYER_DEPLOY_MIN_ROW: int = 2
@@ -27,12 +27,29 @@ func can_play_at(cell, data) -> bool:
 	if not Game.mana.can_spend(data.cost):
 		return false
 	if data.type == "法术":
-		return true
+		var full = data.get("full_data")
+		var target := ""
+		if full is CardSpell:
+			target = full.target
+		return _spell_target_valid(cell, target)
 	# 单位
 	if cell.has_card:
 		return false
 	if cell.row <= PLAYER_DEPLOY_MIN_ROW:
 		return false
+	return true
+
+# 法术目标过滤。
+static func _spell_target_valid(cell, target: String) -> bool:
+	match target:
+		"":
+			return true
+		"friendly_unit":
+			return cell != null and cell.has_card and not cell.is_enemy
+		"enemy_unit":
+			return cell != null and cell.has_card and cell.is_enemy
+		"any_unit":
+			return cell != null and cell.has_card
 	return true
 
 func handle_drop(cell, data) -> void:
@@ -42,27 +59,31 @@ func handle_drop(cell, data) -> void:
 	Game.mana.spend(data.cost)
 
 	var drop_global_pos: Vector2 = cell.global_position + cell.size / 2.0
-	# 销毁拖拽源（手牌）
+	# 拖拽源：先记录位置 + 隐藏（保留 Container 占位），由 HandView 在新卡到位后 free
 	var src = data.get("source_card")
+	var slot_index: int = -1
 	if src and is_instance_valid(src):
-		if src.get_parent():
-			src.get_parent().remove_child(src)
-		src.queue_free()
+		slot_index = src.get_index()
+		src.modulate.a = 0.0
+		src.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# 标记为已消耗，避免 HandCard._notification(DRAG_END) 把 modulate.a 改回 1
+		src.set_meta("consumed", true)
 
 	var full_data = data.get("full_data")
 
 	if data.type == "法术":
 		_play_spell(full_data, cell)
-		hand_consumed.emit()
+		hand_consumed.emit(slot_index, src)
 		return
 
-	# 单位：先触发 on_play，再播飞入动画并落子
-	_trigger_unit_play_effects(full_data)
-	hand_consumed.emit()
+	# 单位：先播飞入动画并落子，落子后再触发 on_play。
+	# on_play 时 cell 已写入数据，"突围"等需要查询自身相邻状态的效果可正确工作。
+	hand_consumed.emit(slot_index, src)
 
 	var effs := _get_effects(full_data)
 	await _animate_drop(cell, data, drop_global_pos, effs)
 	cell.set_card(data.card_name, data.attack, data.health, false, effs)
+	_trigger_unit_play_effects(full_data, cell)
 
 func _animate_drop(cell, data, drop_global_pos: Vector2, effs: Array) -> void:
 	var visual = _cell_scene.instantiate()
@@ -83,10 +104,11 @@ func _animate_drop(cell, data, drop_global_pos: Vector2, effs: Array) -> void:
 	if is_instance_valid(visual):
 		visual.queue_free()
 
-func _play_spell(spell_data, _target_cell) -> void:
+func _play_spell(spell_data, target_cell) -> void:
 	if spell_data == null:
 		return
 	var ctx := Game.make_effect_context()
+	ctx.target_cell = target_cell
 	var destination := "graveyard"
 	for eff in _get_effects(spell_data):
 		var dest := Effects.resolve_destination(eff, spell_data, ctx)
@@ -98,27 +120,45 @@ func _play_spell(spell_data, _target_cell) -> void:
 		"banish": Game.deck.banish(spell_data)
 		_: Game.deck.send_to_graveyard(spell_data)
 
-func _trigger_unit_play_effects(unit_data) -> void:
+func _trigger_unit_play_effects(unit_data, target_cell = null) -> void:
 	if unit_data == null:
 		return
 	var ctx := Game.make_effect_context()
+	ctx.target_cell = target_cell
 	for eff in _get_effects(unit_data):
 		Effects.trigger_play(eff, unit_data, ctx)
 
 func handle_unit_death(cell) -> void:
-	# 玩家阵亡才有"卡牌去向"概念；敌方阵亡不入任何牌堆。
-	if cell.is_enemy:
-		return
+	# 玩家与敌方阵亡都会进入对应阵营牌堆（敌方区当前仅累积显示）。
 	var cdata = Game.get_card(cell.card_name)
 	if cdata == null:
 		return
 	var ctx := Game.make_effect_context()
+	ctx.dying_is_enemy = cell.is_enemy
 	var handled := false
 	for eff in _get_effects(cdata):
 		if Effects.trigger_death(eff, cdata, ctx):
 			handled = true
 	if not handled:
-		Game.deck.send_to_graveyard(cdata)
+		if cell.is_enemy:
+			Game.deck.enemy_send_to_graveyard(cdata)
+		else:
+			Game.deck.send_to_graveyard(cdata)
+
+# 攻击者完成一次击杀后调用。victim_cells 已 clear_card。
+# 仅在 attacker 仍存活时触发其 on_kill 效果（如"冲阵"）。
+func handle_kills(attacker_cell, victim_cells: Array) -> void:
+	if attacker_cell == null or not attacker_cell.has_card:
+		return
+	if victim_cells.is_empty():
+		return
+	var cdata = Game.get_card(attacker_cell.card_name)
+	if cdata == null:
+		return
+	var ctx := Game.make_effect_context()
+	ctx.target_cell = attacker_cell
+	for eff in _get_effects(cdata):
+		await Effects.trigger_kill(eff, attacker_cell, victim_cells, ctx)
 
 # DataLoader 已统一输出 CardBase 对象。此函数只剩对 CardBase 的读取。
 static func _get_effects(card_data) -> Array:

@@ -24,14 +24,31 @@ static func _read_json(path: String):
 		push_error("DataLoader: malformed JSON: " + path)
 	return parsed
 
-static func load_hero_health(default_player: int = 30, default_enemy: int = 30) -> Dictionary:
-	var out := {"player": default_player, "enemy": default_enemy}
+static func load_hero_info(default_player_hp: int = 30, default_enemy_hp: int = 30) -> Dictionary:
+	var out := {
+		"player": {"name": "Player", "health": default_player_hp, "abilities": []},
+		"enemy":  {"name": "Enemy",  "health": default_enemy_hp, "abilities": []},
+	}
 	var j = _read_json(HERO_JSON)
 	if typeof(j) == TYPE_DICTIONARY:
 		if j.has("player"):
-			out.player = int(j["player"].get("health", default_player))
+			var p: Dictionary = j["player"]
+			out.player.health = int(p.get("health", default_player_hp))
+			out.player.name = String(p.get("name", out.player.name))
+			out.player.abilities = _parse_string_array(p.get("abilities", []))
 		if j.has("enemy"):
-			out.enemy = int(j["enemy"].get("health", default_enemy))
+			var e: Dictionary = j["enemy"]
+			out.enemy.health = int(e.get("health", default_enemy_hp))
+			out.enemy.name = String(e.get("name", out.enemy.name))
+			out.enemy.abilities = _parse_string_array(e.get("abilities", []))
+	return out
+
+static func _parse_string_array(raw) -> Array:
+	if typeof(raw) != TYPE_ARRAY:
+		return []
+	var out: Array = []
+	for item in raw:
+		out.append(String(item))
 	return out
 
 static func load_cards() -> Array:
@@ -69,7 +86,8 @@ static func _parse_card(card: Dictionary):
 				hp = {"top": hv, "bottom": hv, "left": hv, "right": hv}
 		new_card = CardUnit.new(c_name, c_cost, c_atk, hp, c_effects)
 	else:
-		new_card = CardSpell.new(c_name, c_cost, c_effects)
+		var c_target: String = card.get("target", "")
+		new_card = CardSpell.new(c_name, c_cost, c_effects, c_target)
 	new_card.count = c_count
 	return new_card
 
@@ -90,10 +108,19 @@ static func load_level() -> Dictionary:
 			})
 	if j.has("spawners") and typeof(j["spawners"]) == TYPE_ARRAY:
 		for sp in j["spawners"]:
+			# 兼容两种写法：单数 position 字段 / 复数 positions 数组。
+			# 统一规整为 positions: Array[Vector2]。
+			var positions: Array = []
+			if sp.has("positions") and typeof(sp["positions"]) == TYPE_ARRAY:
+				for pos in sp["positions"]:
+					positions.append(Vector2(int(pos["row"]), int(pos["col"])))
+			elif sp.has("position"):
+				var p = sp["position"]
+				positions.append(Vector2(int(p["row"]), int(p["col"])))
 			out.spawners.append({
 				"name": sp["name"],
 				"faction": int(sp["faction"]),
-				"position": Vector2(int(sp["position"]["row"]), int(sp["position"]["col"])),
+				"positions": positions,
 				"interval": int(sp["interval"]),
 			})
 	return out

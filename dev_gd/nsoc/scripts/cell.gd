@@ -20,6 +20,7 @@ var attack: int = 0
 var health: Dictionary = {"top": 0, "bottom": 0, "left": 0, "right": 0}
 var effects: Array = []
 var has_attacked: bool = false
+var has_charged: bool = false
 var is_phantom: bool = false
 
 @onready var inner_panel = $InnerPanel
@@ -80,7 +81,7 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> vo
 	card_name = cname
 	attack = atk
 	health = {"top": hp["top"], "bottom": hp["bottom"], "left": hp["left"], "right": hp["right"]}
-	effects = effects_in
+	effects = effects_in.duplicate()
 	is_enemy = enemy
 	name_lbl.text = cname
 	atk_lbl.text = str(attack)
@@ -100,6 +101,9 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> vo
 func _update_hp_labels() -> void:
 	for d in hp_labels.keys():
 		hp_labels[d].text = str(health[d])
+
+func _update_atk_label() -> void:
+	atk_lbl.text = str(attack)
 
 # 清除实卡（敌/我方死亡 或 棋子被替换）。
 # 会 emit cleared 通知外部"格子空了"，触发 phantom 重算等副作用。
@@ -122,6 +126,7 @@ func _do_clear() -> void:
 	card_name = ""
 	is_enemy = false
 	is_phantom = false
+	has_charged = false
 	inner_panel.visible = false
 	inner_panel.scale = Vector2.ONE
 	inner_panel.modulate.a = 1.0
