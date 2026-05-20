@@ -10,7 +10,7 @@ func id() -> String:
 	return "frail"
 
 func display_name() -> String:
-	return "虚弱"
+	return "陷围"
 
 func description() -> String:
-	return "虚弱：受到任意方向的伤害时，同步扣除四维的血量"
+	return "陷围：受到任意方向的伤害时，同步扣除四维的血量"
