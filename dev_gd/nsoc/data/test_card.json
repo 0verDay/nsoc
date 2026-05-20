@@ -50,7 +50,7 @@
 	"health": {"top": 6, "bottom": 6, "left": 6, "right": 6},
 	"attack": 1,
 	"count": 1,
-	"effects": ["breakout", "assault_charge", "frail", "fierce_combat"]
+	"effects": ["breakout", "fierce_combat", "assault_charge", "frail"]
   },
   {
 	"name": "长板·张飞",
