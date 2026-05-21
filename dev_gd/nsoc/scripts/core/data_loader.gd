@@ -51,8 +51,8 @@ static func _parse_string_array(raw) -> Array:
 		out.append(String(item))
 	return out
 
-static func load_cards() -> Array:
-	var j = _read_json(CARD_JSON)
+static func load_cards(path: String = CARD_JSON) -> Array:
+	var j = _read_json(path)
 	if typeof(j) != TYPE_ARRAY or (j as Array).size() == 0:
 		return _fallback_cards()
 	var out: Array = []

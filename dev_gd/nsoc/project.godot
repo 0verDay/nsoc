@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="NSOC"
-run/main_scene="res://scenes/MainMenu.tscn"
+run/main_scene="res://scenes/SplashScreen.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
@@ -43,3 +43,4 @@ pointing/emulate_touch_from_mouse=true
 
 rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(1, 1, 1, 1)
