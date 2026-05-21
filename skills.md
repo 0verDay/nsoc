@@ -30,6 +30,11 @@ Game (autoload "game_context.gd")
 Effects (autoload "effect_registry.gd")
               启动期扫描 res://scripts/effects/*.gd 自注册
               兼容 .gd / .gdc / .remap (适配安卓导出 mode=2)
+
+HeroAbilities (autoload "hero_ability_registry.gd")
+              启动期扫描 res://scripts/abilities/*.gd 自注册
+              同样兼容 .gd / .gdc / .remap
+              管理英雄主动技能：费用 / 每回合限用 / 激活分发
 ```
 
 `main.gd` 是薄装配器：实例化所有子模块、注入引用、连接信号、路由全局输入（点击外部关侧栏）。业务全部委托给 `Game.*` + `Effects.*` + UI 控制器。
@@ -137,6 +142,15 @@ UI 锚点 / 阴影 / 圆角统一通过 `ThemeFactory` 派生，全局风格一�
 | `steadfast` | 坚守 | （TurnSystem 拦截） | 阶段推进时不主动移动；仍可攻击邻敌或英雄 |
 | `terrify` | 破胆 | on_kill | 被本单位击杀的目标从对应阵营墓地移出送入除外 |
 | `battle_hardened` | 历战 | on_kill | 击杀后攻击力 +N（N = 本次击杀数） |
+| `fierce_combat` | 酣战 | on_kill | 击杀后本单位四维各 +N（N = 本次击杀数）；与 battle_hardened 对称（一个堆攻、一个堆血） |
+
+## 3.5 英雄技能清单（已实现）
+
+英雄技能与卡牌效果是两套独立系统。技能由 `HeroAbility` 基类驱动，文件名 = ID，扫描注册到 `HeroAbilities` autoload。基类钩子：`id / display_name / description / cost / once_per_turn / can_activate / on_activate`。激活流程：`HeroAbilities.activate(id, ctx)` → 校验 `can_activate` → `Game.mana.spend(cost)` → 写每回合占用标记 → 发 `ability_used` 信号 → `await on_activate(ctx)`。新回合需 `main.gd` 在 `mana.start_new_turn` 后调 `HeroAbilities.reset_turn_usage()`。
+
+| ID | 名称 | 费用 | 每回合限用 | 描述 |
+|---|---|---|---|---|
+| `restart` | 再起 | 1 | 是 | 弃置全部手牌进墓地，再补齐至 MIN_HAND_SIZE（ctx 需提供 `hand_view`） |
 
 ## 4. 现有卡牌（test_card.json）
 
@@ -164,6 +178,12 @@ UI 锚点 / 阴影 / 圆角统一通过 `ThemeFactory` 派生，全局风格一�
 
 **新关卡刷怪点**：
 1. `test_level.json` 的 `spawners` 加配置（`positions` 数组共享一份 interval / timer）
+
+**新英雄技能**：
+1. 在 `scripts/abilities/` 新建 `<id>.gd`，继承 `HeroAbility`，实现 `id() / display_name() / description() / cost()`
+2. 按需重写 `once_per_turn()`（默认 false）、`can_activate(ctx)`（默认走基类的回合状态 + 费用 + 限次校验）、`on_activate(ctx)`
+3. ctx 由调用方（通常 main.gd / UI 按钮）按技能需要拼出（例 `restart` 需要 `hand_view`）
+4. 重启游戏，`HeroAbilities` 自动扫描挂入；UI 按钮通过 `HeroAbilities.activate(id, ctx)` 触发
 
 ## 6. 关键设计权衡
 
