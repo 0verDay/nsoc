@@ -15,7 +15,11 @@ var _long_press_kind: String = "card"  # "card" | "hero"
 var _is_open: bool = false
 
 const LONG_PRESS_TIME: float = 0.4
-const PANEL_WIDTH: float = 320.0
+# 详情面板宽度。备战界面 HeroPnl 锚 anchor_right=0.25 + offset_right=-6 →
+# 设计宽 1920 下右缘 = 474px。详情面板从 offset_left=10 起，宽 464 → 右缘 474，
+# 恰好贴齐英雄卡右边界，不侵入中间 ReviewPnl。游玩界面共用此尺寸。
+const PANEL_WIDTH: float = 464.0
+const PANEL_LEFT_INSET: float = 10.0
 
 func setup(parent: Control, hand_card_scene: PackedScene) -> void:
 	_parent = parent
@@ -32,8 +36,8 @@ func _build_panel() -> void:
 	_clip.name = "DetailPanelClip"
 	_parent.add_child(_clip)
 	_clip.set_anchors_preset(Control.PRESET_LEFT_WIDE, false)
-	_clip.offset_left = 10
-	_clip.offset_right = 330
+	_clip.offset_left = PANEL_LEFT_INSET
+	_clip.offset_right = PANEL_LEFT_INSET + PANEL_WIDTH
 	_clip.offset_top = 10
 	_clip.offset_bottom = -10
 	_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
