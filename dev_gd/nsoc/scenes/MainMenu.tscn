@@ -1,0 +1,193 @@
+[gd_scene format=3 uid="uid://c7va5nxpqg0k3"]
+
+[ext_resource type="Script" uid="uid://bqjuwsuvqrk04" path="res://scripts/main_menu.gd" id="1_mm"]
+[ext_resource type="Texture2D" uid="uid://ob67a3pbmruv" path="res://icon.svg" id="2_icon"]
+
+[node name="MainMenu" type="Control" unique_id=999243923]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_mm")
+
+[node name="Bg" type="Panel" parent="." unique_id=1739094833]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CenterContainer" type="CenterContainer" parent="." unique_id=1716528386]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TestButton" type="Button" parent="CenterContainer" unique_id=1800591367]
+custom_minimum_size = Vector2(320, 120)
+layout_mode = 2
+text = "test"
+
+[node name="RightSidePnl" type="Panel" parent="." unique_id=2030988436]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -490.0
+offset_top = -300.0
+offset_right = -40.0
+offset_bottom = -30.0
+grow_horizontal = 0
+grow_vertical = 0
+
+[node name="VBox" type="VBoxContainer" parent="RightSidePnl" unique_id=94684416]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 16
+
+[node name="TopRow" type="HBoxContainer" parent="RightSidePnl/VBox" unique_id=759530456]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 16
+
+[node name="CampaignBtn" type="Button" parent="RightSidePnl/VBox/TopRow" unique_id=1502492576]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "战役"
+
+[node name="JourneyBtn" type="Button" parent="RightSidePnl/VBox/TopRow" unique_id=1610064284]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "游历"
+
+[node name="SparringBtn" type="Button" parent="RightSidePnl/VBox" unique_id=2128988056]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "演武切磋"
+
+[node name="ProfilePnl" type="Panel" parent="." unique_id=1129281135]
+layout_mode = 1
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 340.0
+offset_bottom = 120.0
+
+[node name="HBox" type="HBoxContainer" parent="ProfilePnl" unique_id=994867247]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = -12.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="Avatar" type="TextureRect" parent="ProfilePnl/HBox" unique_id=1841651292]
+custom_minimum_size = Vector2(76, 76)
+layout_mode = 2
+size_flags_vertical = 4
+texture = ExtResource("2_icon")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="InfoVBox" type="VBoxContainer" parent="ProfilePnl/HBox" unique_id=1053395849]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+theme_override_constants/separation = 4
+alignment = 1
+
+[node name="NameLbl" type="Label" parent="ProfilePnl/HBox/InfoVBox" unique_id=913489176]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.2, 0.2, 1)
+theme_override_font_sizes/font_size = 22
+text = "Administrator"
+
+[node name="MoneyLbl" type="Label" parent="ProfilePnl/HBox/InfoVBox" unique_id=1132825602]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.4, 0.4, 1)
+theme_override_font_sizes/font_size = 18
+text = "资金：666"
+
+[node name="LeftNavPnl" type="Panel" parent="." unique_id=1818225759]
+layout_mode = 1
+anchors_preset = 4
+anchor_top = 0.5
+anchor_bottom = 0.5
+offset_left = 20.0
+offset_top = -400.0
+offset_right = 140.0
+offset_bottom = 400.0
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="LeftNavPnl" unique_id=894140849]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 16.0
+offset_right = -10.0
+offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="GrowBtn" type="Button" parent="LeftNavPnl/VBox" unique_id=1546313644]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "成
+长"
+
+[node name="PrepareBtn" type="Button" parent="LeftNavPnl/VBox" unique_id=1270854690]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "备
+战"
+
+[node name="FriendBtn" type="Button" parent="LeftNavPnl/VBox" unique_id=485970605]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "好
+友"
+
+[node name="CollectionBtn" type="Button" parent="LeftNavPnl/VBox" unique_id=568993497]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "藏
+品"
+
+[node name="CustomBtn" type="Button" parent="LeftNavPnl/VBox" unique_id=1679605563]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 1.5
+text = "自
+定
+义"
