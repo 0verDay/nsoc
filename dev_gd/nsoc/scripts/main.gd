@@ -41,6 +41,9 @@ var enemy_banished_btn: Button
 var hero_ability_btn: Button
 
 func _ready() -> void:
+	# 整个根 Control 先隐藏，等入场动画把节点移到屏外起点后再显示，
+	# 避免 anchor 解析帧期间渲染出完整 UI（"闪一下"）。
+	visible = false
 	await _apply_editor_window_scale()
 	Game.bootstrap()
 
@@ -479,6 +482,15 @@ func _play_intro_animation() -> void:
 	var bottom_grid_bg: Panel = $BottomGridBg
 	var enemy_hp_pnl: Panel = $EnemyHpPnl
 
+	# 立刻把所有参与动画的节点设 visible=false / modulate.a=0，
+	# 防止 anchor 解析期间已渲染出完整 UI 一帧（"闪一下"）。
+	# visible=false 仍保留布局参与，anchor 仍会算 size/position。
+	var slide_nodes: Array = []
+	for n in [settings_btn, bottom_bar, left_side, top_grid_bg, bottom_grid_bg]:
+		if n != null:
+			slide_nodes.append(n)
+			n.visible = false
+
 	# 渐显组：先全部 modulate.a = 0，阶段 B 一起 tween 到 1
 	var fade_targets: Array = []
 	if enemy_hp_pnl: fade_targets.append(enemy_hp_pnl)
@@ -490,8 +502,11 @@ func _play_intro_animation() -> void:
 	for n in fade_targets:
 		n.modulate.a = 0.0
 
+	# 多等几帧让 anchor 布局完全稳定，避免 size 为 0 导致 from 计算错。
+	for _i in INTRO_LAYOUT_SETTLE_FRAMES:
+		await get_tree().process_frame
+
 	# 滑入组：记录原位 → 把节点平移到屏外起点。
-	# 通过 position 偏移实现（不动 anchor / offset）。
 	var slide_specs: Array = []
 	var vp_w: float = float(ProjectSettings.get_setting("display/window/size/viewport_width", 1920))
 	var vp_h: float = float(ProjectSettings.get_setting("display/window/size/viewport_height", 1080))
@@ -505,12 +520,14 @@ func _play_intro_animation() -> void:
 		slide_specs.append({"node": top_grid_bg, "from": Vector2(0, -vp_h)})
 	if bottom_grid_bg:
 		slide_specs.append({"node": bottom_grid_bg, "from": Vector2(0, vp_h)})
-	# 多等几帧让 anchor 布局完全稳定，避免 size 为 0 导致 from 计算错。
-	for _i in INTRO_LAYOUT_SETTLE_FRAMES:
-		await get_tree().process_frame
 	for s in slide_specs:
 		s["origin"] = s.node.position
 		s.node.position = s.origin + s.from
+	# 位移到屏外后才显示，避免任何一帧出现在原位
+	for n in slide_nodes:
+		n.visible = true
+	# 整个根此前在 _ready 内置 visible=false，现在节点都已就位，可显示。
+	visible = true
 
 	# 阶段 A：四个面板并行滑回原位（0.5s）
 	var tween_a := create_tween()
