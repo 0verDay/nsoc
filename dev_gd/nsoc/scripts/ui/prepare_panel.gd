@@ -193,6 +193,9 @@ func _install_detail_panel() -> void:
 	_detail_panel.setup(self, HAND_CARD_SCENE)
 	# 让 detail clip 在备战面板内置顶，盖住 HeroPnl/ReviewPnl 等。
 	_detail_panel.get_clip().move_to_front()
+	# 让详情面板锁定到 HeroPnl 的实时矩形，任意分辨率下都能完全覆盖英雄卡片。
+	# 直接用固定 PANEL_WIDTH 在 expand 拉伸模式下不同屏宽比例时会偏小或偏大。
+	_detail_panel.attach_to_rect(hero_pnl)
 
 
 # 在 ReviewPnl 内构建带过度滑动弹性的卡面网格。
