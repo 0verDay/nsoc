@@ -15,11 +15,17 @@ var _long_press_kind: String = "card"  # "card" | "hero"
 var _is_open: bool = false
 
 const LONG_PRESS_TIME: float = 0.4
-# 详情面板宽度。备战界面 HeroPnl 锚 anchor_right=0.25 + offset_right=-6 →
-# 设计宽 1920 下右缘 = 474px。详情面板从 offset_left=10 起，宽 464 → 右缘 474，
-# 恰好贴齐英雄卡右边界，不侵入中间 ReviewPnl。游玩界面共用此尺寸。
+# 详情面板默认宽度（游玩界面用）。备战界面通过 attach_to_rect(HeroPnl) 改为
+# 跟随 HeroPnl 实时尺寸，确保任意分辨率下都能完全遮住英雄卡片。
 const PANEL_WIDTH: float = 464.0
 const PANEL_LEFT_INSET: float = 10.0
+
+# 跟随目标：非空时 clip 的位置/尺寸每帧锁定到 target 的全局矩形上，
+# 这样 detail panel 完全覆盖 target，不受设计分辨率与实际屏幕比例差异影响。
+var _follow_target: Control = null
+# 跟随模式下，true 时 _sync_to_target 不改 panel 的 offset_left/right，
+# 让弹出/收回 tween 完整播放，避免每帧把 panel 拉回关闭态导致动画消失。
+var _animating: bool = false
 
 func setup(parent: Control, hand_card_scene: PackedScene) -> void:
 	_parent = parent
@@ -30,6 +36,40 @@ func setup(parent: Control, hand_card_scene: PackedScene) -> void:
 	_long_press_timer.one_shot = true
 	_long_press_timer.timeout.connect(_on_long_press_timeout)
 	_parent.add_child(_long_press_timer)
+	# 默认无跟随目标，省一份 _process 开销。
+	set_process(false)
+
+# 让 clip 锁到 target 的矩形。备战界面把 HeroPnl 传入即可。
+# 调用一次即可：之后每帧 _process 同步 global_position/size，自动跟随屏宽变化。
+func attach_to_rect(target: Control) -> void:
+	_follow_target = target
+	if _clip == null or target == null:
+		set_process(false)
+		return
+	# 切到 TOP_LEFT 锚点 + 手动尺寸控制，避免 anchor 与 set_global_* 互相打架。
+	_clip.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
+	set_process(true)
+	_sync_to_target()
+
+func _process(_delta: float) -> void:
+	if _follow_target != null and is_instance_valid(_follow_target):
+		_sync_to_target()
+
+func _sync_to_target() -> void:
+	if _clip == null or _follow_target == null:
+		return
+	_clip.global_position = _follow_target.global_position
+	_clip.size = _follow_target.size
+	# panel 始终铺满 clip。仅在"非动画 + 关闭态"时同步 offset，否则会盖掉 tween。
+	if _panel != null and not _is_open and not _animating:
+		_panel.offset_left = -_clip.size.x
+		_panel.offset_right = 0
+
+# 当前面板宽。跟随模式下取 clip 实时宽，否则回落到 PANEL_WIDTH。
+func _current_width() -> float:
+	if _follow_target != null and _clip != null:
+		return _clip.size.x
+	return PANEL_WIDTH
 
 func _build_panel() -> void:
 	_clip = Control.new()
@@ -178,11 +218,14 @@ func show_for(data) -> void:
 		return
 	_is_open = true
 	_clip.visible = true
-	_panel.offset_left = -PANEL_WIDTH
+	var w: float = _current_width()
+	_panel.offset_left = -w
 	_panel.offset_right = 0
+	_animating = true
 	var tween := get_tree().create_tween()
 	tween.tween_property(_panel, "offset_left", 0.0, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(_panel, "offset_right", PANEL_WIDTH, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_panel, "offset_right", w, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(func(): _animating = false)
 
 # 英雄详情：显示名字 + 血量 + 技能名/描述，复用同一弹出动画。
 # 不显示费用括号；CardCenter 隐藏让文字整体上移。血量传 -1 表示走默认从 Game.hero 取初始 max。
@@ -219,20 +262,27 @@ func show_hero(hero_name: String, ability_id: String = "", display_hp: int = -1)
 		return
 	_is_open = true
 	_clip.visible = true
-	_panel.offset_left = -PANEL_WIDTH
+	var w: float = _current_width()
+	_panel.offset_left = -w
 	_panel.offset_right = 0
+	_animating = true
 	var tween := get_tree().create_tween()
 	tween.tween_property(_panel, "offset_left", 0.0, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(_panel, "offset_right", PANEL_WIDTH, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_panel, "offset_right", w, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(func(): _animating = false)
 
 func hide_panel() -> void:
 	if not _is_open:
 		return
 	_is_open = false
+	var w: float = _current_width()
+	_animating = true
 	var tween := get_tree().create_tween()
-	tween.tween_property(_panel, "offset_left", -PANEL_WIDTH, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.tween_property(_panel, "offset_left", -w, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tween.parallel().tween_property(_panel, "offset_right", 0.0, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tween.tween_callback(func(): _clip.visible = false)
+	tween.tween_callback(func():
+		_animating = false
+		_clip.visible = false)
 
 func get_clip() -> Control:
 	return _clip
