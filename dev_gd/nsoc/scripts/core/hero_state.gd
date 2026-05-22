@@ -9,21 +9,29 @@ var player_health: int = 30
 var enemy_health: int = 30
 var player_max_health: int = 30           # 详情面板用，不随战斗扣减
 var enemy_max_health: int = 30
+# 局内展示名（战斗英雄面板 HeroNameLbl 用）。
 var player_name: String = "Player"
 var enemy_name: String = "Enemy"
+# 完整名（长按详情面板用）。未显式设置时与 *_name 相同。
+var player_full_name: String = "Player"
+var enemy_full_name: String = "Enemy"
 var player_abilities: Array = []          # String[]，HeroAbility ID 列表
 var enemy_abilities: Array = []
 var _player_dead: bool = false
 var _enemy_dead: bool = false
 
+# setup 兼容签名：未传 full_name 时 fallback 到对应 name。
 func setup(p_hp: int, e_hp: int, p_name: String = "Player", e_name: String = "Enemy",
-		p_abilities: Array = [], e_abilities: Array = []) -> void:
+		p_abilities: Array = [], e_abilities: Array = [],
+		p_full_name: String = "", e_full_name: String = "") -> void:
 	player_health = p_hp
 	enemy_health = e_hp
 	player_max_health = p_hp
 	enemy_max_health = e_hp
 	player_name = p_name
 	enemy_name = e_name
+	player_full_name = p_full_name if p_full_name != "" else p_name
+	enemy_full_name = e_full_name if e_full_name != "" else e_name
 	player_abilities = p_abilities.duplicate()
 	enemy_abilities = e_abilities.duplicate()
 	_player_dead = false

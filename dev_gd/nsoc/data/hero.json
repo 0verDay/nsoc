@@ -1,0 +1,32 @@
+{
+	"version": 1,
+	"heroes": {
+		"A": {
+			"display_name": "往日之王：科因",
+			"battle_name": "科因",
+			"max_health": 30,
+			"abilities": ["restart"],
+			"skill_text": "再起：消耗 1 费用，弃置所有手牌，然后重新补满 5 张。"
+		},
+		"B": {
+			"display_name": "B",
+			"battle_name": "B",
+			"max_health": 30,
+			"abilities": [],
+			"skill_text": ""
+		},
+		"C": {
+			"display_name": "C",
+			"battle_name": "C",
+			"max_health": 30,
+			"abilities": [],
+			"skill_text": ""
+		}
+	},
+	"enemy_default": {
+		"display_name": "敌人",
+		"battle_name": "敌人",
+		"max_health": 30,
+		"abilities": []
+	}
+}

@@ -26,6 +26,53 @@ func ensure_min_hand_size() -> void:
 	while _container.get_child_count() < MIN_HAND_SIZE:
 		_spawn_card_at(-1)
 
+
+# 入场用：按顺序逐张摸牌补到 MIN_HAND_SIZE，每张走"屏外右侧滑入"动画。
+# interval 为相邻两张之间的间隔（同张动画启动间隔，不影响单张动画时长）。
+# 返回 await 时机为最后一张动画完成。
+func draw_initial_with_anim(interval: float = 0.15) -> void:
+	while _container.get_child_count() < MIN_HAND_SIZE:
+		_play_draw_anim_append()
+		await get_tree().create_timer(interval).timeout
+	# 最后一张可能尚在飞入中，等其动画余量。
+	await get_tree().create_timer(DRAW_ANIM_DURATION).timeout
+
+
+# 直接 append 一张到 container 末尾，并在屏外飞入。
+# 与 _play_draw_animation 的差异：无占位卡（container 子数 < MIN_HAND_SIZE 时调用），
+# 真卡先 add_child 取得布局位置 → 再用临时 visual 飞入覆盖 → 完成后 visual free。
+func _play_draw_anim_append() -> void:
+	var data = Game.deck.draw_card()
+	if data == null:
+		data = CardSpell.new("虚空", 1, ["autophagy"])
+	# 真卡先入 container 占位（不可见），布局后取其 global_position 做目标点。
+	var c = _hand_card_scene.instantiate()
+	_container.add_child(c)
+	c.setup(data, _card_counter)
+	_card_counter += 1
+	if c.has_signal("long_press_requested"):
+		c.long_press_requested.connect(_on_card_long_press_requested)
+	if c.has_signal("long_press_canceled"):
+		c.long_press_canceled.connect(_on_card_long_press_canceled)
+	c.modulate.a = 0.0  # 初始隐藏，飞入完成后恢复
+	# 等一帧让 Container 完成 reflow，能拿到正确 global_position
+	await get_tree().process_frame
+	if not is_instance_valid(c):
+		return
+	var target_pos: Vector2 = c.global_position
+	var visual = _hand_card_scene.instantiate()
+	_animation_root.add_child(visual)
+	visual.setup(data, 0)
+	visual.global_position = target_pos + DRAW_ENTRY_OFFSET
+	visual.z_index = 50
+	var tween := visual.create_tween()
+	tween.tween_property(visual, "global_position", target_pos, DRAW_ANIM_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	await tween.finished
+	if is_instance_valid(c):
+		c.modulate.a = 1.0
+	if is_instance_valid(visual):
+		visual.queue_free()
+
 # 出牌后单张补位，带飞入动画。
 # placeholder 为消耗后保留占位的旧卡节点（modulate=0），新卡到位后由本方法 free。
 # slot_index < 0 时直接走无动画补位。

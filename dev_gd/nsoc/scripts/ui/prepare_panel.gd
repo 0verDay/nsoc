@@ -14,8 +14,9 @@ extends SecondaryPanel
 const HAND_CARD_SCENE: PackedScene = preload("res://scenes/HandCard.tscn")
 
 # 备战界面专用卡牌数据源（含正式卡与占位卡）。
-# 与 DataLoader.CARD_JSON（test_card.json，战斗用）分离，避免互相污染。
-const REVIEW_CARD_JSON: String = "res://data/card.json"
+# 与战斗用的 all_cards.json / 运行时 user://battle_cards.json 分离，
+# 避免备战调试卡污染战斗牌池。
+const REVIEW_CARD_JSON: String = "res://data/review_cards.json"
 
 # Review 网格参数
 # HandCard 的 CostBg / AtkBg / 四向 HpLabel 向卡片外缘溢出 ~10px。
@@ -574,41 +575,38 @@ func _build_muster() -> void:
 	_muster_list = vbox
 
 
-# 把一张卡加入 muster：同名 +1，新卡入表，按当前排序模式重建列表。
-# 按需求：每次加卡都重置排序为"无排序"，让用户看到最新插入位置。
+# 把一张卡加入 muster：
+#   - 同名卡：count+1，位置不变，**保持当前排序模式**（重复加不影响视图顺序）
+#   - 新种类：append 到末尾，并把排序模式切回 NO_SORT
+#     （新卡落在已排序列表末尾会破坏严格排序，故用 NO_SORT 文字告知玩家
+#     "当前不是严格排序"）
 func _add_to_muster(card_data) -> void:
 	if card_data == null:
 		return
 	var key: String = String(card_data.name)
-	if _muster_entries.has(key):
-		_muster_entries[key].count += 1
-	else:
+	var is_new_kind: bool = not _muster_entries.has(key)
+	if is_new_kind:
 		_muster_entries[key] = {"card": card_data, "count": 1}
-	_set_sort_mode(SortMode.NO_SORT)
+	else:
+		_muster_entries[key].count += 1
+	if is_new_kind:
+		_set_sort_mode(SortMode.NO_SORT)
 	_refresh_muster_list()
 
 
+# 渲染列表：直接按 _muster_entries 当前 key 顺序输出。
+# 顺序由谁维护：
+#   - _add_to_muster：append 在尾（dict 自动）
+#   - _set_sort_mode：切换排序模式时重排 dict 内部顺序
+#   - _remove_one_from_muster：erase 不影响其他顺序
 func _refresh_muster_list() -> void:
 	if _muster_list == null:
 		return
 	for c in _muster_list.get_children():
 		c.queue_free()
-	var entries: Array = _muster_entries.values()
-	match _sort_mode:
-		SortMode.COST_ASC:
-			entries.sort_custom(func(a, b):
-				if a.card.cost != b.card.cost:
-					return a.card.cost < b.card.cost
-				return a.card.name < b.card.name)
-		SortMode.COST_DESC:
-			entries.sort_custom(func(a, b):
-				if a.card.cost != b.card.cost:
-					return a.card.cost > b.card.cost
-				return a.card.name < b.card.name)
-		_:
-			pass  # NO_SORT：保留 Dictionary 插入顺序
-	for e in entries:
-		_muster_list.add_child(_make_muster_item(e.card, int(e.count)))
+	for key in _muster_entries.keys():
+		var entry = _muster_entries[key]
+		_muster_list.add_child(_make_muster_item(entry.card, int(entry.count)))
 
 
 # 列表项：复用游玩界面牌堆样式（ThemeFactory.list_item_styles），按下/松开转发长按。
@@ -690,12 +688,9 @@ func _build_sort_panel() -> void:
 		child.queue_free()
 	var btn := Button.new()
 	btn.text = SORT_LABELS[_sort_mode]
+	# 按钮直接铺满 FilterPnl（FilterPnl 在 .tscn 中已设为与 BackBtn 同高 80px）。
 	btn.set_anchors_preset(Control.PRESET_FULL_RECT, false)
-	btn.offset_left = 10
-	btn.offset_right = -10
-	btn.offset_top = 10
-	btn.offset_bottom = -10
-	btn.add_theme_font_size_override("font_size", 28)
+	btn.add_theme_font_size_override("font_size", 32)
 	ThemeFactory.apply_button_styles(btn, ThemeFactory.primary_button_styles())
 	btn.add_theme_color_override("font_color", Color.WHITE)
 	btn.add_theme_color_override("font_hover_color", Color.WHITE)
@@ -720,9 +715,29 @@ func _on_sort_btn_pressed() -> void:
 	_refresh_muster_list()
 
 
-# 集中改 _sort_mode + 同步按钮文字，避免散落两处。
+# 集中改 _sort_mode + 同步按钮文字。切到 COST_ASC/DESC 时把 _muster_entries
+# 重排成对应顺序（重建 dict）；NO_SORT 不重排（保持当前内部顺序）。
+# 后续加卡总在 dict 末尾追加，自然落在视图最后。
 func _set_sort_mode(mode: int) -> void:
 	_sort_mode = mode
 	if _sort_btn != null:
 		_sort_btn.text = SORT_LABELS[mode]
+	if mode == SortMode.NO_SORT:
+		return
+	if _muster_entries.is_empty():
+		return
+	var keys: Array = _muster_entries.keys()
+	keys.sort_custom(func(a, b):
+		var ca = _muster_entries[a].card
+		var cb = _muster_entries[b].card
+		if ca.cost != cb.cost:
+			if mode == SortMode.COST_ASC:
+				return ca.cost < cb.cost
+			return ca.cost > cb.cost
+		return ca.name < cb.name)
+	# 重建 dict（Godot 4 字典保留插入序）。
+	var new_dict: Dictionary = {}
+	for k in keys:
+		new_dict[k] = _muster_entries[k]
+	_muster_entries = new_dict
 

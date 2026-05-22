@@ -3,9 +3,18 @@ extends RefCounted
 
 # 静态方法集合：负责把 JSON 解析为 CardBase 子类/关卡配置。
 # 不依赖任何节点；输入路径，输出纯数据。
+#
+# 文件分工：
+#   res://data/all_cards.json     - 卡片原型库（图鉴），战斗的真相之源
+#   res://data/review_cards.json  - 备战界面专用（可含占位卡）
+#   res://data/hero.json          - 英雄数据：display_name / max_health / abilities / skill_text
+#   user://battle_cards.json      - main.gd 启动时按当前牌组生成的本局牌池
+#   res://data/test_level.json    - 关卡配置（保留）
 
-const HERO_JSON := "res://data/test_hero.json"
-const CARD_JSON := "res://data/test_card.json"
+const ALL_CARDS_JSON := "res://data/all_cards.json"
+const REVIEW_CARDS_JSON := "res://data/review_cards.json"
+const HERO_JSON := "res://data/hero.json"
+const BATTLE_CARDS_JSON := "user://battle_cards.json"
 const LEVEL_JSON := "res://data/test_level.json"
 
 # 读取并 parse 一个 JSON 文件。失败返回 null（带 push_error）。
@@ -24,25 +33,6 @@ static func _read_json(path: String):
 		push_error("DataLoader: malformed JSON: " + path)
 	return parsed
 
-static func load_hero_info(default_player_hp: int = 30, default_enemy_hp: int = 30) -> Dictionary:
-	var out := {
-		"player": {"name": "Player", "health": default_player_hp, "abilities": []},
-		"enemy":  {"name": "Enemy",  "health": default_enemy_hp, "abilities": []},
-	}
-	var j = _read_json(HERO_JSON)
-	if typeof(j) == TYPE_DICTIONARY:
-		if j.has("player"):
-			var p: Dictionary = j["player"]
-			out.player.health = int(p.get("health", default_player_hp))
-			out.player.name = String(p.get("name", out.player.name))
-			out.player.abilities = _parse_string_array(p.get("abilities", []))
-		if j.has("enemy"):
-			var e: Dictionary = j["enemy"]
-			out.enemy.health = int(e.get("health", default_enemy_hp))
-			out.enemy.name = String(e.get("name", out.enemy.name))
-			out.enemy.abilities = _parse_string_array(e.get("abilities", []))
-	return out
-
 static func _parse_string_array(raw) -> Array:
 	if typeof(raw) != TYPE_ARRAY:
 		return []
@@ -51,7 +41,8 @@ static func _parse_string_array(raw) -> Array:
 		out.append(String(item))
 	return out
 
-static func load_cards(path: String = CARD_JSON) -> Array:
+# 卡牌读取。path 必传，调用方按用途选择 ALL/REVIEW/BATTLE 路径。
+static func load_cards(path: String) -> Array:
 	var j = _read_json(path)
 	if typeof(j) != TYPE_ARRAY or (j as Array).size() == 0:
 		return _fallback_cards()
@@ -131,3 +122,79 @@ static func _fallback_cards() -> Array:
 	var b = CardUnit.new("灰烬填线宝宝", 2, 2, {"top": 2, "bottom": 2, "left": 2, "right": 2}, ["ash"])
 	b.count = 3
 	return [a, b]
+
+
+# ============================================================================
+# 英雄数据（res://data/hero.json）
+# ============================================================================
+
+# 读取整个 hero.json。返回 {"heroes": {key: {...}}, "enemy_default": {...}}。
+# 文件缺失/损坏时返回空骨架，调用方按需走默认。
+static func load_hero_db() -> Dictionary:
+	var empty := {"heroes": {}, "enemy_default": {}}
+	var j = _read_json(HERO_JSON)
+	if typeof(j) != TYPE_DICTIONARY:
+		return empty
+	if not j.has("heroes") or typeof(j["heroes"]) != TYPE_DICTIONARY:
+		j["heroes"] = {}
+	if not j.has("enemy_default") or typeof(j["enemy_default"]) != TYPE_DICTIONARY:
+		j["enemy_default"] = {}
+	return j
+
+
+# 取指定英雄数据（按 key，如 "A"）。键缺失时返回空字典；调用方再走默认。
+static func get_hero(hero_key: String) -> Dictionary:
+	var db := load_hero_db()
+	var h = db["heroes"].get(hero_key, null)
+	if typeof(h) != TYPE_DICTIONARY:
+		return {}
+	return h
+
+
+# 取敌方默认配置。
+static func get_enemy_default() -> Dictionary:
+	var db := load_hero_db()
+	return db["enemy_default"]
+
+
+# ============================================================================
+# user://battle_cards.json 生成与读取
+# ============================================================================
+
+# 从 all_cards.json 中筛选玩家牌组卡 + 写入 count 字段，输出为
+# user://battle_cards.json，供本局战斗读取。
+#   hero_key: HeroCarousel 中的英雄 key（如 "A"）→ 决定从 decks.json 拿哪份卡组
+#   失败兜底：玩家卡组为空时，写入空数组（战斗 _fallback_cards 接管）。
+static func generate_battle_cards(hero_key: String) -> void:
+	var deck: Dictionary = DeckStorage.load_deck(hero_key)
+	var raw = _read_json(ALL_CARDS_JSON)
+	var prototypes: Array = []
+	if typeof(raw) == TYPE_ARRAY:
+		prototypes = raw
+	# 建 name → 原型 dict 索引。
+	var index: Dictionary = {}
+	for p in prototypes:
+		if typeof(p) == TYPE_DICTIONARY and p.has("name"):
+			index[String(p["name"])] = p
+	# 按玩家牌组卡名聚合，count 来自 decks.json[hero].cards 的值。
+	var out: Array = []
+	for cname in deck.keys():
+		var cnt: int = int(deck[cname])
+		if cnt <= 0:
+			continue
+		var proto = index.get(String(cname), null)
+		if proto == null:
+			push_warning("DataLoader.generate_battle_cards: card not found in all_cards.json: " + String(cname))
+			continue
+		# 复制一份原型并覆盖 count（不污染 all_cards 的内存解析）。
+		var copy: Dictionary = proto.duplicate(true)
+		copy["count"] = cnt
+		out.append(copy)
+	# 写盘 user://battle_cards.json。
+	var f := FileAccess.open(BATTLE_CARDS_JSON, FileAccess.WRITE)
+	if f == null:
+		push_error("DataLoader.generate_battle_cards: cannot write " + BATTLE_CARDS_JSON)
+		return
+	f.store_string(JSON.stringify(out, "\t"))
+	f.close()
+

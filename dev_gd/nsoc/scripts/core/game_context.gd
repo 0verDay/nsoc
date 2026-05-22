@@ -59,26 +59,63 @@ func _install_default_font() -> void:
 	push_warning("Game: 未找到中文字体，安卓端中文将显示为方块。请放置 NotoSansSC 到 res://assets/fonts/")
 
 func bootstrap() -> void:
-	# 从 JSON 装配初始状态。
-	var hero_info := DataLoader.load_hero_info()
-	hero.setup(int(hero_info.player.health), int(hero_info.enemy.health),
-		String(hero_info.player.name), String(hero_info.enemy.name),
-		hero_info.player.get("abilities", []), hero_info.enemy.get("abilities", []))
+	# 战斗启动：
+	#   1. 玩家英雄 = hero.json[BATTLE_HERO_KEY]，HP/技能/abilities 从 JSON 读
+	#   2. 敌方英雄 = hero.json.enemy_default
+	#   3. 牌池：根据玩家在备战界面保存的卡组（decks.json[BATTLE_HERO_KEY]）
+	#      + all_cards.json 原型库 → 生成 user://battle_cards.json，本局战斗读它
+	var player_data: Dictionary = DataLoader.get_hero(BATTLE_HERO_KEY)
+	var enemy_data: Dictionary = DataLoader.get_enemy_default()
+	# display_name = 备战界面/长按详情用的完整名（如"往日之王：科因"）
+	# battle_name  = 局内英雄面板用的精简名（如"科因"），未填则回落 display_name
+	var player_display: String = String(player_data.get("display_name", BATTLE_HERO_KEY))
+	var player_battle: String = String(player_data.get("battle_name", player_display))
+	var enemy_display: String = String(enemy_data.get("display_name", "敌人"))
+	var enemy_battle: String = String(enemy_data.get("battle_name", enemy_display))
+	hero.setup(
+		int(player_data.get("max_health", 30)),
+		int(enemy_data.get("max_health", 30)),
+		player_battle,
+		enemy_battle,
+		_to_string_array(player_data.get("abilities", [])),
+		_to_string_array(enemy_data.get("abilities", [])),
+		player_display,
+		enemy_display)
 
-	var cards := DataLoader.load_cards()
+	# 生成本局牌池文件（user://battle_cards.json），再加载玩家卡组。
+	DataLoader.generate_battle_cards(BATTLE_HERO_KEY)
+	var deck_cards := DataLoader.load_cards(DataLoader.BATTLE_CARDS_JSON)
+	# card_db 装载所有卡片原型（all_cards.json），供关卡 initial_units / spawners
+	# 按名字反查（test_level.json 仅存卡名索引）。deck 只装玩家牌组。
+	var all_cards := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
 	card_db.clear()
-	for c in cards:
+	for c in all_cards:
 		card_db[c.name] = c
-	cards_loaded.emit(cards)
+	cards_loaded.emit(deck_cards)
 
 	var level := DataLoader.load_level()
 	initial_units = level.initial_units
 	spawners.setup(level.spawners)
 	level_loaded.emit(level)
 
-	deck.setup(cards)
+	deck.setup(deck_cards)
 	mana.setup(1)
 	counters.clear()
+
+
+# JSON 解出的 abilities 可能是 Array of String（理想）或混入 null 等；统一为 Array[String]。
+static func _to_string_array(raw) -> Array:
+	if typeof(raw) != TYPE_ARRAY:
+		return []
+	var out: Array = []
+	for item in raw:
+		out.append(String(item))
+	return out
+
+
+# 测试关卡的固定参数（暂时不走主菜单 UI 选择）。
+# 后续接入"选英雄/选关卡"后，BATTLE_HERO_KEY 应由调用方注入。
+const BATTLE_HERO_KEY: String = "A"
 
 func get_card(name_str: String):
 	return card_db.get(name_str)

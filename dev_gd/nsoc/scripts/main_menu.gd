@@ -187,7 +187,13 @@ func _build_settings_controller() -> void:
 	})
 
 func _on_settings_exit() -> void:
-	get_tree().quit()
+	# 走全局退出确认弹窗（autoload QuitConfirm，挂在 /root/QuitConfirm），
+	# 玩家在弹窗内确认才真正 quit。用绝对路径取节点避免 autoload 名解析依赖。
+	var qc := get_node_or_null("/root/QuitConfirm")
+	if qc:
+		qc.request_quit()
+	else:
+		get_tree().quit()
 
 func _can_open_settings() -> bool:
 	# 转场展开期间禁用选项弹窗。
