@@ -25,6 +25,12 @@ var counters: Dictionary = {}
 # 关卡初始单位配置缓存（main 初始化棋盘时用）。
 var initial_units: Array = []
 
+# 本局来源：
+#   ""            = 玩家备战卡组（旧路径，generate_battle_cards 用 decks.json）
+#   chapter path  = 战役章节固定牌堆（新路径，generate_battle_cards_from_chapter）
+# 由章节场景在切到 main.tscn 前赋值；bootstrap 末尾自动清空避免下次脏读。
+var pending_chapter_config: String = ""
+
 # 由 main.gd 创建后注入。cell._can_drop_data 通过 Game.play 查询规则，避免对 main 的反向耦合。
 var play: PlayController
 
@@ -83,7 +89,11 @@ func bootstrap() -> void:
 		enemy_display)
 
 	# 生成本局牌池文件（user://battle_cards.json），再加载玩家卡组。
-	DataLoader.generate_battle_cards(BATTLE_HERO_KEY)
+	# pending_chapter_config 非空 → 战役章节固定牌堆；否则走玩家备战卡组旧路径。
+	if pending_chapter_config != "":
+		DataLoader.generate_battle_cards_from_chapter(pending_chapter_config)
+	else:
+		DataLoader.generate_battle_cards(BATTLE_HERO_KEY)
 	var deck_cards := DataLoader.load_cards(DataLoader.BATTLE_CARDS_JSON)
 	# card_db 装载所有卡片原型（all_cards.json），供关卡 initial_units / spawners
 	# 按名字反查（test_level.json 仅存卡名索引）。deck 只装玩家牌组。
@@ -101,6 +111,10 @@ func bootstrap() -> void:
 	deck.setup(deck_cards)
 	mana.setup(1)
 	counters.clear()
+
+	# 一次性消费：清空 pending_chapter_config，避免战斗结束返回主菜单后
+	# 再次进入战斗（玩家牌组）误用上一局的章节配置。
+	pending_chapter_config = ""
 
 
 # JSON 解出的 abilities 可能是 Array of String（理想）或混入 null 等；统一为 Array[String]。

@@ -1,0 +1,35 @@
+{
+	"version": 1,
+	"campaigns": {
+		"c1": {
+			"display_name": "测试·三国",
+			"description": "这是目前的测试战役",
+			"chapters": [
+				{"name": "长坂坡", "description": "我去了曹老板打过来了，肿么办肿么办！三军听令，战至最后一刻，自刎归天！", "scene": "res://scenes/chapters/Changbanpo.tscn", "config": "res://data/chapters/changbanpo.json"},
+				{"name": "逍遥津", "description": "无论如何，会战兵力是800对10万，优势在我！", "scene": "res://scenes/chapters/BlankChapter.tscn"},
+				{"name": "五丈原", "description": "丞相保重！", "scene": "res://scenes/chapters/BlankChapter.tscn"}
+			]
+		},
+		"c2": {
+			"display_name": "战役#2",
+			"description": "这是目前的测试战役",
+			"chapters": [
+				{"name": "章节#1"},
+				{"name": "章节#2"},
+				{"name": "章节#3"},
+				{"name": "章节#4"}
+			]
+		},
+		"c3": {
+			"display_name": "战役#3",
+			"description": "这是目前的测试战役",
+			"chapters": [
+				{"name": "章节#1"},
+				{"name": "章节#2"},
+				{"name": "章节#3"},
+				{"name": "章节#4"},
+				{"name": "章节#5"}
+			]
+		}
+	}
+}

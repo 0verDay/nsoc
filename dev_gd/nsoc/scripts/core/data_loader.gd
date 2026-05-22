@@ -14,6 +14,7 @@ extends RefCounted
 const ALL_CARDS_JSON := "res://data/all_cards.json"
 const REVIEW_CARDS_JSON := "res://data/review_cards.json"
 const HERO_JSON := "res://data/hero.json"
+const CAMPAIGNS_JSON := "res://data/campaigns.json"
 const BATTLE_CARDS_JSON := "user://battle_cards.json"
 const LEVEL_JSON := "res://data/test_level.json"
 
@@ -158,6 +159,22 @@ static func get_enemy_default() -> Dictionary:
 
 
 # ============================================================================
+# 战役数据（res://data/campaigns.json）
+# ============================================================================
+
+# 读取整个 campaigns.json。返回 {"campaigns": {key: {display_name, description, ...}}}。
+# 文件缺失/损坏时返回空骨架；CampaignCarousel 自带占位文案兜底。
+static func load_campaign_db() -> Dictionary:
+	var empty := {"campaigns": {}}
+	var j = _read_json(CAMPAIGNS_JSON)
+	if typeof(j) != TYPE_DICTIONARY:
+		return empty
+	if not j.has("campaigns") or typeof(j["campaigns"]) != TYPE_DICTIONARY:
+		j["campaigns"] = {}
+	return j
+
+
+# ============================================================================
 # user://battle_cards.json 生成与读取
 # ============================================================================
 
@@ -166,7 +183,8 @@ static func get_enemy_default() -> Dictionary:
 #   hero_key: HeroCarousel 中的英雄 key（如 "A"）→ 决定从 decks.json 拿哪份卡组
 #   失败兜底：玩家卡组为空时，写入空数组（战斗 _fallback_cards 接管）。
 static func generate_battle_cards(hero_key: String) -> void:
-	var deck: Dictionary = DeckStorage.load_deck(hero_key)
+	var deck_meta: Dictionary = DeckStorage.load_deck(hero_key)
+	var deck: Dictionary = deck_meta.get("cards", {})
 	var raw = _read_json(ALL_CARDS_JSON)
 	var prototypes: Array = []
 	if typeof(raw) == TYPE_ARRAY:
@@ -196,5 +214,55 @@ static func generate_battle_cards(hero_key: String) -> void:
 		push_error("DataLoader.generate_battle_cards: cannot write " + BATTLE_CARDS_JSON)
 		return
 	f.store_string(JSON.stringify(out, "\t"))
+	f.close()
+
+
+# 战役章节版：从章节 json 的 cards: [{name, count}] 取卡名 + 数量，
+# 反查 all_cards.json 拼出本局牌堆，写入 user://battle_cards.json。
+# 与 generate_battle_cards(hero_key) 平行：旧路径绑玩家备战卡组，本路径绑章节固定牌堆。
+# Game.bootstrap 根据 pending_chapter_config 是否为空决定走哪一条。
+static func generate_battle_cards_from_chapter(chapter_json_path: String) -> void:
+	var raw_cfg = _read_json(chapter_json_path)
+	if typeof(raw_cfg) != TYPE_DICTIONARY:
+		push_warning("DataLoader.generate_battle_cards_from_chapter: bad chapter json " + chapter_json_path)
+		_write_battle_cards([])
+		return
+	var cards = raw_cfg.get("cards", [])
+	if typeof(cards) != TYPE_ARRAY:
+		_write_battle_cards([])
+		return
+
+	var raw = _read_json(ALL_CARDS_JSON)
+	var index: Dictionary = {}
+	if typeof(raw) == TYPE_ARRAY:
+		for p in raw:
+			if typeof(p) == TYPE_DICTIONARY and p.has("name"):
+				index[String(p["name"])] = p
+
+	var out: Array = []
+	for entry in cards:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var cname := String(entry.get("name", ""))
+		var cnt: int = int(entry.get("count", 1))
+		if cname == "" or cnt <= 0:
+			continue
+		var proto = index.get(cname, null)
+		if proto == null:
+			push_warning("generate_battle_cards_from_chapter: card not in all_cards: " + cname)
+			continue
+		var copy: Dictionary = proto.duplicate(true)
+		copy["count"] = cnt
+		out.append(copy)
+	_write_battle_cards(out)
+
+
+# 提取的写盘工具（两版 generate 共用），减重复。
+static func _write_battle_cards(arr: Array) -> void:
+	var f := FileAccess.open(BATTLE_CARDS_JSON, FileAccess.WRITE)
+	if f == null:
+		push_error("DataLoader: cannot write " + BATTLE_CARDS_JSON)
+		return
+	f.store_string(JSON.stringify(arr, "\t"))
 	f.close()
 

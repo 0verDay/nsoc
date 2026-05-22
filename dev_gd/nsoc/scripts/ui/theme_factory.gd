@@ -95,6 +95,29 @@ static func badge() -> StyleBoxFlat:
 	sb.content_margin_bottom = 4
 	return sb
 
+# 费用指示器：复刻 HandCard 左上角 CostBg + 居中 CostLbl 风格。
+# 用于备战界面点兵列表等需要在卡牌外展示费用的场景。
+# 返回的 Panel 默认 30x30，可由调用方改 custom_minimum_size。
+# mouse_filter = IGNORE，避免吃掉父按钮的点击/长按事件。
+# 视觉与 HandCard 同步：蓝色胶囊 + 阴影 + 白色粗体居中数字。
+const COST_BADGE_COLOR := Color("#339af0")
+
+static func cost_badge(cost: int, size_px: int = 30, font_size: int = 14) -> Panel:
+	var p := Panel.new()
+	p.custom_minimum_size = Vector2(size_px, size_px)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_theme_stylebox_override("panel", pill(COST_BADGE_COLOR, 12, true))
+	var lbl := Label.new()
+	lbl.text = str(cost)
+	lbl.set_anchors_preset(Control.PRESET_FULL_RECT, false)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	lbl.add_theme_font_size_override("font_size", font_size)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_child(lbl)
+	return p
+
 # 侧栏列表项三态样式。
 static func list_item_styles() -> Dictionary:
 	var base := StyleBoxFlat.new()
