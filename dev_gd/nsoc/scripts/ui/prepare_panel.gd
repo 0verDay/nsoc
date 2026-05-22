@@ -638,7 +638,7 @@ func _refresh_muster_list() -> void:
 
 # 行宽固定，让列表元素相对滚动区视觉收缩，给左侧费用徽章留出"卡牌左上角标"
 # 那种视觉。MUSTER_ITEM_GAP 控制徽章与文本按钮的间距。
-const MUSTER_ROW_WIDTH: float = 360.0
+const MUSTER_ROW_WIDTH: float = 390.0
 const MUSTER_BADGE_SIZE: int = 30
 const MUSTER_BADGE_FONT: int = 14
 const MUSTER_ITEM_GAP: int = 10

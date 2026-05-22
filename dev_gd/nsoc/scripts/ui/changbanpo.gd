@@ -45,7 +45,7 @@ const REVIEW_TITLE_HEIGHT: float = 60.0
 const REVIEW_PADDING: int = 20
 
 # 行宽 / 徽章 / 间距：保持与点兵列表一致。
-const REVIEW_ROW_WIDTH: float = 360.0
+const REVIEW_ROW_WIDTH: float = 390.0
 const REVIEW_BADGE_SIZE: int = 30
 const REVIEW_BADGE_FONT: int = 14
 const REVIEW_ITEM_GAP: int = 10
