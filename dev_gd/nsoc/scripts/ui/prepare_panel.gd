@@ -145,36 +145,60 @@ func _on_hero_changed(new_key: String) -> void:
 	_load_deck_for(new_key)
 
 
-# 从存档加载 hero_key 的卡表 → 重建 _muster_entries + 排序复位 + 刷新 UI。
+# 从存档加载 hero_key 的卡表 → 重建 _muster_entries + 恢复排序模式 + 刷新 UI。
 # DataLoader.load_cards(REVIEW_CARD_JSON) 已缓存于此次调用；
 # 用 name → CardBase 映射快速还原 muster 条目（O(N+M)，M 通常 < 30）。
+# 顺序：用存档 "order" 数组显式恢复；不依赖 Dictionary 保序假设。
+# 排序模式：恢复存档 "sort_mode"（"no_sort"/"cost_asc"/"cost_desc"），保证下次进入
+# 视图与上次离开一致。
 func _load_deck_for(hero_key: String) -> void:
 	_muster_entries.clear()
 	var saved: Dictionary = DeckStorage.load_deck(hero_key)
-	if not saved.is_empty():
+	var cards_map: Dictionary = saved.get("cards", {})
+	var order: Array = saved.get("order", [])
+	var sort_mode_str: String = String(saved.get("sort_mode", "no_sort"))
+	if not cards_map.is_empty():
 		var name_to_card: Dictionary = {}
 		for card in DataLoader.load_cards(REVIEW_CARD_JSON):
 			name_to_card[card.name] = card
-		for cname in saved.keys():
+		for cname in order:
 			var card = name_to_card.get(String(cname), null)
 			if card == null:
 				push_warning("PreparePanel: saved card not found in card.json: " + String(cname))
 				continue
-			_muster_entries[String(cname)] = {"card": card, "count": int(saved[cname])}
-	# 加载后默认按 NO_SORT 显示（即按存档插入序）。
-	_set_sort_mode(SortMode.NO_SORT)
+			_muster_entries[String(cname)] = {"card": card, "count": int(cards_map[cname])}
+	# 恢复上次离开时的排序模式。NO_SORT 不重排，保留 order 序。
+	# COST_ASC/DESC 走 _set_sort_mode 内置重排逻辑（同时同步按钮文字）。
+	_set_sort_mode(_sort_mode_from_string(sort_mode_str))
 	_refresh_muster_list()
 
 
-# 把当前 _muster_entries 序列化成 name→count 写盘到 _current_hero_key 名下。
-# _current_hero_key 为空 → 跳过（界面初始化未完成时）。
+# 把当前 _muster_entries 序列化成 name→count + 顺序数组 + 排序模式字符串，
+# 写盘到 _current_hero_key 名下。_current_hero_key 为空 → 跳过（界面初始化未完成时）。
 func _save_current_deck() -> void:
 	if _current_hero_key == "":
 		return
 	var out: Dictionary = {}
+	var order: Array = []
 	for key in _muster_entries.keys():
 		out[key] = int(_muster_entries[key].count)
-	DeckStorage.save_deck(_current_hero_key, out)
+		order.append(String(key))
+	DeckStorage.save_deck(_current_hero_key, out, order, _sort_mode_to_string(_sort_mode))
+
+
+# SortMode <-> 字符串。存盘用字符串避免枚举数值与 schema 耦合（未来加模式不破档）。
+func _sort_mode_to_string(mode: int) -> String:
+	match mode:
+		SortMode.COST_ASC: return "cost_asc"
+		SortMode.COST_DESC: return "cost_desc"
+		_: return "no_sort"
+
+
+func _sort_mode_from_string(s: String) -> int:
+	match s:
+		"cost_asc": return SortMode.COST_ASC
+		"cost_desc": return SortMode.COST_DESC
+		_: return SortMode.NO_SORT
 
 
 # 重写父类淡出回调，淡出动画开始前先保存（避免 tree_exiting 路径下
@@ -609,7 +633,34 @@ func _refresh_muster_list() -> void:
 		c.queue_free()
 	for key in _muster_entries.keys():
 		var entry = _muster_entries[key]
-		_muster_list.add_child(_make_muster_item(entry.card, int(entry.count)))
+		_muster_list.add_child(_make_muster_row(entry.card, int(entry.count)))
+
+
+# 行宽固定，让列表元素相对滚动区视觉收缩，给左侧费用徽章留出"卡牌左上角标"
+# 那种视觉。MUSTER_ITEM_GAP 控制徽章与文本按钮的间距。
+const MUSTER_ROW_WIDTH: float = 360.0
+const MUSTER_BADGE_SIZE: int = 30
+const MUSTER_BADGE_FONT: int = 14
+const MUSTER_ITEM_GAP: int = 10
+
+
+# 一行 = HBox(徽章 + Button)。HBox 居中收缩，按钮宽度 = 行宽 - 徽章 - 间距。
+# 徽章 mouse_filter=IGNORE 不抢事件，原 Button 的按下/双击/长按全保留。
+func _make_muster_row(card_data, count: int) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	row.add_theme_constant_override("separation", MUSTER_ITEM_GAP)
+
+	var badge := ThemeFactory.cost_badge(int(card_data.cost), MUSTER_BADGE_SIZE, MUSTER_BADGE_FONT)
+	# 徽章纵向居中对齐按钮中线。
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(badge)
+
+	var btn := _make_muster_item(card_data, count)
+	btn.custom_minimum_size = Vector2(MUSTER_ROW_WIDTH - MUSTER_BADGE_SIZE - MUSTER_ITEM_GAP, 0)
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(btn)
+	return row
 
 
 # 列表项：复用游玩界面牌堆样式（ThemeFactory.list_item_styles），按下/松开转发长按。
