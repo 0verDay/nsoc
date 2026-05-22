@@ -83,9 +83,7 @@ func _ready() -> void:
 	_wire_signals()
 
 	Game.spawners.refresh_phantoms(Game.board, Callable(Game, "get_card"))
-	hand_view.ensure_min_hand_size()
-
-	# 触发一次 UI 同步
+	# 触发一次 UI 同步（数据先就位）
 	_on_hero_health_changed(false, Game.hero.player_health)
 	_on_hero_health_changed(true, Game.hero.enemy_health)
 	_on_mana_changed(Game.mana.current, Game.mana.maximum)
@@ -97,6 +95,9 @@ func _ready() -> void:
 	for clip in enemy_side_panels.get_clip_nodes():
 		clip.move_to_front()
 	detail_panel.get_clip().move_to_front()
+
+	# 入场动画：滑入 → 渐显 → 按序摸牌。摸牌动画末尾才允许玩家操作。
+	_play_intro_animation()
 
 # ---------------- 信号连接 ----------------
 func _wire_signals() -> void:
@@ -389,7 +390,8 @@ func _create_hero_ability_button() -> void:
 # 玩家英雄面板长按 → 详情面板显示英雄名字。
 func _on_player_hero_panel_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		detail_panel.start_long_press_hero(Game.hero.player_name, Game.hero.player_ability_id(), Game.hero.player_max_health)
+		# 详情面板用完整名（player_full_name），与英雄面板上的 battle_name 区分
+		detail_panel.start_long_press_hero(Game.hero.player_full_name, Game.hero.player_ability_id(), Game.hero.player_max_health)
 		_animate_hero_panel_press()
 
 # 复用 hand_card / cell 长按按压的放大动画（0.1s 缩放到 1.08）。
@@ -433,3 +435,102 @@ func _refresh_hero_ability_button() -> void:
 		return
 	var ctx := {"main": self, "hand_view": hand_view, "hero": Game.hero}
 	hero_ability_btn.disabled = not HeroAbilities.can_activate(ability_id, ctx)
+
+
+# ---------------- 入场动画 ----------------
+
+const INTRO_SLIDE_DURATION: float = 0.5
+const INTRO_FADE_DURATION: float = 0.3
+const INTRO_DRAW_INTERVAL: float = 0.15
+const INTRO_LAYOUT_SETTLE_FRAMES: int = 3   # 等几帧让 anchor 布局稳定，再读 position
+
+
+# 入场动画总编排：
+#   阶段 A：四个主面板从屏外滑入（并行 0.5s）
+#     - 左上"选项"按钮 ←  从左
+#     - BottomBar         ←  从右
+#     - LeftSidePnl       ←  从下
+#     - TopGridBg         ←  从上
+#     - BottomGridBg      ←  从下
+#   阶段 B：上下方按钮 + 敌方血量渐显（并行 0.3s）
+#     - EnemyHpPnl
+#     - 敌方墓地 / 除外 按钮
+#     - 玩家牌堆 / 墓地 / 除外 按钮
+#   阶段 C：手牌按序摸 5 张（每张间隔 0.15s，从右侧顶出）
+# 全程锁输入：
+#   - set_process_input(false) 屏蔽全局 _input 回调
+#   - 全屏透明 InputBlocker (Control + MOUSE_FILTER_STOP) 吞掉所有 UI 点击
+func _play_intro_animation() -> void:
+	# 0. 上锁：全屏拦截 + 关 _input
+	set_process_input(false)
+	var blocker := Control.new()
+	blocker.name = "IntroInputBlocker"
+	blocker.set_anchors_preset(Control.PRESET_FULL_RECT, false)
+	blocker.mouse_filter = Control.MOUSE_FILTER_STOP
+	# z_index 高于 detail_panel(200) / drag preview(300)，确保不被任何节点穿透。
+	blocker.z_index = 1000
+	add_child(blocker)
+
+	# 1. 收集需要参与动画的节点引用，记录原位 + 切到隐藏起点。
+	var settings_btn: Button = settings_panel.get_trigger_button() if settings_panel else null
+	var bottom_bar: Panel = $BottomBar
+	var left_side: Panel = $LeftSidePnl
+	var top_grid_bg: Panel = $TopGridBg
+	var bottom_grid_bg: Panel = $BottomGridBg
+	var enemy_hp_pnl: Panel = $EnemyHpPnl
+
+	# 渐显组：先全部 modulate.a = 0，阶段 B 一起 tween 到 1
+	var fade_targets: Array = []
+	if enemy_hp_pnl: fade_targets.append(enemy_hp_pnl)
+	if enemy_grave_btn: fade_targets.append(enemy_grave_btn)
+	if enemy_banished_btn: fade_targets.append(enemy_banished_btn)
+	if deck_btn: fade_targets.append(deck_btn)
+	if grave_btn: fade_targets.append(grave_btn)
+	if banished_btn: fade_targets.append(banished_btn)
+	for n in fade_targets:
+		n.modulate.a = 0.0
+
+	# 滑入组：记录原位 → 把节点平移到屏外起点。
+	# 通过 position 偏移实现（不动 anchor / offset）。
+	var slide_specs: Array = []
+	var vp_w: float = float(ProjectSettings.get_setting("display/window/size/viewport_width", 1920))
+	var vp_h: float = float(ProjectSettings.get_setting("display/window/size/viewport_height", 1080))
+	if settings_btn:
+		slide_specs.append({"node": settings_btn, "from": Vector2(-settings_btn.size.x - 40, 0)})
+	if bottom_bar:
+		slide_specs.append({"node": bottom_bar, "from": Vector2(vp_w, 0)})
+	if left_side:
+		slide_specs.append({"node": left_side, "from": Vector2(0, vp_h)})
+	if top_grid_bg:
+		slide_specs.append({"node": top_grid_bg, "from": Vector2(0, -vp_h)})
+	if bottom_grid_bg:
+		slide_specs.append({"node": bottom_grid_bg, "from": Vector2(0, vp_h)})
+	# 多等几帧让 anchor 布局完全稳定，避免 size 为 0 导致 from 计算错。
+	for _i in INTRO_LAYOUT_SETTLE_FRAMES:
+		await get_tree().process_frame
+	for s in slide_specs:
+		s["origin"] = s.node.position
+		s.node.position = s.origin + s.from
+
+	# 阶段 A：四个面板并行滑回原位（0.5s）
+	var tween_a := create_tween()
+	tween_a.set_parallel(true)
+	for s in slide_specs:
+		tween_a.tween_property(s.node, "position", s.origin, INTRO_SLIDE_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	await tween_a.finished
+
+	# 阶段 B：渐显（0.3s）
+	if not fade_targets.is_empty():
+		var tween_b := create_tween()
+		tween_b.set_parallel(true)
+		for n in fade_targets:
+			tween_b.tween_property(n, "modulate:a", 1.0, INTRO_FADE_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		await tween_b.finished
+
+	# 阶段 C：按序摸 5 张（每张间隔 INTRO_DRAW_INTERVAL）
+	await hand_view.draw_initial_with_anim(INTRO_DRAW_INTERVAL)
+
+	# 解锁
+	if is_instance_valid(blocker):
+		blocker.queue_free()
+	set_process_input(true)

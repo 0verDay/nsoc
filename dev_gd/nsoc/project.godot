@@ -12,6 +12,7 @@ config_version=5
 
 config/name="NSOC"
 run/main_scene="res://scenes/SplashScreen.tscn"
+config/quit_on_go_back=false
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
@@ -20,6 +21,7 @@ config/icon="res://icon.svg"
 Effects="*res://scripts/core/effect_registry.gd"
 HeroAbilities="*res://scripts/core/hero_ability_registry.gd"
 Game="*res://scripts/core/game_context.gd"
+QuitConfirm="*res://scripts/core/quit_confirm.gd"
 
 [display]
 

@@ -335,3 +335,9 @@ func _animate_close() -> void:
 
 func is_open() -> bool:
 	return _is_open
+
+
+# 暴露左上"选项"按钮节点，供外部播放入场动画。
+# 仅当 setup 时 create_trigger_button=true（游玩场景）时返回非 null。
+func get_trigger_button() -> Button:
+	return _btn

@@ -26,18 +26,14 @@ const PAGE_GAP_PX: float = 24.0
 const PAGE_MARGIN_X: float = 16.0
 const PAGE_MARGIN_Y: float = 16.0
 
-# 占位英雄列表，循环展示。后续替换为真实数据。
+# 占位英雄列表（key 列表，循环顺序）。后续若改为按 hero.json 排序，
+# 把这个常量改为运行时数组即可。
 const HERO_NAMES: Array = ["A", "B", "C"]
 
-# 英雄显示名（遮罩内大字号标题）。键缺失时回落到 HERO_NAMES 中的代号。
-const HERO_DISPLAY_NAMES: Dictionary = {
-	"A": "往日之王：科因",
-}
-
-# 英雄技能文案表。键缺失时回落 SKILL_PLACEHOLDER。
-const HERO_SKILLS: Dictionary = {
-	"A": "再起：消耗 1 费用，弃置所有手牌，然后重新补满 5 张。",
-}
+# 英雄显示名 / 技能文案：运行时从 hero.json 加载（_load_hero_db），
+# 缺失时各自回落到 SKILL_PLACEHOLDER 与 hero_key 自身。
+var _hero_display_names: Dictionary = {}
+var _hero_skills: Dictionary = {}
 
 # 技能遮罩占位文字（后续接入英雄真实技能时替换）。
 const SKILL_PLACEHOLDER: String = "技能"
@@ -123,6 +119,7 @@ var _animating: bool = false
 
 
 func _ready() -> void:
+	_load_hero_db()
 	clip_contents = true
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
@@ -232,16 +229,35 @@ func _layout_pages() -> void:
 
 # 根据 _current_page 刷新三页文字：prev / current / next。
 # _current_page 取模 HERO_NAMES.size()，实现 3 个英雄循环。
-# 英雄显示名查 HERO_DISPLAY_NAMES；技能文字查 HERO_SKILLS。两者缺键各自回落。
+# 英雄显示名查 _hero_display_names；技能文字查 _hero_skills。
+# 两者缺失时各自回落（display → 代号；skill → SKILL_PLACEHOLDER）。
 func _refresh_labels() -> void:
 	if _page_labels.size() < 3:
 		return
 	for offset in range(-1, 2):
 		var idx: int = offset + 1
 		var hero_key: String = _hero_name_at(_current_page + offset)
-		_page_labels[idx].text = HERO_DISPLAY_NAMES.get(hero_key, hero_key)
+		_page_labels[idx].text = String(_hero_display_names.get(hero_key, hero_key))
 		if idx < _skill_labels.size():
-			_skill_labels[idx].text = HERO_SKILLS.get(hero_key, SKILL_PLACEHOLDER)
+			var skill_text: String = String(_hero_skills.get(hero_key, ""))
+			if skill_text == "":
+				skill_text = SKILL_PLACEHOLDER
+			_skill_labels[idx].text = skill_text
+
+
+# 从 res://data/hero.json 装填英雄显示名与技能文案。
+# 失败时字典保持空，_refresh_labels 会回落到代号 + SKILL_PLACEHOLDER。
+func _load_hero_db() -> void:
+	_hero_display_names.clear()
+	_hero_skills.clear()
+	var db: Dictionary = DataLoader.load_hero_db()
+	var heroes: Dictionary = db.get("heroes", {})
+	for key in heroes.keys():
+		var data: Dictionary = heroes[key]
+		if data.has("display_name"):
+			_hero_display_names[String(key)] = String(data["display_name"])
+		if data.has("skill_text"):
+			_hero_skills[String(key)] = String(data["skill_text"])
 
 
 # posmod 取模，处理负数，使 -1 映射到末位。
