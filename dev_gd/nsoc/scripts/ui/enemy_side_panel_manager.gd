@@ -20,16 +20,26 @@ const PANEL_HEIGHT: float = 470.0
 const SLIDE_DURATION: float = 0.3
 
 var _parent: Control
+var _center_x_offset: float = 0.0   # 面板水平中心相对视口中心的偏移（与 BOARD_SHIFT 同坐标系）
 # panel_name -> {"clip": Control, "panel": Panel, "list": VBoxContainer}
 var _ui_panels: Dictionary = {}
 var _current_open: String = ""
 
-func setup(parent: Control) -> void:
+func setup(parent: Control, center_x_offset: float = 0.0) -> void:
 	_parent = parent
+	_center_x_offset = center_x_offset
 	for p_name in PANEL_NAMES:
 		_ui_panels[p_name] = _build_panel(p_name)
 	if has_node("/root/Game"):
 		Game.deck.pile_changed.connect(_on_deck_pile_changed)
+
+# 主棋盘在 test 动画后调用此方法跟随棋盘平移。
+func update_clip_center_x(new_center_x: float) -> void:
+	_center_x_offset = new_center_x
+	for entry in _ui_panels.values():
+		var clip: Control = entry.clip
+		clip.offset_left  = new_center_x - PANEL_WIDTH / 2.0
+		clip.offset_right = new_center_x + PANEL_WIDTH / 2.0
 
 func _on_deck_pile_changed(pile_name: String) -> void:
 	var mapped: String = PILE_TO_PANEL.get(pile_name, "")
@@ -37,15 +47,15 @@ func _on_deck_pile_changed(pile_name: String) -> void:
 		_refresh_content(_current_open)
 
 func _build_panel(p_name: String) -> Dictionary:
-	# clip：固定在敌方半场顶部居中，宽 = PANEL_WIDTH，高 = PANEL_HEIGHT。
+	# clip：固定在敌方半场顶部，水平居中于 _center_x_offset。
 	var clip_node := Control.new()
 	clip_node.name = p_name + "_clip"
 	_parent.add_child(clip_node)
 	clip_node.set_anchors_preset(Control.PRESET_TOP_WIDE, false)
 	clip_node.anchor_left = 0.5
 	clip_node.anchor_right = 0.5
-	clip_node.offset_left = -PANEL_WIDTH / 2.0
-	clip_node.offset_right = PANEL_WIDTH / 2.0
+	clip_node.offset_left  = _center_x_offset - PANEL_WIDTH / 2.0
+	clip_node.offset_right = _center_x_offset + PANEL_WIDTH / 2.0
 	clip_node.offset_top = CLIP_TOP
 	clip_node.offset_bottom = CLIP_TOP + PANEL_HEIGHT
 	clip_node.mouse_filter = Control.MOUSE_FILTER_IGNORE

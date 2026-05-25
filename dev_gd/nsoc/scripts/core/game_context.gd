@@ -103,7 +103,7 @@ func bootstrap() -> void:
 		card_db[c.name] = c
 	cards_loaded.emit(deck_cards)
 
-	var level := DataLoader.load_level()
+	var level := DataLoader.load_level_from_chapter(pending_chapter_config) if pending_chapter_config != "" else DataLoader.load_level()
 	initial_units = level.initial_units
 	spawners.setup(level.spawners)
 	level_loaded.emit(level)

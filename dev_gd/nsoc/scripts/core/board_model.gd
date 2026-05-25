@@ -26,16 +26,21 @@ func get_cell(pos: Vector2):
 	return grid_cells.get(pos)
 
 # 按行迭代 cell。faction=0 玩家正向(0→5)，faction=1 敌方逆向(5→0)。
+# 跳过未注册的格子，兼容只有部分行的棋盘（如额外棋盘只有 rows 0-2）。
 func iter_cells(faction: int) -> Array:
 	var out: Array = []
 	if faction == 0:
 		for r in range(ROWS):
 			for c in range(COLS):
-				out.append(grid_cells[Vector2(r, c)])
+				var key := Vector2(r, c)
+				if grid_cells.has(key):
+					out.append(grid_cells[key])
 	else:
 		for r in range(ROWS - 1, -1, -1):
 			for c in range(COLS - 1, -1, -1):
-				out.append(grid_cells[Vector2(r, c)])
+				var key := Vector2(r, c)
+				if grid_cells.has(key):
+					out.append(grid_cells[key])
 	return out
 
 # 寻找相邻敌人。for_enemy=true 表示发起者是敌方。

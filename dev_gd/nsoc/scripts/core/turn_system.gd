@@ -8,10 +8,16 @@ signal turn_started
 signal turn_ended
 signal phase_started(faction: int)
 signal phase_ended(faction: int)
+# 玩家前排棋子即将行动：等待外部调用 resolve_front_row_selection(target_id) 后继续。
+# target_id: "" = 本棋盘（走默认逻辑），其他字符串 = 外部注册的棋盘标识。
+signal front_row_action_requested(cell: Node)
 
 const PLAYER: int = 0
 const ENEMY: int = 1
 const STEP_INTERVAL: float = 0.5
+
+# 玩家前排：玩家半场紧邻中线的行
+const PLAYER_FRONT_ROW: int = 3
 
 var is_running: bool = false
 
@@ -20,11 +26,38 @@ var _combat: CombatSystem               # 提供 attack_cells / move_card / appl
 var _spawners: SpawnerSystem
 var _card_resolver: Callable
 
+# 前排选择回调：由外部（test_main）赋值。
+var _front_row_resolve: Callable = Callable()
+# 前排选择结果：外部 resolve 写入，_run_front_row_selection 轮询读取。
+var _front_row_result: String = ""
+var _front_row_resolved: bool = false
+
+# 额外棋盘列表。每项：{ "board": BoardModel, "hero_resolver": Callable }
+# hero_resolver(is_enemy: bool, damage: int) —— 单位到达 goal_row 时调用。
+var _extra_board_configs: Array = []
+
 func setup(board: BoardModel, combat: CombatSystem, spawners: SpawnerSystem, card_resolver: Callable) -> void:
 	_board = board
 	_combat = combat
 	_spawners = spawners
 	_card_resolver = card_resolver
+
+# 注册额外棋盘参与遍历。hero_resolver 处理该棋盘的英雄伤害。
+func register_extra_board(board: BoardModel, hero_resolver: Callable) -> void:
+	for cfg in _extra_board_configs:
+		if cfg["board"] == board:
+			return   # 已注册，幂等
+	_extra_board_configs.append({"board": board, "hero_resolver": hero_resolver})
+
+# 注销额外棋盘。
+func unregister_extra_board(board: BoardModel) -> void:
+	_extra_board_configs = _extra_board_configs.filter(
+		func(cfg): return cfg["board"] != board)
+
+# 外部（test_main）调用：玩家完成棋盘选择后，传入棋盘标识（"" = 本棋盘）。
+func resolve_front_row_selection(target_id: String) -> void:
+	_front_row_result = target_id
+	_front_row_resolved = true
 
 func run() -> void:
 	is_running = true
@@ -33,117 +66,136 @@ func run() -> void:
 	await _run_spawn_phase()
 	await _run_phase(ENEMY)
 	_board.reset_attack_flags()
+	for cfg in _extra_board_configs:
+		if is_instance_valid(cfg["board"]):
+			cfg["board"].reset_attack_flags()
 	_spawners.refresh_phantoms(_board, _card_resolver)
 	is_running = false
 	turn_ended.emit()
 
 func _run_phase(faction: int) -> void:
 	phase_started.emit(faction)
+
+	# 主棋盘
+	await _run_phase_on_board(faction, _board,
+		Callable(_combat, "apply_damage_to_hero"))
+
+	# 额外棋盘（按注册顺序遍历）
+	for cfg in _extra_board_configs:
+		if is_instance_valid(cfg["board"]):
+			await _run_phase_on_board(faction, cfg["board"], cfg["hero_resolver"])
+
+	phase_ended.emit(faction)
+
+# 对单块棋盘执行一个阵营的行动阶段。
+# hero_resolver: Callable(is_enemy: bool, damage: int)
+func _run_phase_on_board(faction: int, board: BoardModel,
+		hero_resolver: Callable) -> void:
 	var for_enemy: bool = faction == ENEMY
 	var step: int = 1 if faction == PLAYER else -1
 	var goal_row: int = BoardModel.ENEMY_LAST_ROW if faction == PLAYER else BoardModel.PLAYER_LAST_ROW
 
-	for cell in _board.iter_cells(faction):
+	for cell in board.iter_cells(faction):
 		if not cell.has_card or cell.has_attacked:
 			continue
 		var is_my_unit: bool = (cell.is_enemy == for_enemy)
 		if not is_my_unit:
 			continue
 
-		# 冲锋：仅本场首次行动触发，沿前进方向连步移动直到前方有敌再攻击。
-		# 触发后置 has_charged=true 阻止后续再次触发；徽章保留作视觉提示。
+		# ── 前排选择机制（仅主棋盘玩家前排触发）──────────────────────
+		var front_row_target_id: String = ""
+		if faction == PLAYER and board == _board and cell.row == PLAYER_FRONT_ROW:
+			front_row_target_id = await _run_front_row_selection(cell)
+
+		if front_row_target_id != "":
+			if _front_row_resolve.is_valid():
+				await _front_row_resolve.call(cell, front_row_target_id)
+			cell.has_attacked = true
+			continue
+
+		# ── 冲锋 ────────────────────────────────────────────────────────
 		if cell.effects.has("charge") and not cell.has_charged:
-			var ended_cell = await _run_charge(cell, step, for_enemy, goal_row)
+			var ended_cell = await _run_charge_on_board(cell, step, for_enemy,
+				goal_row, board, hero_resolver)
 			if ended_cell != null:
 				ended_cell.has_attacked = true
 				ended_cell.has_charged = true
 			continue
 
-		var enemies := _board.find_adjacent_enemies(cell, for_enemy)
+		# ── 常规：攻击 → 打英雄 → 移动 ────────────────────────────────
+		var enemies := board.find_adjacent_enemies(cell, for_enemy)
 		if enemies.size() > 0:
 			await _combat.attack_cells(cell, enemies)
 			cell.has_attacked = true
 			continue
 
 		if cell.row == goal_row:
-			# 已到对方英雄前一行：直接攻击英雄
-			_combat.apply_damage_to_hero(not for_enemy, cell.attack)
+			hero_resolver.call(not for_enemy, cell.attack)
 			cell.has_attacked = true
 			await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
 			continue
 
 		var target_r: int = cell.row - step
-		if target_r >= 0 and target_r < BoardModel.ROWS:
-			# "坚守"：阶段推进时不主动移动（仍可攻击邻敌/英雄）。
+		var target = board.get_cell(Vector2(target_r, cell.col))
+		if target and not target.has_card:
 			if cell.effects.has("steadfast"):
 				continue
-			var target = _board.get_cell(Vector2(target_r, cell.col))
-			if target and not target.has_card:
-				await _combat.move_card(cell, target)
-				target.has_attacked = true
-				await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
-				# 警戒哨反应。移动者可能阵亡 → 终止本 cell 后续逻辑（此分支已无后续）。
-				await _trigger_vigilance(target, for_enemy)
+			await _combat.move_card(cell, target)
+			target.has_attacked = true
+			await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
+			await _trigger_vigilance_on_board(target, for_enemy, board)
 
-	phase_ended.emit(faction)
+# ── 前排选择等待 ──────────────────────────────────────────────────────
+func _run_front_row_selection(cell: Node) -> String:
+	_front_row_resolved = false
+	_front_row_result = ""
+	front_row_action_requested.emit(cell)
+	while not _front_row_resolved:
+		await _combat.get_tree().process_frame
+	return _front_row_result
 
-# 冲锋：先扫描沿 -step 方向终点，一次性移动到终点，再结算。
-#   起点已在 goal_row → 直接打英雄（无移动）
-#   路径全空至 goal_row → 一步移到 goal_row 后打英雄
-#   遇敌 → 一步移到敌人前一格，对该敌发起攻击
-#   遇己方/越界 → 一步移到障碍前一格（若起点即终点则不移动）
-# 返回最终所在 cell（用于设置 has_attacked）。
-func _run_charge(cell, step: int, for_enemy: bool, goal_row: int):
-	# 起点已到底线：直接打英雄。
+# ── 冲锋（board 参数化版本）─────────────────────────────────────────
+func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
+		board: BoardModel, hero_resolver: Callable):
 	if cell.row == goal_row:
-		_combat.apply_damage_to_hero(not for_enemy, cell.attack)
+		hero_resolver.call(not for_enemy, cell.attack)
 		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
 		return cell
 
-	# 扫描路径，确定终点 cell + 终点动作。
 	var dest = cell
 	var enemy_target = null
 	var hit_hero: bool = false
 	var probe_r: int = cell.row - step
 	while probe_r >= 0 and probe_r < BoardModel.ROWS:
-		var next_cell = _board.get_cell(Vector2(probe_r, cell.col))
+		var next_cell = board.get_cell(Vector2(probe_r, cell.col))
 		if next_cell == null:
 			break
 		if next_cell.has_card:
 			if next_cell.is_enemy == for_enemy:
-				# 前方己方：停在前一格
 				break
-			# 前方敌方：终点为前一格，记录攻击目标
 			enemy_target = next_cell
 			break
-		# 空格：可推进至此
 		dest = next_cell
 		if dest.row == goal_row:
 			hit_hero = true
 			break
 		probe_r -= step
 
-	# 一次性移动
 	if dest != cell:
 		await _combat.move_card(cell, dest)
 		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
-		# 警戒哨反应：移动落点的四邻敌方警戒单位先打一发。
-		# 若冲锋单位被打死则终止后续结算。
-		await _trigger_vigilance(dest, for_enemy)
+		await _trigger_vigilance_on_board(dest, for_enemy, board)
 		if not dest.has_card:
 			return null
 
-	# 终点结算
 	if enemy_target != null:
 		var dir_name: String = "top" if step == 1 else "bottom"
 		var opp_name: String = "bottom" if step == 1 else "top"
 		await _combat.attack_cells(dest, [{
-			"cell": enemy_target,
-			"dir": dir_name,
-			"opp_dir": opp_name,
+			"cell": enemy_target, "dir": dir_name, "opp_dir": opp_name,
 		}])
 	elif hit_hero:
-		_combat.apply_damage_to_hero(not for_enemy, dest.attack)
+		hero_resolver.call(not for_enemy, dest.attack)
 		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
 
 	return dest
@@ -153,31 +205,32 @@ func _run_spawn_phase() -> void:
 	if any_spawned:
 		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
 
-# 警戒触发：扫描 entered_cell 四邻，找含 "vigilance" 且阵营与移动者相对的单位，
-# 由它们对 entered_cell 各发起一次攻击。
-# mover_for_enemy = true 表示移动者属于敌方阵营；警戒哨即玩家方单位（反之亦然）。
-# 移动者死亡后立即停止后续警戒哨触发，避免对空格继续攻击。
-func _trigger_vigilance(entered_cell, mover_for_enemy: bool) -> void:
+# ── 警戒触发（board 参数化版本）─────────────────────────────────────
+func _trigger_vigilance_on_board(entered_cell, mover_for_enemy: bool,
+		board: BoardModel) -> void:
 	if entered_cell == null or not entered_cell.has_card:
 		return
-	var dir_name_for_mover: String  # 警戒哨相对 entered_cell 的方位 = entered_cell 受击方向
 	for d in BoardModel.DIRECTIONS:
 		var p: Vector2 = Vector2(entered_cell.row, entered_cell.col) + d.offset
-		var sentinel = _board.get_cell(p)
+		var sentinel = board.get_cell(p)
 		if sentinel == null or not sentinel.has_card:
 			continue
-		# 警戒哨阵营须与移动者相对
 		if sentinel.is_enemy == mover_for_enemy:
 			continue
 		if not sentinel.effects.has("vigilance"):
 			continue
-		# 移动者已死则停止后续哨兵触发
 		if not entered_cell.has_card:
 			return
-		# entered_cell 被击中的方向 = 警戒哨方位的对位
-		dir_name_for_mover = d.opp
 		await _combat.attack_cells(sentinel, [{
 			"cell": entered_cell,
 			"dir": d.name,
-			"opp_dir": dir_name_for_mover,
+			"opp_dir": d.opp,
 		}])
+
+# 旧接口兼容 —— 主棋盘版本，供外部直接调用
+func _trigger_vigilance(entered_cell, mover_for_enemy: bool) -> void:
+	await _trigger_vigilance_on_board(entered_cell, mover_for_enemy, _board)
+
+func _run_charge(cell, step: int, for_enemy: bool, goal_row: int):
+	return await _run_charge_on_board(cell, step, for_enemy, goal_row,
+		_board, Callable(_combat, "apply_damage_to_hero"))

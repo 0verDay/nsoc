@@ -93,6 +93,8 @@ func _build_overlay_and_panel() -> void:
 	_overlay.color = Color(0, 0, 0, 0.5)
 	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	# z_index 需高于场景内所有 UI（LeftSidePnl=10, clip 节点=20 等）才能完整覆盖
+	_overlay.z_index = 200
 	_overlay.visible = false
 	_parent.add_child(_overlay)
 	_overlay.gui_input.connect(_on_overlay_input)

@@ -28,10 +28,19 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="TestButton" type="Button" parent="CenterContainer" unique_id=1800591367]
+[node name="VBox" type="VBoxContainer" parent="CenterContainer"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="TestButton" type="Button" parent="CenterContainer/VBox" unique_id=1800591367]
 custom_minimum_size = Vector2(320, 120)
 layout_mode = 2
 text = "test"
+
+[node name="NewTestButton" type="Button" parent="CenterContainer/VBox"]
+custom_minimum_size = Vector2(320, 120)
+layout_mode = 2
+text = "new_test"
 
 [node name="RightSidePnl" type="Panel" parent="." unique_id=2030988436]
 layout_mode = 1

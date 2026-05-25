@@ -6,13 +6,15 @@ extends Control
 # - 右下角面板 RightSidePnl，尺寸与游玩场景英雄面板 LeftSidePnl 相同（暂无逻辑）
 
 const MAIN_SCENE_PATH := "res://scenes/Main.tscn"
+const TEST_MAIN_SCENE_PATH := "res://scenes/TestMain.tscn"
 
 # 与游玩场景 SettingsPanelController 中按钮一致：160 x 80，font 32
 const OPTIONS_BTN_W: float = 160.0
 const OPTIONS_BTN_H: float = 80.0
 const OPTIONS_BTN_MARGIN: float = 20.0
 
-@onready var _test_btn: Button = $CenterContainer/TestButton
+@onready var _test_btn: Button = $CenterContainer/VBox/TestButton
+@onready var _new_test_btn: Button = $CenterContainer/VBox/NewTestButton
 
 var _options_btn: Button
 
@@ -77,6 +79,8 @@ func _ready() -> void:
 	_build_settings_controller()
 	if _test_btn:
 		_test_btn.pressed.connect(_on_test_pressed)
+		if _new_test_btn:
+			_new_test_btn.pressed.connect(_on_new_test_pressed)
 	if _options_btn:
 		_options_btn.pressed.connect(_on_options_pressed)
 	# 延迟一帧待 layout 稳定后记录初始状态、装配转场。
@@ -171,6 +175,9 @@ func _build_options_button() -> void:
 
 func _on_test_pressed() -> void:
 	get_tree().change_scene_to_file(MAIN_SCENE_PATH)
+
+func _on_new_test_pressed() -> void:
+	get_tree().change_scene_to_file(TEST_MAIN_SCENE_PATH)
 
 # ---------------- 选项二级菜单实现 ----------------
 

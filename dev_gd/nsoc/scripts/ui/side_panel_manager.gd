@@ -19,11 +19,13 @@ const PANEL_HEIGHT: float = 470.0
 const SLIDE_DURATION: float = 0.3
 
 var _parent: Control
+var _center_x_offset: float = 0.0   # 面板水平中心相对视口中心的偏移（与 BOARD_SHIFT 同坐标系）
 var _ui_panels: Dictionary = {}
 var _current_open: String = ""
 
-func setup(parent: Control) -> void:
+func setup(parent: Control, center_x_offset: float = 0.0) -> void:
 	_parent = parent
+	_center_x_offset = center_x_offset
 	for p_name in PANEL_NAMES:
 		_ui_panels[p_name] = _build_panel(p_name)
 	if has_node("/root/Game"):
@@ -35,15 +37,15 @@ func _on_deck_pile_changed(pile_name: String) -> void:
 		_refresh_content(_current_open)
 
 func _build_panel(p_name: String) -> Dictionary:
-	# clip：固定在玩家半场底部居中，宽 PANEL_WIDTH，高 PANEL_HEIGHT。
+	# clip：固定在玩家半场底部，水平居中于 _center_x_offset。
 	var clip_node := Control.new()
 	clip_node.name = p_name + "_clip"
 	_parent.add_child(clip_node)
 	clip_node.set_anchors_preset(Control.PRESET_BOTTOM_WIDE, false)
 	clip_node.anchor_left = 0.5
 	clip_node.anchor_right = 0.5
-	clip_node.offset_left = -PANEL_WIDTH / 2.0
-	clip_node.offset_right = PANEL_WIDTH / 2.0
+	clip_node.offset_left  = _center_x_offset - PANEL_WIDTH / 2.0
+	clip_node.offset_right = _center_x_offset + PANEL_WIDTH / 2.0
 	clip_node.offset_top = -CLIP_BOTTOM - PANEL_HEIGHT
 	clip_node.offset_bottom = -CLIP_BOTTOM
 	clip_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
