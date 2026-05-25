@@ -6,8 +6,8 @@
 			"description": "这是目前的测试战役",
 			"chapters": [
 				{"name": "长坂坡", "description": "我去了曹老板打过来了，肿么办肿么办！三军听令，战至最后一刻，自刎归天！", "scene": "res://scenes/chapters/Changbanpo.tscn", "config": "res://data/chapters/changbanpo.json"},
-				{"name": "逍遥津", "description": "无论如何，会战兵力是800对10万，优势在我！", "scene": "res://scenes/chapters/BlankChapter.tscn"},
-				{"name": "五丈原", "description": "丞相保重！", "scene": "res://scenes/chapters/BlankChapter.tscn"}
+{"name": "威震华夏", "description": "水淹七军，威震华夏！关云长乘大水之势，擒于禁、斩庞德，天下震动！", "scene": "res://scenes/chapters/Weizhenhuaxia.tscn", "config": "res://data/chapters/weizhenhuaxia.json"},
+					{"name": "街亭", "description": "这里是测试用街亭章节的描述", "scene": "res://scenes/chapters/BlankChapter.tscn"}
 			]
 		},
 		"c2": {

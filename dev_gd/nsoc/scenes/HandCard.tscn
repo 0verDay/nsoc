@@ -1,8 +1,8 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://dea4u7qpn2kjg"]
 
-[ext_resource type="Script" path="res://scripts/hand_card.gd" id="1_handcard"]
+[ext_resource type="Script" uid="uid://cxf5chrdccc3o" path="res://scripts/hand_card.gd" id="1_handcard"]
 
-[node name="HandCard" type="Panel"]
+[node name="HandCard" type="Panel" unique_id=418770818]
 custom_minimum_size = Vector2(250, 95)
 offset_right = 250.0
 offset_bottom = 95.0
@@ -11,7 +11,7 @@ size_flags_vertical = 4
 mouse_filter = 1
 script = ExtResource("1_handcard")
 
-[node name="CostBg" type="Panel" parent="."]
+[node name="CostBg" type="Panel" parent="." unique_id=1118388270]
 layout_mode = 1
 offset_left = -10.0
 offset_top = -10.0
@@ -19,7 +19,7 @@ offset_right = 20.0
 offset_bottom = 20.0
 mouse_filter = 2
 
-[node name="CostLbl" type="Label" parent="CostBg"]
+[node name="CostLbl" type="Label" parent="CostBg" unique_id=384413945]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -31,7 +31,7 @@ theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="NameLbl" type="Label" parent="."]
+[node name="NameLbl" type="Label" parent="." unique_id=1980323959]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -49,7 +49,7 @@ theme_override_font_sizes/font_size = 16
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="AtkBg" type="Panel" parent="."]
+[node name="AtkBg" type="Panel" parent="." unique_id=2127001106]
 layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
@@ -61,7 +61,7 @@ offset_bottom = 10.0
 grow_vertical = 0
 mouse_filter = 2
 
-[node name="AtkLbl" type="Label" parent="AtkBg"]
+[node name="AtkLbl" type="Label" parent="AtkBg" unique_id=1549210373]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -73,7 +73,7 @@ theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="TopHp" type="Label" parent="."]
+[node name="TopHp" type="Label" parent="." unique_id=984578268]
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
@@ -88,7 +88,7 @@ theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="BottomHp" type="Label" parent="."]
+[node name="BottomHp" type="Label" parent="." unique_id=437728322]
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5
@@ -106,7 +106,7 @@ theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="LeftHp" type="Label" parent="."]
+[node name="LeftHp" type="Label" parent="." unique_id=375760852]
 layout_mode = 1
 anchors_preset = 4
 anchor_top = 0.5
@@ -121,7 +121,7 @@ theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="RightHp" type="Label" parent="."]
+[node name="RightHp" type="Label" parent="." unique_id=1255940984]
 layout_mode = 1
 anchors_preset = 6
 anchor_left = 1.0
@@ -139,7 +139,7 @@ theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="EffectBadges" type="HBoxContainer" parent="."]
+[node name="EffectBadges" type="HBoxContainer" parent="." unique_id=518909104]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5

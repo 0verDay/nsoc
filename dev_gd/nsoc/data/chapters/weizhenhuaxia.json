@@ -1,10 +1,8 @@
 {
 	"version": 1,
-	"description": "我去了曹老板打过来了，肿么办肿么办！三军听令，战至最后一刻，自刎归天！",
+	"description": "水淹七军，威震华夏！关云长乘大水之势，擒于禁、斩庞德，天下震动！",
 	"cards": [
-		{"name": "长板·赵云", "count": 1},
-		{"name": "长板·张飞", "count": 1},
-		{"name": "填线宝宝", "count": 10}
+		{"name": "填线宝宝", "count": 8}
 	],
 	"initial_units": [
 		{

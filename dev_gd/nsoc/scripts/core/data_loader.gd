@@ -88,6 +88,20 @@ static func load_level() -> Dictionary:
 	var j = _read_json(LEVEL_JSON)
 	if typeof(j) != TYPE_DICTIONARY:
 		return out
+	return _parse_level(j)
+
+# 从章节 JSON 中读取关卡结构（initial_units + spawners）。
+# 章节无关卡字段时返回空骨架，调用方走默认。
+static func load_level_from_chapter(chapter_json_path: String) -> Dictionary:
+	var out := {"initial_units": [], "spawners": []}
+	var j = _read_json(chapter_json_path)
+	if typeof(j) != TYPE_DICTIONARY:
+		return out
+	return _parse_level(j)
+
+# 关卡结构解析（initial_units + spawners），供 load_level / load_level_from_chapter 共用。
+static func _parse_level(j: Dictionary) -> Dictionary:
+	var out := {"initial_units": [], "spawners": []}
 	if j.has("initial_units") and typeof(j["initial_units"]) == TYPE_ARRAY:
 		for cfg in j["initial_units"]:
 			var positions: Array = []
@@ -265,4 +279,3 @@ static func _write_battle_cards(arr: Array) -> void:
 		return
 	f.store_string(JSON.stringify(arr, "\t"))
 	f.close()
-
