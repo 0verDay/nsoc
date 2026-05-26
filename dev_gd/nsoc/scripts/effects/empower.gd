@@ -20,9 +20,7 @@ func on_play(_card_data, ctx) -> void:
 		return
 	if cell.is_enemy:
 		return
-	cell.health.top += BUFF
-	cell.health.bottom += BUFF
-	cell.health.left += BUFF
-	cell.health.right += BUFF
+	for s in Orientation.SIDES:
+		cell.health[s] += BUFF
 	if cell.has_method("_update_hp_labels"):
 		cell._update_hp_labels()

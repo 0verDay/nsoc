@@ -24,10 +24,8 @@ func on_play(_card_data, ctx) -> void:
 		return
 	var buff: int = BUFF_PER_ENEMY * n
 	cell.attack += buff
-	cell.health.top += buff
-	cell.health.bottom += buff
-	cell.health.left += buff
-	cell.health.right += buff
+	for s in Orientation.SIDES:
+		cell.health[s] += buff
 	if cell.has_method("_update_hp_labels"):
 		cell._update_hp_labels()
 	if cell.has_method("_update_atk_label"):

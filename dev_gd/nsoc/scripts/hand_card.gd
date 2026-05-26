@@ -16,18 +16,19 @@ var card_id: int = 0
 @onready var name_lbl = $NameLbl
 @onready var atk_lbl = $AtkBg/AtkLbl
 
-var hp_labels: Dictionary = {}
+var hp_labels_abs: Dictionary = {}
 
 func _ready() -> void:
 	add_theme_stylebox_override("panel", ThemeFactory.card_panel(Color.WHITE, Color("#e1e8ed"), 1, 15, true))
 	$CostBg.add_theme_stylebox_override("panel", ThemeFactory.pill(Color("#339af0"), 12, true))
 	$AtkBg.add_theme_stylebox_override("panel", ThemeFactory.pill(Color("#ff6b6b"), 12, true))
 
-	hp_labels["top"] = $TopHp
-	hp_labels["bottom"] = $BottomHp
-	hp_labels["left"] = $LeftHp
-	hp_labels["right"] = $RightHp
-	for d in hp_labels.values():
+	# 手牌按玩家视角呈现：abs.top = 单位 front，abs.bottom = back，左右一致
+	hp_labels_abs["top"] = $TopHp
+	hp_labels_abs["bottom"] = $BottomHp
+	hp_labels_abs["left"] = $LeftHp
+	hp_labels_abs["right"] = $RightHp
+	for d in hp_labels_abs.values():
 		d.add_theme_stylebox_override("normal", ThemeFactory.pill(Color("#51cf66"), 10))
 
 	pivot_offset = custom_minimum_size / 2.0
@@ -76,16 +77,19 @@ func setup(data, id: int) -> void:
 
 	if is_unit:
 		atk_lbl.text = str(data.attack)
-		for d in hp_labels.keys():
-			hp_labels[d].text = str(data.health[d])
+		# data.health 以单位视角 side 存储；手牌按玩家朝向展示，
+		# 即 abs.top→front, abs.bottom→back, abs.left→left, abs.right→right。
+		for abs_dir in hp_labels_abs.keys():
+			var side := Orientation.abs_to_side(abs_dir, false)
+			hp_labels_abs[abs_dir].text = str(data.health[side])
 		atk_lbl.visible = true
 		$AtkBg.visible = true
-		for lbl in hp_labels.values():
+		for lbl in hp_labels_abs.values():
 			lbl.visible = true
 	else:
 		atk_lbl.visible = false
 		$AtkBg.visible = false
-		for lbl in hp_labels.values():
+		for lbl in hp_labels_abs.values():
 			lbl.visible = false
 
 	var effs: Array = data.get("effects", []) if typeof(data) == TYPE_DICTIONARY else data.effects
@@ -128,12 +132,8 @@ func _get_drag_data(_pos):
 		is_unit = (card_data is CardUnit)
 	if is_unit:
 		drag_dict["attack"] = card_data.attack
-		drag_dict["health"] = {
-			"top": card_data.health["top"],
-			"bottom": card_data.health["bottom"],
-			"left": card_data.health["left"],
-			"right": card_data.health["right"],
-		}
+		# health 以 side 字典传递，落到 cell 时由 cell.set_card 直接消费
+		drag_dict["health"] = Orientation.clone_side_health(card_data.health)
 	return drag_dict
 
 func _notification(what) -> void:
