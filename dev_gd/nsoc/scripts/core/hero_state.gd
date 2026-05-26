@@ -1,62 +1,40 @@
 class_name HeroState
 extends Node
 
-signal health_changed(is_enemy: bool, new_value: int)
-signal damaged(is_enemy: bool, amount: int)
-signal hero_died(is_enemy: bool)            # hp <= 0 时触发；同一英雄只触发一次
+# 单方英雄状态。每个 BoardSlot 拥有一个独立实例。
+# 旧 (player_/enemy_) 双套字段已合并为单方模型；阵营归属由所属 BoardSlot 提供，
+# 本类仅承载该英雄自身的血量 / 名字 / 技能 / 死亡状态。
 
-var player_health: int = 30
-var enemy_health: int = 30
-var player_max_health: int = 30           # 详情面板用，不随战斗扣减
-var enemy_max_health: int = 30
-# 局内展示名（战斗英雄面板 HeroNameLbl 用）。
-var player_name: String = "Player"
-var enemy_name: String = "Enemy"
-# 完整名（长按详情面板用）。未显式设置时与 *_name 相同。
-var player_full_name: String = "Player"
-var enemy_full_name: String = "Enemy"
-var player_abilities: Array = []          # String[]，HeroAbility ID 列表
-var enemy_abilities: Array = []
-var _player_dead: bool = false
-var _enemy_dead: bool = false
+signal health_changed(new_value: int)
+signal damaged(amount: int)
+signal died     # health <= 0 时触发；同一英雄只触发一次
 
-# setup 兼容签名：未传 full_name 时 fallback 到对应 name。
-func setup(p_hp: int, e_hp: int, p_name: String = "Player", e_name: String = "Enemy",
-		p_abilities: Array = [], e_abilities: Array = [],
-		p_full_name: String = "", e_full_name: String = "") -> void:
-	player_health = p_hp
-	enemy_health = e_hp
-	player_max_health = p_hp
-	enemy_max_health = e_hp
-	player_name = p_name
-	enemy_name = e_name
-	player_full_name = p_full_name if p_full_name != "" else p_name
-	enemy_full_name = e_full_name if e_full_name != "" else e_name
-	player_abilities = p_abilities.duplicate()
-	enemy_abilities = e_abilities.duplicate()
-	_player_dead = false
-	_enemy_dead = false
-	health_changed.emit(false, player_health)
-	health_changed.emit(true, enemy_health)
+var health: int = 30
+var max_health: int = 30          # 详情面板用，不随战斗扣减
+var name_short: String = "Hero"   # 局内 HP 面板上的精简名
+var name_full: String = "Hero"    # 长按详情用的完整名
+var abilities: Array = []         # String[]，HeroAbility ID 列表
+var is_dead: bool = false
+
+func setup(p_hp: int, p_name_short: String = "Hero",
+		p_name_full: String = "",
+		p_abilities: Array = []) -> void:
+	health = p_hp
+	max_health = p_hp
+	name_short = p_name_short
+	name_full = p_name_full if p_name_full != "" else p_name_short
+	abilities = p_abilities.duplicate()
+	is_dead = false
+	health_changed.emit(health)
 
 # 取首个技能 ID（当前每英雄至多一个）。
-func player_ability_id() -> String:
-	return String(player_abilities[0]) if player_abilities.size() > 0 else ""
+func ability_id() -> String:
+	return String(abilities[0]) if abilities.size() > 0 else ""
 
-func enemy_ability_id() -> String:
-	return String(enemy_abilities[0]) if enemy_abilities.size() > 0 else ""
-
-func apply_damage(is_enemy: bool, amount: int) -> void:
-	if is_enemy:
-		enemy_health -= amount
-	else:
-		player_health -= amount
-	damaged.emit(is_enemy, amount)
-	health_changed.emit(is_enemy, enemy_health if is_enemy else player_health)
-	# 死亡只发一次
-	if is_enemy and not _enemy_dead and enemy_health <= 0:
-		_enemy_dead = true
-		hero_died.emit(true)
-	elif not is_enemy and not _player_dead and player_health <= 0:
-		_player_dead = true
-		hero_died.emit(false)
+func apply_damage(amount: int) -> void:
+	health -= amount
+	damaged.emit(amount)
+	health_changed.emit(health)
+	if not is_dead and health <= 0:
+		is_dead = true
+		died.emit()

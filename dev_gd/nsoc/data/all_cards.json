@@ -34,7 +34,7 @@
 	"name": "看门狗",
 	"type": "单位",
 	"cost": 3,
-	"health": {"top": 2, "bottom": 2, "left": 2, "right": 2},
+	"health": {"top": 1, "bottom": 2, "left": 2, "right": 2},
 	"attack": 1,
 	"effects": ["vigilance"]
   },

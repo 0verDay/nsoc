@@ -15,9 +15,14 @@ var row: int = 0
 var col: int = 0
 var has_card: bool = false
 var is_enemy: bool = false
+# 该 cell 所属的 BoardSlot id。由 BoardSlotFactory / setup 注入。
+# 用于 PlayController / TurnSystem 反查 slot.faction / slot.allow_player_deploy 等。
+var slot_id: String = ""
 var card_name: String = ""
 var attack: int = 0
-var health: Dictionary = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+# 以单位视角 side 存储：{front, back, left, right}
+# 渲染时再按 is_enemy 翻转到屏幕绝对方向标签上。
+var health: Dictionary = {"front": 0, "back": 0, "left": 0, "right": 0}
 var effects: Array = []
 var has_attacked: bool = false
 var has_charged: bool = false
@@ -27,7 +32,8 @@ var is_phantom: bool = false
 @onready var name_lbl = $InnerPanel/NameLbl
 @onready var atk_lbl = $InnerPanel/AtkBg/AtkLbl
 
-var hp_labels: Dictionary = {}
+# 屏幕绝对方向 → Label 节点（位置由 .tscn 锚定）
+var hp_labels_abs: Dictionary = {}
 var active_tween = null
 var is_drag_hovered: bool = false
 
@@ -35,11 +41,11 @@ func _ready() -> void:
 	add_theme_stylebox_override("panel", ThemeFactory.cell_panel(Color.WHITE, Color("#d1d9e0"), 2, 20))
 	$InnerPanel/AtkBg.add_theme_stylebox_override("panel", ThemeFactory.cell_panel(Color("#ff6b6b"), Color.TRANSPARENT, 0, 8))
 
-	hp_labels["top"] = $InnerPanel/TopHp
-	hp_labels["bottom"] = $InnerPanel/BottomHp
-	hp_labels["left"] = $InnerPanel/LeftHp
-	hp_labels["right"] = $InnerPanel/RightHp
-	for d in hp_labels.values():
+	hp_labels_abs["top"] = $InnerPanel/TopHp
+	hp_labels_abs["bottom"] = $InnerPanel/BottomHp
+	hp_labels_abs["left"] = $InnerPanel/LeftHp
+	hp_labels_abs["right"] = $InnerPanel/RightHp
+	for d in hp_labels_abs.values():
 		d.add_theme_stylebox_override("normal", ThemeFactory.pill(Color("#51cf66"), 10))
 
 	# 初始化期不发 cleared（无监听者，且语义错误）
@@ -80,7 +86,8 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> vo
 	inner_panel.modulate.a = 1.0
 	card_name = cname
 	attack = atk
-	health = {"top": hp["top"], "bottom": hp["bottom"], "left": hp["left"], "right": hp["right"]}
+	# hp 入参是单位视角 side dict（front/back/left/right），整盘统一 side 存储
+	health = Orientation.clone_side_health(hp)
 	effects = effects_in.duplicate()
 	is_enemy = enemy
 	name_lbl.text = cname
@@ -99,8 +106,11 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> vo
 	inner_panel.visible = true
 
 func _update_hp_labels() -> void:
-	for d in hp_labels.keys():
-		hp_labels[d].text = str(health[d])
+	# health 以 side 存储；标签按屏幕绝对方向放置。
+	# 取 abs label，找到对应单位视角 side，回填数值。
+	for abs_dir in hp_labels_abs.keys():
+		var side := Orientation.abs_to_side(abs_dir, is_enemy)
+		hp_labels_abs[abs_dir].text = str(health[side])
 
 func _update_atk_label() -> void:
 	atk_lbl.text = str(attack)
@@ -156,14 +166,16 @@ func play_death_effect() -> void:
 		active_tween = get_tree().create_tween()
 		active_tween.tween_property(inner_panel, "self_modulate", Color(0.5, 0.5, 0.5), 0.4)
 
-func receive_damage(dir, dmg, dying: bool = false) -> bool:
-	health[dir] -= dmg
+func receive_damage(dir_abs, dmg, dying: bool = false) -> bool:
+	# dir_abs: 屏幕绝对方向（top/bottom/left/right），通常由 BoardModel 邻接判定给出
+	var side := Orientation.abs_to_side(dir_abs, is_enemy)
+	health[side] -= dmg
 	_update_hp_labels()
 	if dying:
 		play_death_effect()
 	else:
 		play_damage_effect()
-	return health[dir] <= 0
+	return health[side] <= 0
 
 func set_drag_hover(hovered: bool) -> void:
 	if is_drag_hovered == hovered:

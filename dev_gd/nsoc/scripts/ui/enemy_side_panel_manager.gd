@@ -2,15 +2,17 @@ class_name EnemySidePanelManager
 extends Node
 
 # 敌方"墓地 / 除外"两个顶部下拉面板。
-# 与玩家侧 SidePanelManager 镜像：clip 限定可见区域为顶部半场，
-# 内部 panel 从画面上方滑入，遮住敌方半场。
+# 阶段 5：参数化数据源 = 一个 BoardSlot。每个敌方盘各自实例化一份。
+# 旧 Game.deck.enemy_* 已删除；本类读 _slot.graveyard / banished，监听 _slot.pile_changed。
 
 signal long_press_requested(payload)       # payload: {"name": "卡名"}
 signal long_press_canceled
 
+# 面板内部 key（仍叫 enemy_grave / enemy_banished 与 toggle 字符串保持兼容）
 const PANEL_NAMES: PackedStringArray = ["enemy_grave", "enemy_banished"]
 const PANEL_TITLES: Dictionary = {"enemy_grave": "敌方墓地", "enemy_banished": "敌方除外"}
-const PILE_TO_PANEL: Dictionary = {"enemy_graveyard": "enemy_grave", "enemy_banish": "enemy_banished"}
+# slot.pile_changed 的 pile 名 → 本面板 key
+const PILE_TO_PANEL: Dictionary = {"graveyard": "enemy_grave", "banished": "enemy_banished"}
 
 # clip 区域 = 敌方半场（基于 Main.tscn 中 TopGridBg 范围扩边）
 const CLIP_TOP: float = 60.0
@@ -20,18 +22,33 @@ const PANEL_HEIGHT: float = 470.0
 const SLIDE_DURATION: float = 0.3
 
 var _parent: Control
+var _slot: BoardSlot = null
 var _center_x_offset: float = 0.0   # 面板水平中心相对视口中心的偏移（与 BOARD_SHIFT 同坐标系）
 # panel_name -> {"clip": Control, "panel": Panel, "list": VBoxContainer}
 var _ui_panels: Dictionary = {}
 var _current_open: String = ""
 
-func setup(parent: Control, center_x_offset: float = 0.0) -> void:
+# slot 可选：传入则数据源切到 slot；不传 (null) 时维持空数据
+func setup(parent: Control, slot: BoardSlot = null, center_x_offset: float = 0.0) -> void:
 	_parent = parent
 	_center_x_offset = center_x_offset
 	for p_name in PANEL_NAMES:
 		_ui_panels[p_name] = _build_panel(p_name)
-	if has_node("/root/Game"):
-		Game.deck.pile_changed.connect(_on_deck_pile_changed)
+	if slot != null:
+		set_slot(slot)
+
+# 数据源：切换 / 注入 slot（boot 后由 test_main / Orchestrator 调）。
+func set_slot(slot: BoardSlot) -> void:
+	if _slot == slot:
+		return
+	if _slot != null and _slot.pile_changed.is_connected(_on_slot_pile_changed):
+		_slot.pile_changed.disconnect(_on_slot_pile_changed)
+	_slot = slot
+	if _slot != null:
+		_slot.pile_changed.connect(_on_slot_pile_changed)
+	# 重新拉取打开中的面板内容
+	if _current_open != "":
+		_refresh_content(_current_open)
 
 # 主棋盘在 test 动画后调用此方法跟随棋盘平移。
 func update_clip_center_x(new_center_x: float) -> void:
@@ -41,7 +58,7 @@ func update_clip_center_x(new_center_x: float) -> void:
 		clip.offset_left  = new_center_x - PANEL_WIDTH / 2.0
 		clip.offset_right = new_center_x + PANEL_WIDTH / 2.0
 
-func _on_deck_pile_changed(pile_name: String) -> void:
+func _on_slot_pile_changed(pile_name: String) -> void:
 	var mapped: String = PILE_TO_PANEL.get(pile_name, "")
 	if _current_open != "" and _current_open == mapped:
 		_refresh_content(_current_open)
@@ -115,13 +132,15 @@ func _refresh_content(p_name: String) -> void:
 	var vbox: VBoxContainer = _ui_panels[p_name].list
 	for c in vbox.get_children():
 		c.queue_free()
+	if _slot == null:
+		return
 
 	if p_name == "enemy_grave":
-		var grave: Array = Game.deck.enemy_graveyard
+		var grave: Array = _slot.graveyard
 		for i in range(grave.size() - 1, -1, -1):
 			vbox.add_child(_create_list_item(grave[i].name, 1))
 	elif p_name == "enemy_banished":
-		var ban: Array = Game.deck.enemy_banished
+		var ban: Array = _slot.banished
 		for i in range(ban.size() - 1, -1, -1):
 			vbox.add_child(_create_list_item(ban[i].name, 1))
 
