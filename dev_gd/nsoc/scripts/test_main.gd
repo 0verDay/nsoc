@@ -54,6 +54,8 @@ var _main_enemy_nodes: Array = []
 func _ready() -> void:
 	visible = false
 	await _apply_editor_window_scale()
+	# test_main 专用多棋盘测试关卡；main 场景继续读默认 test_level.json。
+	Game.pending_level_path = "res://data/multi_chessboard_test_level.json"
 	Game.bootstrap()
 
 	_apply_styles()
@@ -166,7 +168,9 @@ func _install_controllers() -> void:
 		"detail_panel": detail_panel,
 		"long_press_hero_args": Callable(self, "_get_player_hero_long_press_args"),
 	})
-	$LeftSidePnl.gui_input.connect(hero_drag_ctrl.on_gui_input)
+	# 不再通过 gui_input 连接：附盘 ui_nodes 覆盖在 LeftSidePnl 上会拦截 gui_input。
+	# 改为在全局 _input 中手动转发，保证附盘存在时拖拽仍可用。
+	# $LeftSidePnl.gui_input.connect(hero_drag_ctrl.on_gui_input)
 	$EnemyHpPnl.gui_input.connect(_on_enemy_hero_panel_gui_input)
 
 # HeroPanelDragController 的 long_press_hero_args 回调。
@@ -301,6 +305,11 @@ func _input(event) -> void:
 				hero_drag_ctrl.handle_global_release()
 		else:
 			var p := get_global_mouse_position()
+			# 英雄面板拖拽：附盘 ui_nodes 覆盖会拦截 gui_input，改为在全局 _input 中
+			# 检测 LeftSidePnl 命中并直接转发给 hero_drag_ctrl，绕过覆盖层
+			if is_instance_valid(hero_drag_ctrl) and $LeftSidePnl.get_global_rect().has_point(p):
+				hero_drag_ctrl.on_gui_input(event)
+				return
 			if side_panels.has_open_panel():
 				if side_panels.is_panel_hit(p): return
 				if deck_btn.get_global_rect().has_point(p): return
@@ -320,6 +329,11 @@ func _input(event) -> void:
 					board_orchestrator.close_all_side_panels()
 				elif board_orchestrator.is_pile_button_hit(p):
 					return
+
+	# 鼠标移动时同步转发给 hero_drag_ctrl（附盘覆盖层同样会拦截 MouseMotion gui_input）
+	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		if is_instance_valid(hero_drag_ctrl):
+			hero_drag_ctrl.on_gui_input(event)
 
 # ── 样式 ─────────────────────────────────────────────────────────────
 func _apply_editor_window_scale() -> void:
@@ -584,6 +598,16 @@ func _play_intro_animation() -> void:
 	for s in slide_specs:
 		s["origin"] = s.node.position
 		s.node.position = s.origin + s.from
+
+	# 附盘节点在 visible=true 之前设好起始偏移，避免闪烁
+	if is_instance_valid(board_orchestrator):
+		var extra := board_orchestrator.setup_intro_nodes(vp_h)
+		for entry in extra.get("slides", []):
+			slide_specs.append({"node": entry["node"], "origin": entry["target"],
+				"from": Vector2.ZERO})
+		for n in extra.get("fades", []):
+			fade_targets.append(n)
+
 	for n in slide_nodes:
 		n.visible = true
 	visible = true

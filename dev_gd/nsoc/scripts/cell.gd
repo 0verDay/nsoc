@@ -47,6 +47,10 @@ func _ready() -> void:
 	hp_labels_abs["right"] = $InnerPanel/RightHp
 	for d in hp_labels_abs.values():
 		d.add_theme_stylebox_override("normal", ThemeFactory.pill(Color("#51cf66"), 10))
+		# 相对 z_index = 2（继承 InnerPanel z=1），实际 z=3，高于 _SelectionBorder(z=2)
+		d.z_index = 2
+	# InnerPanel z=1，渲染在 cell 背景之上；_SelectionBorder z=2 将浮在其上显示描边
+	inner_panel.z_index = 1
 
 	# 初始化期不发 cleared（无监听者，且语义错误）
 	_do_clear()
@@ -79,6 +83,29 @@ func set_phantom(cname, atk, hp, enemy: bool = false, effects_in: Array = []) ->
 	has_card = false
 	is_phantom = true
 	inner_panel.modulate.a = 0.4
+
+# 选中等待状态高亮：在 cell 顶层叠一个透明背景 + 蓝色描边的 Panel。
+# 四维指示器已设置绝对 z_index = 10，始终渲染在描边之上，不被遮挡。
+const _HIGHLIGHT_BORDER: float = 3.0
+
+func set_selection_highlight(enabled: bool) -> void:
+	var existing := get_node_or_null("_SelectionBorder")
+	if not enabled:
+		if existing != null:
+			existing.queue_free()
+		return
+	if existing != null:
+		return
+	var frame := Panel.new()
+	frame.name = "_SelectionBorder"
+	frame.set_anchors_preset(Control.PRESET_FULL_RECT, false)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# z_index=2：浮在 InnerPanel(z=1) 之上，低于 HP labels(InnerPanel z=1 + label z=2 = 3)
+	frame.z_index = 2
+	frame.add_theme_stylebox_override("panel",
+		ThemeFactory.cell_panel(Color(0, 0, 0, 0), Color("#339af0"),
+			int(_HIGHLIGHT_BORDER), 20))
+	add_child(frame)
 
 func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> void:
 	has_card = true
