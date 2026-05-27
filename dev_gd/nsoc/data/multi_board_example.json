@@ -1,0 +1,166 @@
+{
+	"_comment": "阶段 4 多棋盘 schema 示例。可作为 test_level 替换或新关卡参考。",
+	"boards": {
+		"player_main": {
+			"faction": 0,
+			"role": "main_player",
+			"slot_index": 4,
+			"enabled": true,
+			"hero": {
+				"hp": 30,
+				"name_short": "玩家",
+				"name_full": "玩家·完整名",
+				"abilities": ["restart"]
+			},
+			"initial_units": [
+				{
+					"name": "填线宝宝",
+					"faction": 0,
+					"positions": [
+						{ "row": 2, "col": 1 }
+					]
+				}
+			],
+			"spawners": []
+		},
+		"enemy_main": {
+			"faction": 1,
+			"role": "main_enemy",
+			"slot_index": 1,
+			"enabled": true,
+			"hero": {
+				"hp": 30,
+				"name_short": "敌人",
+				"name_full": "敌方主帅",
+				"abilities": []
+			},
+			"initial_units": [
+				{
+					"name": "看门狗",
+					"faction": 1,
+					"positions": [
+						{ "row": 1, "col": 0 },
+						{ "row": 1, "col": 1 },
+						{ "row": 1, "col": 2 }
+					]
+				}
+			],
+			"spawners": [
+				{
+					"name": "填线宝宝",
+					"faction": 1,
+					"positions": [
+						{ "row": 1, "col": 0 },
+						{ "row": 1, "col": 1 },
+						{ "row": 1, "col": 2 }
+					],
+					"interval": 3
+				},
+				{
+					"name": "灰烬填线宝宝",
+					"faction": 1,
+					"positions": [
+						{ "row": 0, "col": 0 },
+						{ "row": 0, "col": 1 },
+						{ "row": 0, "col": 2 }
+					],
+					"interval": 3
+				}
+			]
+		},
+		"ally_left": {
+			"faction": 0,
+			"role": "ally",
+			"slot_index": 3,
+			"enabled": false,
+			"hero": {
+				"hp": 25,
+				"name_short": "友左",
+				"name_full": "友军·左",
+				"abilities": []
+			},
+			"initial_units": [],
+			"spawners": [
+				{
+					"name": "填线宝宝",
+					"faction": 0,
+					"positions": [
+						{ "row": 0, "col": 1 }
+					],
+					"interval": 3
+				}
+			]
+		},
+		"ally_right": {
+			"faction": 0,
+			"role": "ally",
+			"slot_index": 5,
+			"enabled": false,
+			"hero": {
+				"hp": 25,
+				"name_short": "友右",
+				"name_full": "友军·右",
+				"abilities": []
+			},
+			"initial_units": [],
+			"spawners": [
+				{
+					"name": "填线宝宝",
+					"faction": 0,
+					"positions": [
+						{ "row": 0, "col": 1 }
+					],
+					"interval": 3
+				}
+			]
+		},
+		"enemy_left": {
+			"faction": 1,
+			"role": "enemy",
+			"slot_index": 0,
+			"enabled": false,
+			"hero": {
+				"hp": 20,
+				"name_short": "敌左",
+				"name_full": "敌方·左翼",
+				"abilities": []
+			},
+			"initial_units": [
+				{
+					"name": "填线宝宝",
+					"faction": 1,
+					"positions": [
+						{ "row": 0, "col": 0 },
+						{ "row": 0, "col": 1 },
+						{ "row": 0, "col": 2 }
+					]
+				}
+			],
+			"spawners": []
+		},
+		"enemy_right": {
+			"faction": 1,
+			"role": "enemy",
+			"slot_index": 2,
+			"enabled": false,
+			"hero": {
+				"hp": 20,
+				"name_short": "敌右",
+				"name_full": "敌方·右翼",
+				"abilities": []
+			},
+			"initial_units": [
+				{
+					"name": "填线宝宝",
+					"faction": 1,
+					"positions": [
+						{ "row": 0, "col": 0 },
+						{ "row": 0, "col": 1 },
+						{ "row": 0, "col": 2 }
+					]
+				}
+			],
+			"spawners": []
+		}
+	}
+}

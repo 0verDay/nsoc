@@ -42,6 +42,14 @@ static func _parse_string_array(raw) -> Array:
 		out.append(String(item))
 	return out
 
+static func _parse_int_array(raw) -> Array:
+	if typeof(raw) != TYPE_ARRAY:
+		return []
+	var out: Array = []
+	for item in raw:
+		out.append(int(item))
+	return out
+
 # 卡牌读取。path 必传，调用方按用途选择 ALL/REVIEW/BATTLE 路径。
 static func load_cards(path: String) -> Array:
 	var j = _read_json(path)
@@ -64,18 +72,24 @@ static func _parse_card(card: Dictionary):
 	var new_card
 	if c_type == "单位":
 		var c_atk: int = int(card.get("attack", 0))
-		var hp := {"top": 1, "bottom": 1, "left": 1, "right": 1}
+		# JSON 仍以玩家视角 top/bottom/left/right 书写，转换为单位视角 side。
+		var hp := {"front": 1, "back": 1, "left": 1, "right": 1}
 		if card.has("health"):
 			if typeof(card["health"]) == TYPE_DICTIONARY:
-				hp = {
-					"top": int(card["health"].get("top", 1)),
-					"bottom": int(card["health"].get("bottom", 1)),
-					"left": int(card["health"].get("left", 1)),
-					"right": int(card["health"].get("right", 1)),
-				}
+				var raw_hp: Dictionary = card["health"]
+				# 兼容两种写法：玩家视角 abs(top/bottom) 或已是 side(front/back)
+				if raw_hp.has("front") or raw_hp.has("back"):
+					hp = {
+						"front": int(raw_hp.get("front", 1)),
+						"back":  int(raw_hp.get("back", 1)),
+						"left":  int(raw_hp.get("left", 1)),
+						"right": int(raw_hp.get("right", 1)),
+					}
+				else:
+					hp = Orientation.health_player_abs_to_side(raw_hp)
 			else:
 				var hv: int = int(card["health"])
-				hp = {"top": hv, "bottom": hv, "left": hv, "right": hv}
+				hp = {"front": hv, "back": hv, "left": hv, "right": hv}
 		new_card = CardUnit.new(c_name, c_cost, c_atk, hp, c_effects)
 	else:
 		var c_target: String = card.get("target", "")
@@ -84,57 +98,213 @@ static func _parse_card(card: Dictionary):
 	return new_card
 
 static func load_level() -> Dictionary:
-	var out := {"initial_units": [], "spawners": []}
+	var out := _empty_level()
 	var j = _read_json(LEVEL_JSON)
 	if typeof(j) != TYPE_DICTIONARY:
 		return out
 	return _parse_level(j)
 
-# 从章节 JSON 中读取关卡结构（initial_units + spawners）。
+# 从任意路径加载关卡（供 Game.pending_level_path 使用）。
+static func load_level_from_path(path: String) -> Dictionary:
+	var out := _empty_level()
+	var j = _read_json(path)
+	if typeof(j) != TYPE_DICTIONARY:
+		return out
+	return _parse_level(j)
+
+# 从章节 JSON 中读取关卡结构。
 # 章节无关卡字段时返回空骨架，调用方走默认。
 static func load_level_from_chapter(chapter_json_path: String) -> Dictionary:
-	var out := {"initial_units": [], "spawners": []}
+	var out := _empty_level()
 	var j = _read_json(chapter_json_path)
 	if typeof(j) != TYPE_DICTIONARY:
 		return out
 	return _parse_level(j)
 
-# 关卡结构解析（initial_units + spawners），供 load_level / load_level_from_chapter 共用。
+# 输出结构（多棋盘模型）：
+# {
+#   "boards": {
+#     "player_main": {"initial_units": [...], "spawners": [...]},
+#     "enemy_main":  {"initial_units": [...], "spawners": [...]},
+#   },
+#   # 兼容旧调用：聚合视图（去重后的全部条目）
+#   "initial_units": [...],
+#   "spawners": [...],
+# }
+#
+# 旧 JSON 兼容规则：
+#   - cfg.faction == 0 → 路由到 player_main，row 经 (ROWS_OLD-1) - row 翻转，
+#     映射 6×3 时代的玩家半场 row 3..5 到 3×3 player_main 的 row 2..0。
+#   - cfg.faction == 1 → 路由到 enemy_main，row 0..2 不变。
+#   - 新 JSON 可直接以顶层 "boards" 字段写明每盘各自的 initial_units / spawners。
+static func _empty_level() -> Dictionary:
+	return {
+		"boards": {
+			"player_main": _default_board_meta("player_main"),
+			"enemy_main":  _default_board_meta("enemy_main"),
+		},
+		# 旧聚合视图（向后兼容）
+		"initial_units": [],
+		"spawners": [],
+		# 局内棋盘事件：[{"turn":N, "add":[slot_idx,...], "remove":[slot_idx,...]}]
+		"board_events": [],
+	}
+
+# 默认 board meta：保证主棋盘永远在 boards 段中存在，且默认 enabled=true。
+# 附盘（ally_left / ally_right / enemy_left / enemy_right）默认不存在，
+# 由关卡 JSON 显式声明才会被 Orchestrator 创建。
+static func _default_board_meta(id: String) -> Dictionary:
+	var meta := {
+		"id": id,
+		"faction": 1,             # 默认 ENEMY，下方按 id 修正
+		"role": "enemy",
+		"slot_index": -1,
+		"enabled": true,
+		"hero": {},               # 由 hero.json 提供 fallback
+		"initial_units": [],
+		"spawners": [],
+	}
+	match id:
+		"player_main":
+			meta["faction"] = 0
+			meta["role"] = "main_player"
+			meta["slot_index"] = 4
+		"enemy_main":
+			meta["faction"] = 1
+			meta["role"] = "main_enemy"
+			meta["slot_index"] = 1
+		"ally_left":
+			meta["faction"] = 0
+			meta["role"] = "ally"
+			meta["slot_index"] = 3
+			meta["enabled"] = false
+		"ally_right":
+			meta["faction"] = 0
+			meta["role"] = "ally"
+			meta["slot_index"] = 5
+			meta["enabled"] = false
+		"enemy_left":
+			meta["faction"] = 1
+			meta["role"] = "enemy"
+			meta["slot_index"] = 0
+			meta["enabled"] = false
+		"enemy_right":
+			meta["faction"] = 1
+			meta["role"] = "enemy"
+			meta["slot_index"] = 2
+			meta["enabled"] = false
+	return meta
+
+const _OLD_ROWS: int = 6  # 旧 6×3 主棋盘行数，仅用于兼容映射
+
+static func _route_pos(faction: int, raw_pos: Dictionary) -> Vector2:
+	var r := int(raw_pos["row"])
+	var c := int(raw_pos["col"])
+	if faction == 0:
+		# 玩家半场旧 row 3..5 → 新 player_main row 2..0
+		return Vector2(_OLD_ROWS - 1 - r, c)
+	# 敌方旧 row 0..2 → 新 enemy_main row 0..2
+	return Vector2(r, c)
+
+static func _route_board(faction: int) -> String:
+	return "player_main" if faction == 0 else "enemy_main"
+
 static func _parse_level(j: Dictionary) -> Dictionary:
-	var out := {"initial_units": [], "spawners": []}
+	var out := _empty_level()
+	# 优先解析新格式 boards 字段（多棋盘原生）
+	if j.has("boards") and typeof(j["boards"]) == TYPE_DICTIONARY:
+		for board_id in j["boards"].keys():
+			var sub: Dictionary = j["boards"][board_id]
+			var entry: Dictionary = out["boards"].get(board_id,
+				_default_board_meta(board_id))
+			_parse_board_section(sub, entry, false)
+			# 元字段覆盖：faction / role / slot_index / enabled / hero
+			if sub.has("faction"): entry["faction"] = int(sub["faction"])
+			if sub.has("role"):    entry["role"]    = String(sub["role"])
+			if sub.has("slot_index"): entry["slot_index"] = int(sub["slot_index"])
+			if sub.has("enabled"): entry["enabled"] = bool(sub["enabled"])
+			if sub.has("hero") and typeof(sub["hero"]) == TYPE_DICTIONARY:
+				entry["hero"] = sub["hero"]
+			out["boards"][board_id] = entry
+	# 兼容旧格式：顶层 initial_units / spawners + faction 字段
 	if j.has("initial_units") and typeof(j["initial_units"]) == TYPE_ARRAY:
 		for cfg in j["initial_units"]:
+			var faction: int = int(cfg.get("faction", 1))
+			var board_id: String = _route_board(faction)
 			var positions: Array = []
 			for pos in cfg["positions"]:
-				positions.append(Vector2(int(pos["row"]), int(pos["col"])))
-			out.initial_units.append({
+				positions.append(_route_pos(faction, pos))
+			out["boards"][board_id]["initial_units"].append({
 				"name": cfg["name"],
-				"faction": int(cfg["faction"]),
+				"faction": faction,
 				"positions": positions,
 			})
 	if j.has("spawners") and typeof(j["spawners"]) == TYPE_ARRAY:
 		for sp in j["spawners"]:
-			# 兼容两种写法：单数 position 字段 / 复数 positions 数组。
-			# 统一规整为 positions: Array[Vector2]。
+			var faction: int = int(sp.get("faction", 1))
+			var board_id: String = _route_board(faction)
+			var positions: Array = []
+			if sp.has("positions") and typeof(sp["positions"]) == TYPE_ARRAY:
+				for pos in sp["positions"]:
+					positions.append(_route_pos(faction, pos))
+			elif sp.has("position"):
+				positions.append(_route_pos(faction, sp["position"]))
+			out["boards"][board_id]["spawners"].append({
+				"name": sp["name"],
+				"faction": faction,
+				"positions": positions,
+				"interval": int(sp["interval"]),
+			})
+	# 聚合视图（旧调用方仍可读 out.initial_units / out.spawners）
+	for board_id in out["boards"].keys():
+		out["initial_units"].append_array(out["boards"][board_id]["initial_units"])
+		out["spawners"].append_array(out["boards"][board_id]["spawners"])
+	# 解析 board_events
+	if j.has("board_events") and typeof(j["board_events"]) == TYPE_ARRAY:
+		for ev in j["board_events"] as Array:
+			if typeof(ev) != TYPE_DICTIONARY:
+				continue
+			var parsed_ev: Dictionary = {
+				"turn": int(ev.get("turn", -1)),
+				"add":    _parse_int_array(ev.get("add", [])),
+				"remove": _parse_int_array(ev.get("remove", [])),
+			}
+			if parsed_ev["turn"] >= 1:
+				out["board_events"].append(parsed_ev)
+	return out
+
+# 解析 boards.<id> 子段。新格式 row/col 不做映射，按盘内 0..ROWS-1 读取。
+static func _parse_board_section(sub: Dictionary, entry: Dictionary,
+		_legacy_remap: bool) -> void:
+	if sub.has("initial_units") and typeof(sub["initial_units"]) == TYPE_ARRAY:
+		for cfg in sub["initial_units"]:
+			var positions: Array = []
+			for pos in cfg["positions"]:
+				positions.append(Vector2(int(pos["row"]), int(pos["col"])))
+			entry["initial_units"].append({
+				"name": cfg["name"],
+				"faction": int(cfg.get("faction", 1)),
+				"positions": positions,
+			})
+	if sub.has("spawners") and typeof(sub["spawners"]) == TYPE_ARRAY:
+		for sp in sub["spawners"]:
 			var positions: Array = []
 			if sp.has("positions") and typeof(sp["positions"]) == TYPE_ARRAY:
 				for pos in sp["positions"]:
 					positions.append(Vector2(int(pos["row"]), int(pos["col"])))
 			elif sp.has("position"):
-				var p = sp["position"]
-				positions.append(Vector2(int(p["row"]), int(p["col"])))
-			out.spawners.append({
+				positions.append(Vector2(int(sp["position"]["row"]), int(sp["position"]["col"])))
+			entry["spawners"].append({
 				"name": sp["name"],
-				"faction": int(sp["faction"]),
+				"faction": int(sp.get("faction", 1)),
 				"positions": positions,
 				"interval": int(sp["interval"]),
 			})
-	return out
 
 static func _fallback_cards() -> Array:
-	var a = CardUnit.new("填线宝宝", 1, 1, {"top": 1, "bottom": 1, "left": 1, "right": 1}, [])
+	var a = CardUnit.new("填线宝宝", 1, 1, {"front": 1, "back": 1, "left": 1, "right": 1}, [])
 	a.count = 5
-	var b = CardUnit.new("灰烬填线宝宝", 2, 2, {"top": 2, "bottom": 2, "left": 2, "right": 2}, ["ash"])
+	var b = CardUnit.new("灰烬填线宝宝", 2, 2, {"front": 2, "back": 2, "left": 2, "right": 2}, ["ash"])
 	b.count = 3
 	return [a, b]
 

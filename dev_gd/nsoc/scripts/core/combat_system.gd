@@ -13,23 +13,14 @@ const SCALE_PEAK: Vector2 = Vector2(1.08, 1.08)
 var _root: Control                          # 用于挂载移动动画 visual / 闪烁面板
 var _cell_scene: PackedScene
 var _play_controller: PlayController        # 死亡时回调（牌入墓/除外）
-var _hero_pnl_resolver: Callable            # (is_enemy: bool) -> Panel  闪红用
 
-func setup(root: Control, cell_scene: PackedScene, play_controller: PlayController, hero_pnl_resolver: Callable) -> void:
+func setup(root: Control, cell_scene: PackedScene, play_controller: PlayController) -> void:
 	_root = root
 	_cell_scene = cell_scene
 	_play_controller = play_controller
-	_hero_pnl_resolver = hero_pnl_resolver
 
-func apply_damage_to_hero(is_enemy: bool, damage: int) -> void:
-	Game.hero.apply_damage(is_enemy, damage)
-	var pnl: Panel = _hero_pnl_resolver.call(is_enemy)
-	if pnl == null:
-		return
-	pnl.self_modulate = Color("#ffc9c9")
-	if get_tree():
-		var tween := get_tree().create_tween()
-		tween.tween_property(pnl, "self_modulate", Color.WHITE, HERO_HIT_FADE)
+# 旧 API 兼容：英雄受伤面板闪红已下沉到 BoardSlot.damage_hero。
+# 调用方应改为通过 slot.hero_resolver / slot.damage_hero。
 
 func attack_cells(attacker, defender_data_list: Array) -> void:
 	var a_atk: int = attacker.attack
@@ -38,12 +29,15 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 	attacker.play_attack_effect()
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
-		# "虚弱"：受到任意方向伤害时，同步扣除四维血量
+		# defender_data.opp_dir 为屏幕绝对方向（top/bottom/left/right），
+		# defender.health 以 side 存储 → 转换。
+		var hit_side := Orientation.abs_to_side(defender_data.opp_dir, defender.is_enemy)
+		# "虚弱"：受到任意方向伤害时，同步扣除四面血量
 		if defender.effects.has("frail"):
-			for d in ["top", "bottom", "left", "right"]:
-				defender.health[d] -= a_atk
+			for s in Orientation.SIDES:
+				defender.health[s] -= a_atk
 		else:
-			defender.health[defender_data.opp_dir] -= a_atk
+			defender.health[hit_side] -= a_atk
 		defender._update_hp_labels()
 		defender.play_damage_effect()
 
@@ -51,15 +45,16 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
+		var hit_side := Orientation.abs_to_side(defender_data.opp_dir, defender.is_enemy)
 		var dead: bool = false
 		if defender.effects.has("frail"):
 			# 任一面 <=0 即视为阵亡
-			for d in ["top", "bottom", "left", "right"]:
-				if defender.health[d] <= 0:
+			for s in Orientation.SIDES:
+				if defender.health[s] <= 0:
 					dead = true
 					break
 		else:
-			dead = defender.health[defender_data.opp_dir] <= 0
+			dead = defender.health[hit_side] <= 0
 		if dead and not dead_cells.has(defender):
 			dead_cells.append(defender)
 

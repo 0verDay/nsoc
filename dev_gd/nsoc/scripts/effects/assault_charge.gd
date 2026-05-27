@@ -50,6 +50,7 @@ func on_kill(attacker_cell, victim_cells: Array, ctx) -> void:
 		return
 
 	# 仍存活：检查相邻敌方，若有则发动一次攻击
-	var enemies: Array = ctx.board().find_adjacent_enemies(dest, dest.is_enemy)
+	# 多盘体系下 dest 可能与 attacker_cell 不同盘，按 dest 的盘查询邻接
+	var enemies: Array = ctx.board_of(dest).find_adjacent_enemies(dest, dest.is_enemy)
 	if enemies.size() > 0:
 		await combat.attack_cells(dest, enemies)

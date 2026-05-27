@@ -39,7 +39,8 @@ var hero_ability_btn: Button
 # 用 Node 弱类型避免 class_name 全局表未刷新时的解析报错。
 # 实际类型分别为 FrontRowSelector / ExtraBoardController / HeroPanelDragController。
 var front_row_selector: Node
-var extra_board_ctrl: Node
+var extra_board_ctrl: Node       # 已废弃；保留字段名以防外部引用
+var board_orchestrator: BoardOrchestrator   # 阶段 4：多盘装配编排器
 var hero_drag_ctrl: Node
 
 # ── 布局常量 ─────────────────────────────────────────────────────────
@@ -53,6 +54,8 @@ var _main_enemy_nodes: Array = []
 func _ready() -> void:
 	visible = false
 	await _apply_editor_window_scale()
+	# test_main 专用多棋盘测试关卡；main 场景继续读默认 test_level.json。
+	Game.pending_level_path = "res://data/multi_chessboard_test_level.json"
 	Game.bootstrap()
 
 	_apply_styles()
@@ -67,7 +70,7 @@ func _ready() -> void:
 	side_panels.setup(self, BOARD_SHIFT)
 
 	enemy_side_panels = EnemySidePanelManager.new(); enemy_side_panels.name = "EnemySidePanels"; add_child(enemy_side_panels)
-	enemy_side_panels.setup(self, BOARD_SHIFT)
+	enemy_side_panels.setup(self, null, BOARD_SHIFT)
 
 	_create_enemy_pile_buttons()
 	_create_player_pile_buttons()
@@ -84,22 +87,58 @@ func _ready() -> void:
 	Game.play = play_controller
 
 	combat = CombatSystem.new(); combat.name = "Combat"; add_child(combat)
-	combat.setup(self, cell_scene, play_controller, Callable(self, "_resolve_hero_panel"))
+	combat.setup(self, cell_scene, play_controller)
 	Game.combat = combat
 
-	Game.turn.setup(Game.board, combat, Game.spawners, Callable(Game, "get_card"))
+	Game.turn.setup(combat, Callable(Game, "get_card"))
 
-	_init_grid()
-	_init_units()
+	# 阶段 4：BoardOrchestrator 集中创建主棋盘 + enabled 附盘
+	board_orchestrator = BoardOrchestrator.new()
+	board_orchestrator.name = "BoardOrchestrator"
+	add_child(board_orchestrator)
+	board_orchestrator.setup({
+		"parent": self,
+		"cell_scene": cell_scene,
+		"detail_panel": detail_panel,
+		"on_cell_created": Callable(self, "_wire_cell"),
+		"main_center_x": BOARD_SHIFT,
+		"side_gap_x": BOARD_HALF_W * 2.0 + BOARD_CENTER_GAP,
+		"main_ui": {
+			"player_main": {
+				"grid": bottom_grid,
+				"bg": $BottomGridBg,
+				"hero_panel": $LeftSidePnl/PHpPnl,
+			},
+			"enemy_main": {
+				"grid": top_grid,
+				"bg": $TopGridBg,
+				"hero_panel": $EnemyHpPnl,
+			},
+		},
+	})
+	board_orchestrator.boot()
+	_refresh_hero_ability_button()
+	# boot 后把主敌盘 slot 注入 enemy_side_panels 作数据源
+	var enemy_main_slot: BoardSlot = Game.registry.get_by_id("enemy_main") if Game.registry != null else null
+	if enemy_main_slot != null:
+		enemy_side_panels.set_slot(enemy_main_slot)
+
 	_wire_signals()
 
 	_install_controllers()
 
-	Game.spawners.refresh_phantoms(Game.board, Callable(Game, "get_card"))
-	_on_hero_health_changed(false, Game.hero.player_health)
-	_on_hero_health_changed(true, Game.hero.enemy_health)
+	# 初始 phantom 渲染 + UI 同步（所有 slot 各自刷一次）
+	for slot in Game.registry.slots:
+		if slot.spawners != null:
+			slot.spawners.refresh_phantoms(slot.board, Callable(Game, "get_card"))
+	var p_hero: HeroState = Game.player_hero()
+	var e_hero: HeroState = Game.enemy_main_hero()
+	if p_hero != null:
+		player_health_label.text = str(p_hero.health)
+		hero_name_lbl.text = p_hero.name_short
+	if e_hero != null:
+		enemy_health_label.text = str(e_hero.health)
 	_on_mana_changed(Game.mana.current, Game.mana.maximum)
-	hero_name_lbl.text = Game.hero.player_name
 
 	for clip in side_panels.get_clip_nodes():
 		clip.move_to_front()
@@ -112,30 +151,13 @@ func _ready() -> void:
 # ── 控制器装配 ───────────────────────────────────────────────────────
 # 通过 load() 显式加载脚本资源，避免 class_name 全局表未刷新时的标识符解析错。
 const FrontRowSelectorScript     = preload("res://scripts/ui/front_row_selector.gd")
-const ExtraBoardControllerScript = preload("res://scripts/ui/extra_board_controller.gd")
 const HeroPanelDragControllerScript = preload("res://scripts/ui/hero_panel_drag_controller.gd")
 
 func _install_controllers() -> void:
 	front_row_selector = FrontRowSelectorScript.new()
 	front_row_selector.name = "FrontRowSelector"
 	add_child(front_row_selector)
-	front_row_selector.setup(self, combat, Callable(self, "_resolve_target_board_model"))
-	front_row_selector.register_target("main", $TopGridBg, Game.hero)
-
-	extra_board_ctrl = ExtraBoardControllerScript.new()
-	extra_board_ctrl.name = "ExtraBoardCtrl"
-	add_child(extra_board_ctrl)
-	extra_board_ctrl.setup({
-		"parent": self,
-		"main_enemy_nodes": _main_enemy_nodes,
-		"enemy_side_panels": enemy_side_panels,
-		"detail_panel": detail_panel,
-		"front_row_selector": front_row_selector,
-		"cell_scene": cell_scene,
-		"board_shift": BOARD_SHIFT,
-		"board_half_w": BOARD_HALF_W,
-		"board_center_gap": BOARD_CENTER_GAP,
-	})
+	front_row_selector.setup(self, combat)
 
 	hero_drag_ctrl = HeroPanelDragControllerScript.new()
 	hero_drag_ctrl.name = "HeroDragCtrl"
@@ -146,27 +168,29 @@ func _install_controllers() -> void:
 		"detail_panel": detail_panel,
 		"long_press_hero_args": Callable(self, "_get_player_hero_long_press_args"),
 	})
-	$LeftSidePnl.gui_input.connect(hero_drag_ctrl.on_gui_input)
+	# 不再通过 gui_input 连接：附盘 ui_nodes 覆盖在 LeftSidePnl 上会拦截 gui_input。
+	# 改为在全局 _input 中手动转发，保证附盘存在时拖拽仍可用。
+	# $LeftSidePnl.gui_input.connect(hero_drag_ctrl.on_gui_input)
 	$EnemyHpPnl.gui_input.connect(_on_enemy_hero_panel_gui_input)
-
-# FrontRowSelector 的 board_model_resolver 回调：根据 id 返回 BoardModel。
-func _resolve_target_board_model(target_id: String) -> BoardModel:
-	if target_id == "extra" and is_instance_valid(extra_board_ctrl):
-		return extra_board_ctrl.get_extra_board_model()
-	return null
 
 # HeroPanelDragController 的 long_press_hero_args 回调。
 func _get_player_hero_long_press_args() -> Array:
-	return [
-		Game.hero.player_full_name,
-		Game.hero.player_ability_id(),
-		Game.hero.player_max_health,
-	]
+	var hero: HeroState = Game.player_hero()
+	if hero == null:
+		return ["", "", -1]
+	return [hero.name_full, hero.ability_id(), hero.max_health]
 
 # ── 信号连接 ─────────────────────────────────────────────────────────
 func _wire_signals() -> void:
-	Game.hero.health_changed.connect(_on_hero_health_changed)
-	Game.hero.hero_died.connect(_on_hero_died)
+	# 主玩家盘 / 主敌盘 hero 各自连信号到对应 UI 标签
+	var p_hero: HeroState = Game.player_hero()
+	if p_hero != null:
+		p_hero.health_changed.connect(func(v): player_health_label.text = str(v))
+		p_hero.died.connect(func(): _on_hero_died(false))
+	var e_hero: HeroState = Game.enemy_main_hero()
+	if e_hero != null:
+		e_hero.health_changed.connect(func(v): enemy_health_label.text = str(v))
+		e_hero.died.connect(func(): _on_hero_died(true))
 	Game.mana.mana_changed.connect(_on_mana_changed)
 
 	end_turn_btn.pressed.connect(_on_end_turn_pressed)
@@ -181,6 +205,10 @@ func _wire_signals() -> void:
 	side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
 	enemy_side_panels.long_press_requested.connect(detail_panel.start_long_press)
 	enemy_side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
+	# 阶段 5：附盘 EnemySidePanelManager 的长按转发到 detail_panel
+	if is_instance_valid(board_orchestrator):
+		board_orchestrator.side_panel_long_press_requested.connect(detail_panel.start_long_press)
+		board_orchestrator.side_panel_long_press_canceled.connect(detail_panel.cancel_long_press)
 	hand_view.hand_card_long_press_requested.connect(detail_panel.start_long_press)
 	hand_view.hand_card_long_press_canceled.connect(detail_panel.cancel_long_press)
 	play_controller.hand_consumed.connect(hand_view.draw_into_slot)
@@ -192,12 +220,6 @@ func _wire_signals() -> void:
 	HeroAbilities.turn_reset.connect(_refresh_hero_ability_button)
 
 # ── UI 刷新槽 ────────────────────────────────────────────────────────
-func _on_hero_health_changed(is_enemy: bool, new_value: int) -> void:
-	if is_enemy:
-		enemy_health_label.text = str(new_value)
-	else:
-		player_health_label.text = str(new_value)
-
 func _on_mana_changed(current: int, maximum: int) -> void:
 	mana_label.text = str(current) + "/" + str(maximum)
 
@@ -234,24 +256,16 @@ func _on_end_turn_pressed() -> void:
 	end_turn_btn.text = "结束回合"
 
 # ── 棋盘初始化 ───────────────────────────────────────────────────────
-func _init_grid() -> void:
-	var split: int = int(BoardModel.ROWS / 2)
-	for r in range(BoardModel.ROWS):
-		for c in range(BoardModel.COLS):
-			var cell = cell_scene.instantiate()
-			cell.row = r; cell.col = c
-			Game.board.register_cell(cell)
-			if r < split:
-				top_grid.add_child(cell)
-			else:
-				bottom_grid.add_child(cell)
-			cell.long_press_requested.connect(_on_cell_long_press_requested)
-			cell.long_press_canceled.connect(detail_panel.cancel_long_press)
-			cell.card_dropped.connect(_on_cell_card_dropped)
-			cell.cleared.connect(_on_cell_cleared)
+# 阶段 4：主棋盘 + 附盘装配统一交由 BoardOrchestrator 处理（_ready 中已 boot）。
+# DataLoader 按 faction 路由旧 JSON 到 boards.player_main / boards.enemy_main，
+# Orchestrator 读 boards.<id> 元数据完成创建。
 
-func _init_units() -> void:
-	Game.board.populate_initial_units(Game.initial_units, Callable(Game, "get_card"))
+# 每个 cell 创建后由 BoardSlotFactory 回调，绑定交互信号。
+func _wire_cell(cell: Node) -> void:
+	cell.long_press_requested.connect(_on_cell_long_press_requested)
+	cell.long_press_canceled.connect(detail_panel.cancel_long_press)
+	cell.card_dropped.connect(_on_cell_card_dropped)
+	cell.cleared.connect(_on_cell_cleared)
 
 func _on_cell_long_press_requested(payload) -> void:
 	detail_panel.start_long_press(payload)
@@ -259,22 +273,43 @@ func _on_cell_long_press_requested(payload) -> void:
 func _on_cell_card_dropped(cell, data) -> void:
 	play_controller.handle_drop(cell, data)
 
-func _on_cell_cleared(_cell) -> void:
-	Game.spawners.refresh_phantoms(Game.board, Callable(Game, "get_card"))
-
-func _resolve_hero_panel(is_enemy: bool) -> Panel:
-	return $EnemyHpPnl if is_enemy else $BottomBar/PHpPnl
+# cell 被清空时刷新所属盘的 phantom 预告（避免残留）
+func _on_cell_cleared(cell) -> void:
+	var slot: BoardSlot = Game.registry.get_by_id(cell.slot_id) if Game.registry != null else null
+	if slot != null and slot.spawners != null:
+		slot.spawners.refresh_phantoms(slot.board, Callable(Game, "get_card"))
 
 # ── 输入路由 ─────────────────────────────────────────────────────────
 func _input(event) -> void:
+	# Ctrl+数字 快捷键控制附盘开关
+	if event is InputEventKey and event.is_pressed() and event.ctrl_pressed:
+		var orch: BoardOrchestrator = board_orchestrator
+		if not is_instance_valid(orch):
+			return
+		match event.keycode:
+			KEY_0: orch.toggle("enemy_left")
+			KEY_2: orch.toggle("enemy_right")
+			KEY_3: orch.toggle("ally_left")
+			KEY_5: orch.toggle("ally_right")
+		return
+
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if not event.pressed:
 			detail_panel.cancel_long_press()
 			detail_panel.hide_panel()
+			if $EnemyHpPnl.scale != Vector2.ONE:
+				$EnemyHpPnl.pivot_offset = $EnemyHpPnl.size / 2.0
+				var t := $EnemyHpPnl.create_tween()
+				t.tween_property($EnemyHpPnl, "scale", Vector2.ONE, 0.1)
 			if is_instance_valid(hero_drag_ctrl):
 				hero_drag_ctrl.handle_global_release()
 		else:
 			var p := get_global_mouse_position()
+			# 英雄面板拖拽：附盘 ui_nodes 覆盖会拦截 gui_input，改为在全局 _input 中
+			# 检测 LeftSidePnl 命中并直接转发给 hero_drag_ctrl，绕过覆盖层
+			if is_instance_valid(hero_drag_ctrl) and $LeftSidePnl.get_global_rect().has_point(p):
+				hero_drag_ctrl.on_gui_input(event)
+				return
 			if side_panels.has_open_panel():
 				if side_panels.is_panel_hit(p): return
 				if deck_btn.get_global_rect().has_point(p): return
@@ -286,13 +321,19 @@ func _input(event) -> void:
 				if enemy_grave_btn.get_global_rect().has_point(p): return
 				if enemy_banished_btn.get_global_rect().has_point(p): return
 				enemy_side_panels.close_current()
-			# 额外棋盘的墓地/除外面板
-			var extra_panels = extra_board_ctrl.get_extra_enemy_side_panels() \
-				if is_instance_valid(extra_board_ctrl) else null
-			if is_instance_valid(extra_panels) and extra_panels.has_open_panel():
-				if extra_panels.is_panel_hit(p): return
-				if extra_board_ctrl.is_extra_pile_button_hit(p): return
-				extra_panels.close_current()
+			# 阶段 5：附盘墓地/除外面板
+			if is_instance_valid(board_orchestrator):
+				if board_orchestrator.any_side_panel_open():
+					if board_orchestrator.is_side_panel_hit(p): return
+					if board_orchestrator.is_pile_button_hit(p): return
+					board_orchestrator.close_all_side_panels()
+				elif board_orchestrator.is_pile_button_hit(p):
+					return
+
+	# 鼠标移动时同步转发给 hero_drag_ctrl（附盘覆盖层同样会拦截 MouseMotion gui_input）
+	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		if is_instance_valid(hero_drag_ctrl):
+			hero_drag_ctrl.on_gui_input(event)
 
 # ── 样式 ─────────────────────────────────────────────────────────────
 func _apply_editor_window_scale() -> void:
@@ -454,25 +495,33 @@ func _collect_main_enemy_nodes() -> void:
 func _on_enemy_hero_panel_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton \
 			and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		detail_panel.start_long_press_hero(
-			Game.hero.enemy_full_name,
-			Game.hero.enemy_ability_id(),
-			Game.hero.enemy_max_health)
-		var tween := $EnemyHpPnl.create_tween()
-		tween.tween_property($EnemyHpPnl, "scale", Vector2(1.08, 1.08), 0.1)
+		var hero: HeroState = Game.enemy_main_hero()
+		if hero != null:
+			detail_panel.start_long_press_hero(
+				hero.name_full, hero.ability_id(), hero.max_health)
+		var pnl: Panel = $EnemyHpPnl
+		pnl.pivot_offset = pnl.size / 2.0
+		var tween := pnl.create_tween()
+		tween.tween_property(pnl, "scale", Vector2(1.08, 1.08), 0.1)
 
 # ── 英雄技能 ────────────────────────────────────────────────────────
 func _on_hero_ability_pressed() -> void:
-	var ability_id: String = Game.hero.player_ability_id()
+	var hero: HeroState = Game.player_hero()
+	if hero == null:
+		return
+	var ability_id: String = hero.ability_id()
 	if ability_id == "" or not HeroAbilities.has(ability_id):
 		return
-	var ctx := {"main": self, "hand_view": hand_view, "hero": Game.hero}
+	var ctx := {"main": self, "hand_view": hand_view, "hero": hero}
 	if not HeroAbilities.can_activate(ability_id, ctx):
 		return
 	await HeroAbilities.activate(ability_id, ctx)
 
 func _get_player_ability_label() -> String:
-	var ability_id: String = Game.hero.player_ability_id()
+	var hero: HeroState = Game.player_hero()
+	if hero == null:
+		return "英雄能力"
+	var ability_id: String = hero.ability_id()
 	if ability_id != "" and HeroAbilities.has(ability_id):
 		return HeroAbilities.get_display_name(ability_id)
 	return "英雄能力"
@@ -480,11 +529,15 @@ func _get_player_ability_label() -> String:
 func _refresh_hero_ability_button() -> void:
 	if hero_ability_btn == null:
 		return
-	var ability_id: String = Game.hero.player_ability_id()
+	var hero: HeroState = Game.player_hero()
+	if hero == null:
+		hero_ability_btn.disabled = true
+		return
+	var ability_id: String = hero.ability_id()
 	if ability_id == "" or not HeroAbilities.has(ability_id):
 		hero_ability_btn.disabled = true
 		return
-	var ctx := {"main": self, "hand_view": hand_view, "hero": Game.hero}
+	var ctx := {"main": self, "hand_view": hand_view, "hero": hero}
 	hero_ability_btn.disabled = not HeroAbilities.can_activate(ability_id, ctx)
 
 # ── 入场动画 ─────────────────────────────────────────────────────────
@@ -545,6 +598,16 @@ func _play_intro_animation() -> void:
 	for s in slide_specs:
 		s["origin"] = s.node.position
 		s.node.position = s.origin + s.from
+
+	# 附盘节点在 visible=true 之前设好起始偏移，避免闪烁
+	if is_instance_valid(board_orchestrator):
+		var extra := board_orchestrator.setup_intro_nodes(vp_h)
+		for entry in extra.get("slides", []):
+			slide_specs.append({"node": entry["node"], "origin": entry["target"],
+				"from": Vector2.ZERO})
+		for n in extra.get("fades", []):
+			fade_targets.append(n)
+
 	for n in slide_nodes:
 		n.visible = true
 	visible = true

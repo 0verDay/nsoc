@@ -7,9 +7,6 @@ extends Node
 
 signal hand_consumed(slot_index: int, source_card)            # 通知 HandView 在指定槽位补手牌；source_card 为占位旧卡（HandView 负责 free）
 
-# 业务规则：单位最大可下行（row 索引）。row <= PLAYER_DEPLOY_MIN_ROW 视为敌方半场。
-const PLAYER_DEPLOY_MIN_ROW: int = 2
-
 var _root: Control                          # 用于挂载飞入动画 visual
 var _cell_scene: PackedScene
 
@@ -18,6 +15,7 @@ func setup(root: Control, cell_scene: PackedScene) -> void:
 	_cell_scene = cell_scene
 
 # 是否允许在 cell 上释放该卡。供 cell._can_drop_data 调用。
+# 多盘语义：cell 必须属于一个 PLAYER 阵营盘且 slot.allow_player_deploy == true。
 # data 形态约定见 hand_card._get_drag_data 构造的 drag_dict。
 func can_play_at(cell, data) -> bool:
 	if typeof(data) != TYPE_DICTIONARY or not data.has("type"):
@@ -35,9 +33,25 @@ func can_play_at(cell, data) -> bool:
 	# 单位
 	if cell.has_card:
 		return false
-	if cell.row <= PLAYER_DEPLOY_MIN_ROW:
+	# 反查 cell 所属 slot
+	var slot: BoardSlot = _resolve_slot(cell)
+	if slot == null:
+		return false
+	if not slot.allow_player_deploy:
 		return false
 	return true
+
+static func _resolve_slot(cell) -> BoardSlot:
+	if cell == null:
+		return null
+	if Engine.get_main_loop() == null:
+		return null
+	var root: Node = Engine.get_main_loop().root
+	if not root.has_node("/root/Game"):
+		return null
+	if cell.slot_id != "":
+		return Game.registry.get_by_id(cell.slot_id)
+	return null
 
 # 法术目标过滤。
 static func _spell_target_valid(cell, target: String) -> bool:
@@ -129,21 +143,27 @@ func _trigger_unit_play_effects(unit_data, target_cell = null) -> void:
 		Effects.trigger_play(eff, unit_data, ctx)
 
 func handle_unit_death(cell) -> void:
-	# 玩家与敌方阵亡都会进入对应阵营牌堆（敌方区当前仅累积显示）。
+	# 玩家阵营单位 → Game.deck（玩家个人牌堆 graveyard / banished）
+	# 敌方阵营单位 → cell 所属 slot 的 graveyard / banished（每盘独立）
 	var cdata = Game.get_card(cell.card_name)
 	if cdata == null:
 		return
 	var ctx := Game.make_effect_context()
 	ctx.dying_is_enemy = cell.is_enemy
+	# 把 cell 所属 slot 也注入 ctx，effect.trigger_death 可按需读取
+	ctx.target_cell = cell
 	var handled := false
 	for eff in _get_effects(cdata):
 		if Effects.trigger_death(eff, cdata, ctx):
 			handled = true
-	if not handled:
-		if cell.is_enemy:
-			Game.deck.enemy_send_to_graveyard(cdata)
-		else:
-			Game.deck.send_to_graveyard(cdata)
+	if handled:
+		return
+	if cell.is_enemy:
+		var slot: BoardSlot = _resolve_slot(cell)
+		if slot != null:
+			slot.send_to_graveyard(cdata)
+	else:
+		Game.deck.send_to_graveyard(cdata)
 
 # 攻击者完成一次击杀后调用。victim_cells 已 clear_card。
 # 仅在 attacker 仍存活时触发其 on_kill 效果（如"冲阵"）。

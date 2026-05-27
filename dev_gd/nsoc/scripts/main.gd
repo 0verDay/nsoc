@@ -24,6 +24,7 @@ var banished_btn: Button
 
 var cell_scene := preload("res://scenes/Cell.tscn")
 var hand_card_scene := preload("res://scenes/HandCard.tscn")
+const FrontRowSelectorScript = preload("res://scripts/ui/front_row_selector.gd")
 
 var hand_view: HandView
 var detail_panel: DetailPanelController
@@ -32,6 +33,8 @@ var enemy_side_panels: EnemySidePanelManager
 var settings_panel: SettingsPanelController
 var play_controller: PlayController
 var combat: CombatSystem
+var board_orchestrator: BoardOrchestrator
+var front_row_selector: Node
 
 # 敌方"墓地 / 除外"按钮（动态创建，挂在 EnemyHpPnl 左右）
 var enemy_grave_btn: Button
@@ -60,7 +63,7 @@ func _ready() -> void:
 	side_panels.setup(self)
 
 	enemy_side_panels = EnemySidePanelManager.new(); enemy_side_panels.name = "EnemySidePanels"; add_child(enemy_side_panels)
-	enemy_side_panels.setup(self)
+	enemy_side_panels.setup(self, null)
 
 	_create_enemy_pile_buttons()
 	_create_player_pile_buttons()
@@ -75,22 +78,55 @@ func _ready() -> void:
 	Game.play = play_controller
 
 	combat = CombatSystem.new(); combat.name = "Combat"; add_child(combat)
-	combat.setup(self, cell_scene, play_controller, Callable(self, "_resolve_hero_panel"))
+	combat.setup(self, cell_scene, play_controller)
 	Game.combat = combat
 
-	Game.turn.setup(Game.board, combat, Game.spawners, Callable(Game, "get_card"))
+	Game.turn.setup(combat, Callable(Game, "get_card"))
 
-	_init_grid()
-	_init_units()
+	# 阶段 4：BoardOrchestrator 集中创建主棋盘 + enabled 附盘
+	board_orchestrator = BoardOrchestrator.new()
+	board_orchestrator.name = "BoardOrchestrator"
+	add_child(board_orchestrator)
+	board_orchestrator.setup({
+		"parent": self,
+		"cell_scene": cell_scene,
+		"detail_panel": detail_panel,
+		"on_cell_created": Callable(self, "_wire_cell"),
+		"main_center_x": 0.0,
+		"side_gap_x": 500.0,
+		"main_ui": {
+			"player_main": {
+				"grid": bottom_grid,
+				"bg": $BottomGridBg,
+				"hero_panel": $LeftSidePnl/PHpPnl,
+			},
+			"enemy_main": {
+				"grid": top_grid,
+				"bg": $TopGridBg,
+				"hero_panel": $EnemyHpPnl,
+			},
+		},
+	})
+	board_orchestrator.boot()
+	_refresh_hero_ability_button()
+	var enemy_main_slot: BoardSlot = Game.registry.get_by_id("enemy_main") if Game.registry != null else null
+	if enemy_main_slot != null:
+		enemy_side_panels.set_slot(enemy_main_slot)
 
 	_wire_signals()
 
-	Game.spawners.refresh_phantoms(Game.board, Callable(Game, "get_card"))
-	# 触发一次 UI 同步（数据先就位）
-	_on_hero_health_changed(false, Game.hero.player_health)
-	_on_hero_health_changed(true, Game.hero.enemy_health)
+	# 初始 phantom 渲染 + UI 同步
+	for slot in Game.registry.slots:
+		if slot.spawners != null:
+			slot.spawners.refresh_phantoms(slot.board, Callable(Game, "get_card"))
+	var p_hero: HeroState = Game.player_hero()
+	var e_hero: HeroState = Game.enemy_main_hero()
+	if p_hero != null:
+		player_health_label.text = str(p_hero.health)
+		hero_name_lbl.text = p_hero.name_short
+	if e_hero != null:
+		enemy_health_label.text = str(e_hero.health)
 	_on_mana_changed(Game.mana.current, Game.mana.maximum)
-	hero_name_lbl.text = Game.hero.player_name
 
 	# 设置面板 + 详情面板需要显示在侧边栏之上
 	for clip in side_panels.get_clip_nodes():
@@ -101,11 +137,25 @@ func _ready() -> void:
 
 	# 入场动画：滑入 → 渐显 → 按序摸牌。摸牌动画末尾才允许玩家操作。
 	_play_intro_animation()
+	_install_controllers()
+
+# ---------------- 控制器装配 ----------------
+func _install_controllers() -> void:
+	front_row_selector = FrontRowSelectorScript.new()
+	front_row_selector.name = "FrontRowSelector"
+	add_child(front_row_selector)
+	front_row_selector.setup(self, combat)
 
 # ---------------- 信号连接 ----------------
 func _wire_signals() -> void:
-	Game.hero.health_changed.connect(_on_hero_health_changed)
-	Game.hero.hero_died.connect(_on_hero_died)
+	var p_hero: HeroState = Game.player_hero()
+	if p_hero != null:
+		p_hero.health_changed.connect(func(v): player_health_label.text = str(v))
+		p_hero.died.connect(func(): _on_hero_died(false))
+	var e_hero: HeroState = Game.enemy_main_hero()
+	if e_hero != null:
+		e_hero.health_changed.connect(func(v): enemy_health_label.text = str(v))
+		e_hero.died.connect(func(): _on_hero_died(true))
 	Game.mana.mana_changed.connect(_on_mana_changed)
 
 	end_turn_btn.pressed.connect(_on_end_turn_pressed)
@@ -121,6 +171,10 @@ func _wire_signals() -> void:
 	side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
 	enemy_side_panels.long_press_requested.connect(detail_panel.start_long_press)
 	enemy_side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
+	# 附盘 EnemySidePanelManager 的长按转发到 detail_panel
+	if is_instance_valid(board_orchestrator):
+		board_orchestrator.side_panel_long_press_requested.connect(detail_panel.start_long_press)
+		board_orchestrator.side_panel_long_press_canceled.connect(detail_panel.cancel_long_press)
 
 	# 手牌长按 → 详情面板
 	hand_view.hand_card_long_press_requested.connect(detail_panel.start_long_press)
@@ -137,12 +191,6 @@ func _wire_signals() -> void:
 	HeroAbilities.turn_reset.connect(_refresh_hero_ability_button)
 
 # ---------------- UI 刷新槽 ----------------
-func _on_hero_health_changed(is_enemy: bool, new_value: int) -> void:
-	if is_enemy:
-		enemy_health_label.text = str(new_value)
-	else:
-		player_health_label.text = str(new_value)
-
 func _on_mana_changed(current: int, maximum: int) -> void:
 	mana_label.text = str(current) + "/" + str(maximum)
 
@@ -181,26 +229,13 @@ func _on_end_turn_pressed() -> void:
 	end_turn_btn.text = "结束回合"
 
 # ---------------- 初始化辅助 ----------------
-func _init_grid() -> void:
-	var split: int = int(BoardModel.ROWS / 2)
-	for r in range(BoardModel.ROWS):
-		for c in range(BoardModel.COLS):
-			var cell = cell_scene.instantiate()
-			cell.row = r
-			cell.col = c
-			Game.board.register_cell(cell)
-			if r < split:
-				top_grid.add_child(cell)
-			else:
-				bottom_grid.add_child(cell)
-			# 解耦：cell 用信号通知主控
-			cell.long_press_requested.connect(_on_cell_long_press_requested)
-			cell.long_press_canceled.connect(detail_panel.cancel_long_press)
-			cell.card_dropped.connect(_on_cell_card_dropped)
-			cell.cleared.connect(_on_cell_cleared)
+# 阶段 4：主棋盘 + 附盘装配统一交由 BoardOrchestrator（_ready 中已 boot）。
 
-func _init_units() -> void:
-	Game.board.populate_initial_units(Game.initial_units, Callable(Game, "get_card"))
+func _wire_cell(cell: Node) -> void:
+	cell.long_press_requested.connect(_on_cell_long_press_requested)
+	cell.long_press_canceled.connect(detail_panel.cancel_long_press)
+	cell.card_dropped.connect(_on_cell_card_dropped)
+	cell.cleared.connect(_on_cell_cleared)
 
 func _on_cell_long_press_requested(payload) -> void:
 	detail_panel.start_long_press(payload)
@@ -208,11 +243,10 @@ func _on_cell_long_press_requested(payload) -> void:
 func _on_cell_card_dropped(cell, data) -> void:
 	play_controller.handle_drop(cell, data)
 
-func _on_cell_cleared(_cell) -> void:
-	Game.spawners.refresh_phantoms(Game.board, Callable(Game, "get_card"))
-
-func _resolve_hero_panel(is_enemy: bool) -> Panel:
-	return $EnemyHpPnl if is_enemy else $BottomBar/PHpPnl
+func _on_cell_cleared(cell) -> void:
+	var slot: BoardSlot = Game.registry.get_by_id(cell.slot_id) if Game.registry != null else null
+	if slot != null and slot.spawners != null:
+		slot.spawners.refresh_phantoms(slot.board, Callable(Game, "get_card"))
 
 # ---------------- 输入路由 ----------------
 func _input(event) -> void:
@@ -221,6 +255,7 @@ func _input(event) -> void:
 			detail_panel.cancel_long_press()
 			detail_panel.hide_panel()
 			_animate_hero_panel_release()
+			_animate_enemy_hero_panel_release()
 		else:
 			var p := get_global_mouse_position()
 			if side_panels.has_open_panel():
@@ -236,6 +271,14 @@ func _input(event) -> void:
 				if enemy_grave_btn.get_global_rect().has_point(p): return
 				if enemy_banished_btn.get_global_rect().has_point(p): return
 				enemy_side_panels.close_current()
+			# 附盘墓地/除外面板
+			if is_instance_valid(board_orchestrator):
+				if board_orchestrator.any_side_panel_open():
+					if board_orchestrator.is_side_panel_hit(p): return
+					if board_orchestrator.is_pile_button_hit(p): return
+					board_orchestrator.close_all_side_panels()
+				elif board_orchestrator.is_pile_button_hit(p):
+					return
 
 # ---------------- 样式 ----------------
 # 仅在编辑器/调试运行时缩放：
@@ -389,13 +432,26 @@ func _create_hero_ability_button() -> void:
 
 	# LeftSidePnl 长按监听（按钮区由按钮自身消费事件，不会冒泡到 panel）。
 	$LeftSidePnl.gui_input.connect(_on_player_hero_panel_gui_input)
+	# EnemyHpPnl 长按监听
+	$EnemyHpPnl.gui_input.connect(_on_enemy_hero_panel_gui_input)
 
 # 玩家英雄面板长按 → 详情面板显示英雄名字。
 func _on_player_hero_panel_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		# 详情面板用完整名（player_full_name），与英雄面板上的 battle_name 区分
-		detail_panel.start_long_press_hero(Game.hero.player_full_name, Game.hero.player_ability_id(), Game.hero.player_max_health)
+		var hero: HeroState = Game.player_hero()
+		if hero != null:
+			detail_panel.start_long_press_hero(
+				hero.name_full, hero.ability_id(), hero.max_health)
 		_animate_hero_panel_press()
+
+# 敌方英雄面板长按 → 详情面板显示敌人英雄名字。
+func _on_enemy_hero_panel_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var hero: HeroState = Game.enemy_main_hero()
+		if hero != null:
+			detail_panel.start_long_press_hero(
+				hero.name_full, hero.ability_id(), hero.max_health)
+		_animate_enemy_hero_panel_press()
 
 # 复用 hand_card / cell 长按按压的放大动画（0.1s 缩放到 1.08）。
 func _animate_hero_panel_press() -> void:
@@ -410,33 +466,56 @@ func _animate_hero_panel_release() -> void:
 	var tween := pnl.create_tween()
 	tween.tween_property(pnl, "scale", Vector2.ONE, 0.1)
 
+func _animate_enemy_hero_panel_press() -> void:
+	var pnl: Control = $EnemyHpPnl
+	pnl.pivot_offset = pnl.size / 2.0
+	var tween := pnl.create_tween()
+	tween.tween_property(pnl, "scale", Vector2(1.08, 1.08), 0.1)
+
+func _animate_enemy_hero_panel_release() -> void:
+	var pnl: Control = $EnemyHpPnl
+	if pnl.scale == Vector2.ONE:
+		return
+	pnl.pivot_offset = pnl.size / 2.0
+	var tween := pnl.create_tween()
+	tween.tween_property(pnl, "scale", Vector2.ONE, 0.1)
+
 # 英雄能力按钮点击处理。委托给 HeroAbilityRegistry.activate。
 func _on_hero_ability_pressed() -> void:
-	var ability_id: String = Game.hero.player_ability_id()
+	var hero: HeroState = Game.player_hero()
+	if hero == null:
+		return
+	var ability_id: String = hero.ability_id()
 	if ability_id == "" or not HeroAbilities.has(ability_id):
 		return
-	var ctx := {"main": self, "hand_view": hand_view, "hero": Game.hero}
+	var ctx := {"main": self, "hand_view": hand_view, "hero": hero}
 	if not HeroAbilities.can_activate(ability_id, ctx):
 		return
 	await HeroAbilities.activate(ability_id, ctx)
 
 # 取按钮显示文字：仅技能名，未注册则回退默认。
 func _get_player_ability_label() -> String:
-	var ability_id: String = Game.hero.player_ability_id()
+	var hero: HeroState = Game.player_hero()
+	if hero == null:
+		return "英雄能力"
+	var ability_id: String = hero.ability_id()
 	if ability_id != "" and HeroAbilities.has(ability_id):
 		return HeroAbilities.get_display_name(ability_id)
 	return "英雄能力"
 
-# 刷新英雄技能按钮 disabled 状态：回合运行中、费用不足、本回合用过 都置灰。
-# 信号源：turn_started / turn_ended / mana_changed / ability_used / turn_reset。
+# 刷新英雄技能按钮 disabled 状态。
 func _refresh_hero_ability_button() -> void:
 	if hero_ability_btn == null:
 		return
-	var ability_id: String = Game.hero.player_ability_id()
+	var hero: HeroState = Game.player_hero()
+	if hero == null:
+		hero_ability_btn.disabled = true
+		return
+	var ability_id: String = hero.ability_id()
 	if ability_id == "" or not HeroAbilities.has(ability_id):
 		hero_ability_btn.disabled = true
 		return
-	var ctx := {"main": self, "hand_view": hand_view, "hero": Game.hero}
+	var ctx := {"main": self, "hand_view": hand_view, "hero": hero}
 	hero_ability_btn.disabled = not HeroAbilities.can_activate(ability_id, ctx)
 
 
