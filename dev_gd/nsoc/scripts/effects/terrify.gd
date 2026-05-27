@@ -21,16 +21,23 @@ func on_kill(_attacker_cell, victim_cells: Array, ctx) -> void:
 			continue
 		var v_name: String = v.card_name if typeof(v) == TYPE_DICTIONARY else v.card_name
 		var v_is_enemy: bool = v.is_enemy if typeof(v) == TYPE_DICTIONARY else v.is_enemy
+		var v_slot_id: String = ""
+		if typeof(v) != TYPE_DICTIONARY:
+			v_slot_id = v.slot_id
 		var cdata = ctx.game.get_card(v_name)
 		if cdata == null:
 			continue
-		var deck = ctx.game.deck
 		if v_is_enemy:
-			if deck.enemy_graveyard.has(cdata):
-				deck.enemy_graveyard.erase(cdata)
-				deck.pile_changed.emit("enemy_graveyard")
-			deck.enemy_banish(cdata)
+			# 敌方阵营单位：从所属 slot 的 graveyard 取出 → banished
+			var slot: BoardSlot = ctx.game.registry.get_by_id(v_slot_id) if ctx.game.registry != null else null
+			if slot != null:
+				if slot.graveyard.has(cdata):
+					slot.graveyard.erase(cdata)
+					slot.pile_changed.emit("graveyard")
+				slot.banish(cdata)
 		else:
+			# 玩家阵营单位：从 game.deck 取出 → banished
+			var deck = ctx.game.deck
 			if deck.graveyard.has(cdata):
 				deck.graveyard.erase(cdata)
 				deck.pile_changed.emit("graveyard")

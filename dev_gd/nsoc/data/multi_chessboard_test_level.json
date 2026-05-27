@@ -1,0 +1,236 @@
+{
+  "_comment": "多棋盘测试关卡。全部 6 个棋盘均启用（enabled:true），用于验证多棋盘战斗、跨盘逻辑、附盘墓地/除外面板等功能。",
+
+  "_comment_board_events": "board_events 定义局内棋盘动态部署/收回事件。turn=触发回合（从1开始）；add=本回合部署的 slot_index 列表；remove=本回合收回的 slot_index 列表。槽位：0=enemy_left, 2=enemy_right, 3=ally_left, 5=ally_right（主盘1/4不可动态增减）。remove 先于 add 执行。",
+  "board_events": [
+    {
+      "_comment": "第 4 回合：友军右翼撤退（收回 slot 5），同时敌方右翼增援（部署 slot 2）",
+      "turn": 4,
+      "remove": [5],
+      "add": [2]
+    },
+    {
+      "_comment": "第 6 回合：友军左翼重新集结（部署 slot 3）",
+      "turn": 6,
+      "add": [3]
+    },
+    {
+      "_comment": "第 8 回合：敌方左翼溃退（收回 slot 0），友军右翼回归（部署 slot 5）",
+      "turn": 8,
+      "remove": [0],
+      "add": [5]
+    }
+  ],
+
+  "boards": {
+
+    "enemy_left": {
+      "_comment": "敌方左翼：冲锋压制型。初始放一支敢死队（charge），每 3 回合在后排生成填线宝宝。",
+      "faction": 1,
+      "role": "enemy",
+      "slot_index": 0,
+      "enabled": true,
+      "hero": {
+        "hp": 20,
+        "name_short": "左翼将",
+        "name_full": "敌方左翼将领",
+        "abilities": []
+      },
+      "initial_units": [
+        {
+          "name": "敢死队",
+          "faction": 1,
+          "positions": [
+            { "row": 2, "col": 1 }
+          ]
+        }
+      ],
+      "spawners": [
+        {
+          "name": "填线宝宝",
+          "faction": 1,
+          "positions": [
+            { "row": 0, "col": 0 },
+            { "row": 0, "col": 2 }
+          ],
+          "interval": 3
+        }
+      ]
+    },
+
+    "enemy_main": {
+      "_comment": "敌方主将：警戒防线型。初始在中排布满看门狗（vigilance），每 3 回合前后排各补灰烬填线宝宝。",
+      "faction": 1,
+      "role": "main_enemy",
+      "slot_index": 1,
+      "enabled": true,
+      "hero": {
+        "hp": 30,
+        "name_short": "主将",
+        "name_full": "敌方主将",
+        "abilities": []
+      },
+      "initial_units": [
+        {
+          "name": "看门狗",
+          "faction": 1,
+          "positions": [
+            { "row": 1, "col": 0 },
+            { "row": 1, "col": 1 },
+            { "row": 1, "col": 2 }
+          ]
+        }
+      ],
+      "spawners": [
+        {
+          "name": "灰烬填线宝宝",
+          "faction": 1,
+          "positions": [
+            { "row": 0, "col": 0 },
+            { "row": 0, "col": 1 },
+            { "row": 0, "col": 2 }
+          ],
+          "interval": 3
+        },
+        {
+          "name": "填线宝宝",
+          "faction": 1,
+          "positions": [
+            { "row": 2, "col": 0 },
+            { "row": 2, "col": 1 },
+            { "row": 2, "col": 2 }
+          ],
+          "interval": 3
+        }
+      ]
+    },
+
+    "enemy_right": {
+      "_comment": "敌方右翼：重甲突破型。初始放长板·张飞（steadfast + terrify + battle_hardened），每 4 回合后排生成灰烬填线宝宝。",
+      "faction": 1,
+      "role": "enemy",
+      "slot_index": 2,
+      "enabled": true,
+      "hero": {
+        "hp": 20,
+        "name_short": "右翼将",
+        "name_full": "敌方右翼将领",
+        "abilities": []
+      },
+      "initial_units": [
+        {
+          "name": "长板·张飞",
+          "faction": 1,
+          "positions": [
+            { "row": 2, "col": 1 }
+          ]
+        }
+      ],
+      "spawners": [
+        {
+          "name": "灰烬填线宝宝",
+          "faction": 1,
+          "positions": [
+            { "row": 0, "col": 1 }
+          ],
+          "interval": 4
+        }
+      ]
+    },
+
+    "ally_left": {
+      "_comment": "友军左翼：突击游侠型。初始放长板·赵云（breakout + fierce_combat + assault_charge + frail），每 4 回合后排生成填线宝宝。",
+      "faction": 0,
+      "role": "ally",
+      "slot_index": 3,
+      "enabled": true,
+      "hero": {
+        "hp": 25,
+        "name_short": "友左",
+        "name_full": "友军左路将领",
+        "abilities": []
+      },
+      "initial_units": [
+        {
+          "name": "长板·赵云",
+          "faction": 0,
+          "positions": [
+            { "row": 2, "col": 1 }
+          ]
+        }
+      ],
+      "spawners": [
+        {
+          "name": "填线宝宝",
+          "faction": 0,
+          "positions": [
+            { "row": 2, "col": 0 },
+            { "row": 2, "col": 2 }
+          ],
+          "interval": 4
+        }
+      ]
+    },
+
+    "player_main": {
+      "_comment": "玩家主盘：初始在后排中央放一个填线宝宝作为起始单位，牌库由备战卡组决定，无 spawner。",
+      "faction": 0,
+      "role": "main_player",
+      "slot_index": 4,
+      "enabled": true,
+      "hero": {
+        "hp": 30,
+        "name_short": "玩家",
+        "name_full": "玩家英雄",
+        "abilities": ["restart"]
+      },
+      "initial_units": [
+        {
+          "name": "填线宝宝",
+          "faction": 0,
+          "positions": [
+            { "row": 2, "col": 1 }
+          ]
+        }
+      ],
+      "spawners": []
+    },
+
+    "ally_right": {
+      "_comment": "友军右翼：警戒守护型。初始在中排放两只看门狗（vigilance），每 3 回合后排生成填线宝宝。",
+      "faction": 0,
+      "role": "ally",
+      "slot_index": 5,
+      "enabled": true,
+      "hero": {
+        "hp": 25,
+        "name_short": "友右",
+        "name_full": "友军右路将领",
+        "abilities": []
+      },
+      "initial_units": [
+        {
+          "name": "看门狗",
+          "faction": 0,
+          "positions": [
+            { "row": 1, "col": 0 },
+            { "row": 1, "col": 2 }
+          ]
+        }
+      ],
+      "spawners": [
+        {
+          "name": "填线宝宝",
+          "faction": 0,
+          "positions": [
+            { "row": 2, "col": 0 },
+            { "row": 2, "col": 1 },
+            { "row": 2, "col": 2 }
+          ],
+          "interval": 3
+        }
+      ]
+    }
+
+  }
+}

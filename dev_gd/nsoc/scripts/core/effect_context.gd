@@ -16,8 +16,17 @@ func _init(p_game: Node) -> void:
 	game = p_game
 
 # ---- 便捷子系统访问 ----
+# 多盘语义：board()/cell 反查所属 slot 的 BoardModel。无 cell 时回退到主玩家盘。
+func board_of(cell) -> BoardModel:
+	var slot: BoardSlot = _slot_of(cell)
+	if slot != null:
+		return slot.board
+	var main_slot: BoardSlot = game.main_player_slot()
+	return main_slot.board if main_slot != null else null
+
+# 兼容旧调用：board() 返回 cell 所属盘；无目标 cell 时回退主玩家盘。
 func board() -> BoardModel:
-	return game.board
+	return board_of(target_cell)
 
 func combat() -> CombatSystem:
 	return game.combat
@@ -25,16 +34,26 @@ func combat() -> CombatSystem:
 func turn() -> TurnSystem:
 	return game.turn
 
+func _slot_of(cell) -> BoardSlot:
+	if cell == null or game == null or game.registry == null:
+		return null
+	if cell.slot_id != "":
+		return game.registry.get_by_id(cell.slot_id)
+	return null
+
 # ---- 棋盘查询 ----
 # 返回 cell 四邻"有牌"的 cell 数组。phantom 不计入。
 func get_adjacent_occupied(cell) -> Array:
 	var out: Array = []
 	if cell == null:
 		return out
+	var b: BoardModel = board_of(cell)
+	if b == null:
+		return out
 	var base := Vector2(cell.row, cell.col)
 	for d in BoardModel.DIRECTIONS:
 		var p: Vector2 = base + d.offset
-		var c = game.board.get_cell(p)
+		var c = b.get_cell(p)
 		if c != null and c.has_card:
 			out.append(c)
 	return out
@@ -54,10 +73,13 @@ func get_adjacent_enemies(cell) -> Array:
 func trigger_vigilance(entered_cell) -> void:
 	if entered_cell == null or not entered_cell.has_card:
 		return
+	var b: BoardModel = board_of(entered_cell)
+	if b == null:
+		return
 	var mover_for_enemy: bool = entered_cell.is_enemy
 	for d in BoardModel.DIRECTIONS:
 		var p: Vector2 = Vector2(entered_cell.row, entered_cell.col) + d.offset
-		var sentinel = game.board.get_cell(p)
+		var sentinel = b.get_cell(p)
 		if sentinel == null or not sentinel.has_card:
 			continue
 		if sentinel.is_enemy == mover_for_enemy:
@@ -73,25 +95,46 @@ func trigger_vigilance(entered_cell) -> void:
 		}])
 
 # ---- 卡牌去向 ----
-# 自动按 dying_is_enemy 路由到玩家或敌方对应区。
+# 自动按 dying_is_enemy 路由：
+#   玩家阵营 → game.deck（玩家个人牌堆）
+#   敌方阵营 → target_cell 所属 slot 的 graveyard / banished
 func banish_card(card_data) -> void:
 	if dying_is_enemy:
-		game.deck.enemy_banish(card_data)
+		var slot: BoardSlot = _slot_of(target_cell)
+		if slot != null:
+			slot.banish(card_data)
 	else:
 		game.deck.banish(card_data)
 
 func send_to_graveyard(card_data) -> void:
 	if dying_is_enemy:
-		game.deck.enemy_send_to_graveyard(card_data)
+		var slot: BoardSlot = _slot_of(target_cell)
+		if slot != null:
+			slot.send_to_graveyard(card_data)
 	else:
 		game.deck.send_to_graveyard(card_data)
 
 # ---- 英雄伤害 ----
+# 多盘语义下默认作用于"主玩家盘 / 主敌盘"的 hero。需要指定其他盘时
+# 使用 damage_slot_hero(slot_id, amount)。
 func damage_player_hero(amount: int) -> void:
-	game.hero.apply_damage(false, amount)
+	var slot: BoardSlot = game.main_player_slot()
+	if slot != null:
+		slot.damage_hero(amount)
 
 func damage_enemy_hero(amount: int) -> void:
-	game.hero.apply_damage(true, amount)
+	if game.registry == null:
+		return
+	for slot in game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY):
+		slot.damage_hero(amount)
+		return
+
+func damage_slot_hero(slot_id: String, amount: int) -> void:
+	if game.registry == null:
+		return
+	var slot: BoardSlot = game.registry.get_by_id(slot_id)
+	if slot != null:
+		slot.damage_hero(amount)
 
 # ---- 通用计数器（替代 main.autophagy_counter 这种零散字段） ----
 func get_counter(key: String, default_value: int = 0) -> int:

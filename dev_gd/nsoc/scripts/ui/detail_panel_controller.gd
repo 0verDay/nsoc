@@ -228,7 +228,8 @@ func show_for(data) -> void:
 	tween.tween_callback(func(): _animating = false)
 
 # 英雄详情：显示名字 + 血量 + 技能名/描述，复用同一弹出动画。
-# 不显示费用括号；CardCenter 隐藏让文字整体上移。血量传 -1 表示走默认从 Game.hero 取初始 max。
+# 不显示费用括号；CardCenter 隐藏让文字整体上移。display_hp 由调用方传入，
+# 通常为 hero.max_health（不随战斗扣减的初始值）。
 func show_hero(hero_name: String, ability_id: String = "", display_hp: int = -1) -> void:
 	if hero_name == "":
 		return

@@ -1,17 +1,15 @@
 class_name DeckManager
 extends Node
 
-# 管理 draw_pile / graveyard / banished （玩家），以及 enemy_graveyard / enemy_banished （敌方）。
-# 信号驱动；不直接操作 UI。
-# 敌方区域当前仅累积显示，不参与抽牌/复用。
+# 玩家个人牌堆管理：draw_pile / graveyard / banished。
+# 阶段 5 起：敌方阵亡单位由各 BoardSlot 自己的 graveyard / banished 持有，
+# 不再走本类的 enemy_* 字段（已删除）。
 
-signal pile_changed(pile_name: String)   # "draw" / "graveyard" / "banish" / "enemy_graveyard" / "enemy_banish"
+signal pile_changed(pile_name: String)   # "draw" / "graveyard" / "banish"
 
 var draw_pile: Array = []
 var graveyard: Array = []
 var banished: Array = []
-var enemy_graveyard: Array = []
-var enemy_banished: Array = []
 var _all_cards: Array = []               # 初始牌库快照，洗牌还原用
 
 func setup(cards: Array) -> void:
@@ -52,14 +50,6 @@ func send_to_graveyard(card) -> void:
 func banish(card) -> void:
 	banished.append(card)
 	pile_changed.emit("banish")
-
-func enemy_send_to_graveyard(card) -> void:
-	enemy_graveyard.append(card)
-	pile_changed.emit("enemy_graveyard")
-
-func enemy_banish(card) -> void:
-	enemy_banished.append(card)
-	pile_changed.emit("enemy_banish")
 
 func get_deck_counts() -> Dictionary:
 	var counts: Dictionary = {}

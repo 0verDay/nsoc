@@ -2,68 +2,56 @@ class_name FrontRowSelector
 extends Node
 
 # 玩家前排棋子行动前的"目标棋盘选择器"。
-# - 接收 TurnSystem.front_row_action_requested 信号
-# - 高亮所有可选棋盘背景，等待玩家点击
-# - 点击后通过 TurnSystem.resolve_front_row_selection 通知；非主棋盘 id 经
-#   _on_target_chosen 回调处理（攻击 / 移动）
 #
-# 使用方式（test_main / main 装配时）：
-#   var selector := FrontRowSelector.new()
-#   add_child(selector)
-#   selector.setup(self, combat, _get_extra_board_model)
-#   selector.register_target("main", $TopGridBg, Game.hero)
-#   # 之后可动态 register/unregister 额外棋盘
+# 多盘体系（阶段 2A 起）：
+# - 完全走 BoardRegistry，自动把所有 ENEMY 阵营 slot 作为可选 target
+# - 选中 slot.id：尝试跨棋盘攻击 / 移动；若同列前排无敌，回退本盘默认
+# - 点击空白：维持等待（与旧行为一致）
+# - 仅 1 个 ENEMY slot 时仍弹选择 UI（玩家可选不跨过去：选其它非敌方区域 = 取消）
+#   ── 当前实现：若 ENEMY slot 数 == 0，直接 resolve("")，否则进入选择
 #
 # 依赖：
-#   parent_root        : Control 容器（用于挂载拦截层 + 鼠标坐标参考）
-#   combat             : CombatSystem
-#   board_model_resolver: Callable(target_id) -> BoardModel  返回非 main 棋盘的模型
+#   parent_root : Control 容器（用于挂载拦截层 + 鼠标坐标参考）
+#   combat      : CombatSystem
 
-const ENEMY_FRONT_ROW: int = 2          # 敌方棋盘前排 row 号
 const HIGHLIGHT_PULSE_DURATION: float = 0.45
 
 var _parent: Control = null
 var _combat: CombatSystem = null
-var _board_resolver: Callable = Callable()
-
-# id -> { bg_panel, hero_state }
-var _targets: Dictionary = {}
 
 # 选择状态
 var _active_cell: Node = null
 var _selecting: bool = false
 var _overlay: Control = null
 var _highlight_tweens: Array = []
+# 本次选择中高亮的 (slot, bg) 对，用于点击命中判定
+var _selection_targets: Array = []
 
-func setup(parent_root: Control, combat: CombatSystem,
-		board_model_resolver: Callable) -> void:
+func setup(parent_root: Control, combat: CombatSystem) -> void:
 	_parent = parent_root
 	_combat = combat
-	_board_resolver = board_model_resolver
 	if has_node("/root/Game"):
 		Game.turn.front_row_action_requested.connect(_on_front_row_requested)
 		Game.turn._front_row_resolve = Callable(self, "_on_target_chosen")
 
-# ── 注册 / 注销 ──────────────────────────────────────────────────────
-func register_target(id: String, bg_panel: Panel, hero_state) -> void:
-	_targets[id] = {"bg_panel": bg_panel, "hero_state": hero_state}
-
-func unregister_target(id: String) -> void:
-	_targets.erase(id)
-
 # ── 信号入口 ──────────────────────────────────────────────────────────
 func _on_front_row_requested(cell: Node) -> void:
-	# 只有一个目标 → 默认走本棋盘
-	if _targets.size() <= 1:
+	var enemy_slots: Array = _enemy_slots_with_panel()
+	if enemy_slots.is_empty():
 		Game.turn.resolve_front_row_selection("")
+		return
+	# 仅 1 个 ENEMY slot：无需弹 UI，自动选中该 slot 作为跨盘目标
+	if enemy_slots.size() == 1:
+		Game.turn.resolve_front_row_selection(enemy_slots[0].id)
 		return
 	_active_cell = cell
 	_selecting = true
-	_begin_selection()
+	_begin_selection(enemy_slots)
 
 # ── 选择 UI ──────────────────────────────────────────────────────────
-func _begin_selection() -> void:
+func _begin_selection(enemy_slots: Array) -> void:
 	_clear_highlights()
+	_selection_targets.clear()
 
 	_overlay = Control.new()
 	_overlay.name = "FrontRowSelectionOverlay"
@@ -76,8 +64,21 @@ func _begin_selection() -> void:
 	# 等一帧让布局稳定后再设缩放锚点
 	await get_tree().process_frame
 
-	for id in _targets.keys():
-		var bg: Panel = _targets[id].get("bg_panel", null)
+	# ── 等待选择的棋子：脉冲缩放 + 蓝色描边（描边在 InnerPanel 下，不遮挡四维指示器）──
+	if is_instance_valid(_active_cell):
+		_active_cell.set_selection_highlight(true)
+		_active_cell.pivot_offset = _active_cell.size * 0.5
+		var cell_tw := _active_cell.create_tween()
+		cell_tw.set_loops()
+		cell_tw.tween_property(_active_cell, "scale", Vector2(1.015, 1.015), HIGHLIGHT_PULSE_DURATION) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		cell_tw.tween_property(_active_cell, "scale", Vector2.ONE, HIGHLIGHT_PULSE_DURATION) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		_highlight_tweens.append({"node": _active_cell, "tween": cell_tw})
+
+	# ── 可选目标棋盘：高亮边框 + 脉冲缩放 ──
+	for slot in enemy_slots:
+		var bg: Panel = slot.bg_panel
 		if not is_instance_valid(bg):
 			continue
 		bg.add_theme_stylebox_override("panel",
@@ -89,7 +90,8 @@ func _begin_selection() -> void:
 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 		tw.tween_property(bg, "scale", Vector2.ONE, HIGHLIGHT_PULSE_DURATION) \
 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		_highlight_tweens.append({"node": bg, "tween": tw})
+		_highlight_tweens.append({"node": bg, "tween": tw, "is_bg": true})
+		_selection_targets.append({"slot": slot, "bg": bg})
 
 func _on_overlay_input(event: InputEvent) -> void:
 	if not _selecting:
@@ -97,76 +99,123 @@ func _on_overlay_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton \
 			and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var mp: Vector2 = _parent.get_global_mouse_position()
-		for id in _targets.keys():
-			var bg: Panel = _targets[id].get("bg_panel", null)
+		for entry in _selection_targets:
+			var bg: Panel = entry["bg"]
 			if not is_instance_valid(bg):
 				continue
 			if bg.get_global_rect().has_point(mp):
-				_end_selection(id)
+				_end_selection(entry["slot"].id)
 				return
 		# 点空白：维持等待
 
-func _end_selection(chosen_id: String) -> void:
+func _end_selection(chosen_slot_id: String) -> void:
 	_selecting = false
 	_clear_highlights()
 	if is_instance_valid(_overlay):
 		_overlay.queue_free()
 		_overlay = null
-
-	# main 视为本棋盘默认行动 → 传 ""
-	var resolve_id: String = "" if chosen_id == "main" else chosen_id
-	Game.turn.resolve_front_row_selection(resolve_id)
+	Game.turn.resolve_front_row_selection(chosen_slot_id)
 
 func _clear_highlights() -> void:
 	for entry in _highlight_tweens:
 		var tw = entry.get("tween")
 		if tw and tw.is_running():
 			tw.kill()
-		var n: Panel = entry.get("node")
-		if is_instance_valid(n):
-			n.scale = Vector2.ONE
-			n.pivot_offset = Vector2.ZERO
+		var n = entry.get("node")
+		if not is_instance_valid(n):
+			continue
+		n.scale = Vector2.ONE
+		n.pivot_offset = Vector2.ZERO
+		# bg_panel：还原 stylebox
+		if n is Panel and entry.get("is_bg", false):
 			n.add_theme_stylebox_override("panel",
 				ThemeFactory.panel(Color("#f0f3f5"), Color("#e1e8ed"), 1, 16))
+		# 棋子：移除 _SelectionBorder 子节点
+		elif n.has_method("set_selection_highlight"):
+			n.set_selection_highlight(false)
 	_highlight_tweens.clear()
 
 # ── 行动结算 ──────────────────────────────────────────────────────────
 # TurnSystem 回调：玩家选择了非本棋盘 id。
-func _on_target_chosen(cell: Node, target_id: String) -> void:
+# 返回 Dictionary：
+#   {handled: false}                                       回退到本棋盘默认逻辑
+#   {handled: true}                                        已完成动作
+#   {handled: true, crossed_cell, board_model, hero_resolver}
+#       冲锋单位已跨入目标棋盘，由 TurnSystem 继续在目标棋盘冲锋穿透
+func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 	if not is_instance_valid(cell) or not cell.has_card:
-		return
-	if not _targets.has(target_id):
-		return
-
-	var board_model: BoardModel = _resolve_board_model(target_id)
-	if board_model == null:
-		return
-	var front_enemy = board_model.get_cell(Vector2(ENEMY_FRONT_ROW, cell.col))
-	var has_enemy: bool = is_instance_valid(front_enemy) and front_enemy.has_card
+		return {"handled": true}
+	if Game.registry == null:
+		return {"handled": false}
+	var slot: BoardSlot = Game.registry.get_by_id(target_id)
+	if slot == null or not is_instance_valid(slot.board):
+		return {"handled": false}
+	var board_model: BoardModel = slot.board
+	# 跨盘目标盘的 front_row：玩家单位跨过去落在敌方盘的 front_row（朝玩家那侧 = row 2）
+	var enemy_front_row: int = BoardModel.front_row_of(slot.faction)
+	var front_enemy = board_model.get_cell(Vector2(enemy_front_row, cell.col))
+	# 只有真正的敌方单位才触发攻击；友军单位不攻击（格子被占则回退本棋盘默认逻辑）
+	var has_enemy: bool = is_instance_valid(front_enemy) \
+		and front_enemy.has_card and front_enemy.is_enemy
 
 	if has_enemy:
-		# 原地攻击，不移动
-		cell.play_attack_effect()
+		# 若冲锋单位尚未到达玩家前排，先冲过去再攻击
+		var attacker = cell
+		var player_front_row: int = BoardModel.front_row_of(BoardSlot.FACTION_PLAYER)
+		if cell.row != player_front_row:
+			var player_slot: BoardSlot = Game.registry.get_by_id(cell.slot_id) \
+				if Game.registry != null else null
+			if player_slot != null and is_instance_valid(player_slot.board):
+				var front_cell = player_slot.board.get_cell(
+					Vector2(player_front_row, cell.col))
+				if is_instance_valid(front_cell) and not front_cell.has_card:
+					await _combat.move_card(cell, front_cell)
+					if not is_instance_valid(front_cell) or not front_cell.has_card:
+						return {"handled": true}
+					attacker = front_cell
 		await get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
-		if not is_instance_valid(cell) or not cell.has_card:
-			return
-		await _combat.attack_cells(cell, [{
-			"cell": front_enemy, "dir": "bottom", "opp_dir": "top",
+		# await 后检查攻击双方节点有效性（可能在动画期间退出到菜单）
+		if not is_instance_valid(attacker) or not attacker.has_card:
+			return {"handled": true}
+		if not is_instance_valid(front_enemy) or not front_enemy.has_card:
+			return {"handled": true}
+		if not is_instance_valid(_combat):
+			return {"handled": true}
+		await _combat.attack_cells(attacker, [{
+			"cell": front_enemy, "dir": "top", "opp_dir": "bottom",
 		}])
-	else:
-		# 移动到目标棋盘前排
-		var target_cell = board_model.get_cell(Vector2(ENEMY_FRONT_ROW, cell.col))
-		if not is_instance_valid(target_cell) or target_cell.has_card:
-			return
-		await _combat.move_card(cell, target_cell)
-		if is_instance_valid(target_cell):
-			target_cell.has_attacked = true
+		return {"handled": true}
 
-func _resolve_board_model(target_id: String) -> BoardModel:
-	if target_id == "main":
-		return Game.board
-	if _board_resolver.is_valid():
-		var bm = _board_resolver.call(target_id)
-		if bm is BoardModel:
-			return bm
-	return null
+	# 同列前排无敌 → 移动到目标棋盘前排（同列 row=front_row）
+	var target_cell = board_model.get_cell(Vector2(enemy_front_row, cell.col))
+	if not is_instance_valid(target_cell) or target_cell.has_card:
+		return {"handled": false}
+
+	var is_charge_unit: bool = cell.effects.has("charge") and not cell.has_charged
+	if not is_instance_valid(_combat):
+		return {"handled": true}
+	await _combat.move_card(cell, target_cell)
+	if not is_instance_valid(target_cell) or not target_cell.has_card:
+		return {"handled": true}
+	target_cell.has_attacked = true
+	target_cell.slot_id = slot.id   # 跨入新盘后更新 slot 归属
+
+	if is_charge_unit:
+		return {
+			"handled": true,
+			"crossed_cell": target_cell,
+			"board_model": board_model,
+			"hero_resolver": slot.hero_resolver,
+		}
+	# 普通单位跨盘：返回落点信息，供调用方触发 vigilance
+	return {"handled": true, "landed_cell": target_cell, "board_model": board_model}
+
+# 当前所有有 bg_panel 的 ENEMY slot
+func _enemy_slots_with_panel() -> Array:
+	var out: Array = []
+	if Game.registry == null:
+		return out
+	for slot in Game.registry.enemy_targets():
+		if is_instance_valid(slot.bg_panel):
+			out.append(slot)
+	return out
