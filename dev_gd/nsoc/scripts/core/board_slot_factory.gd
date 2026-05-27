@@ -99,10 +99,36 @@ static func has_game() -> bool:
 	var root: Node = Engine.get_main_loop().root
 	return root != null and root.has_node("/root/Game")
 
-# 销毁一个 slot：注销 + 释放 BoardModel / SpawnerSystem / HeroState。
+# 销毁一个 slot：完整清理并释放。
+# 清理顺序：
+#   1. 断开 pile_changed 信号，防止后续操作触发已销毁面板的 UI 更新
+#   2. 棋盘上残存的单位 → 路由到对应主盘除外区（数据持久保留）
+#   3. 清空插槽自身的墓地和除外区（该盘已移除，本地记录归零）
+#   4. 注销 registry + 释放子节点
 static func destroy(slot: BoardSlot) -> void:
 	if slot == null:
 		return
+
+	# 1. 断开 pile_changed 所有外部连接
+	if is_instance_valid(slot):
+		var connections: Array = slot.pile_changed.get_connections()
+		for conn in connections:
+			slot.pile_changed.disconnect(conn["callable"])
+
+	# 2. 场上残存单位 → 路由到主盘除外区（持久化）
+	if is_instance_valid(slot.board) and has_game() and Game.registry != null:
+		var main_slot: BoardSlot = _main_slot_for_faction(slot.faction)
+		for cell in slot.board.grid_cells.values():
+			if is_instance_valid(cell) and cell.has_card and not cell.is_phantom:
+				if main_slot != null and is_instance_valid(main_slot):
+					main_slot.banished.append({"name": cell.card_name})
+
+	# 3. 清空该插槽自身的墓地和除外区
+	if is_instance_valid(slot):
+		slot.graveyard.clear()
+		slot.banished.clear()
+
+	# 4. 注销 + 释放
 	if has_game() and Game.registry != null:
 		Game.registry.remove(slot.id)
 	if is_instance_valid(slot.board):
@@ -113,3 +139,13 @@ static func destroy(slot: BoardSlot) -> void:
 		slot.hero.queue_free()
 	if is_instance_valid(slot):
 		slot.queue_free()
+
+# 按阵营找到对应主盘（玩家→player_main，敌方→enemy_main）
+static func _main_slot_for_faction(faction: int) -> BoardSlot:
+	if not has_game() or Game.registry == null:
+		return null
+	if faction == BoardSlot.FACTION_PLAYER:
+		return Game.registry.main_player()
+	for s in Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY):
+		return s
+	return null

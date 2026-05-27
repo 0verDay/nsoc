@@ -64,6 +64,19 @@ func _begin_selection(enemy_slots: Array) -> void:
 	# 等一帧让布局稳定后再设缩放锚点
 	await get_tree().process_frame
 
+	# ── 等待选择的棋子：脉冲缩放 + 蓝色描边（描边在 InnerPanel 下，不遮挡四维指示器）──
+	if is_instance_valid(_active_cell):
+		_active_cell.set_selection_highlight(true)
+		_active_cell.pivot_offset = _active_cell.size * 0.5
+		var cell_tw := _active_cell.create_tween()
+		cell_tw.set_loops()
+		cell_tw.tween_property(_active_cell, "scale", Vector2(1.015, 1.015), HIGHLIGHT_PULSE_DURATION) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		cell_tw.tween_property(_active_cell, "scale", Vector2.ONE, HIGHLIGHT_PULSE_DURATION) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		_highlight_tweens.append({"node": _active_cell, "tween": cell_tw})
+
+	# ── 可选目标棋盘：高亮边框 + 脉冲缩放 ──
 	for slot in enemy_slots:
 		var bg: Panel = slot.bg_panel
 		if not is_instance_valid(bg):
@@ -77,7 +90,7 @@ func _begin_selection(enemy_slots: Array) -> void:
 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 		tw.tween_property(bg, "scale", Vector2.ONE, HIGHLIGHT_PULSE_DURATION) \
 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		_highlight_tweens.append({"node": bg, "tween": tw})
+		_highlight_tweens.append({"node": bg, "tween": tw, "is_bg": true})
 		_selection_targets.append({"slot": slot, "bg": bg})
 
 func _on_overlay_input(event: InputEvent) -> void:
@@ -108,12 +121,18 @@ func _clear_highlights() -> void:
 		var tw = entry.get("tween")
 		if tw and tw.is_running():
 			tw.kill()
-		var n: Panel = entry.get("node")
-		if is_instance_valid(n):
-			n.scale = Vector2.ONE
-			n.pivot_offset = Vector2.ZERO
+		var n = entry.get("node")
+		if not is_instance_valid(n):
+			continue
+		n.scale = Vector2.ONE
+		n.pivot_offset = Vector2.ZERO
+		# bg_panel：还原 stylebox
+		if n is Panel and entry.get("is_bg", false):
 			n.add_theme_stylebox_override("panel",
 				ThemeFactory.panel(Color("#f0f3f5"), Color("#e1e8ed"), 1, 16))
+		# 棋子：移除 _SelectionBorder 子节点
+		elif n.has_method("set_selection_highlight"):
+			n.set_selection_highlight(false)
 	_highlight_tweens.clear()
 
 # ── 行动结算 ──────────────────────────────────────────────────────────
@@ -135,16 +154,34 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 	# 跨盘目标盘的 front_row：玩家单位跨过去落在敌方盘的 front_row（朝玩家那侧 = row 2）
 	var enemy_front_row: int = BoardModel.front_row_of(slot.faction)
 	var front_enemy = board_model.get_cell(Vector2(enemy_front_row, cell.col))
-	var has_enemy: bool = is_instance_valid(front_enemy) and front_enemy.has_card
+	# 只有真正的敌方单位才触发攻击；友军单位不攻击（格子被占则回退本棋盘默认逻辑）
+	var has_enemy: bool = is_instance_valid(front_enemy) \
+		and front_enemy.has_card and front_enemy.is_enemy
 
 	if has_enemy:
-		# 同列前排有敌 → 原地攻击（不论是否冲锋单位）
+		# 若冲锋单位尚未到达玩家前排，先冲过去再攻击
+		var attacker = cell
+		var player_front_row: int = BoardModel.front_row_of(BoardSlot.FACTION_PLAYER)
+		if cell.row != player_front_row:
+			var player_slot: BoardSlot = Game.registry.get_by_id(cell.slot_id) \
+				if Game.registry != null else null
+			if player_slot != null and is_instance_valid(player_slot.board):
+				var front_cell = player_slot.board.get_cell(
+					Vector2(player_front_row, cell.col))
+				if is_instance_valid(front_cell) and not front_cell.has_card:
+					await _combat.move_card(cell, front_cell)
+					if not is_instance_valid(front_cell) or not front_cell.has_card:
+						return {"handled": true}
+					attacker = front_cell
 		await get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
-		if not is_instance_valid(cell) or not cell.has_card:
+		# await 后检查攻击双方节点有效性（可能在动画期间退出到菜单）
+		if not is_instance_valid(attacker) or not attacker.has_card:
 			return {"handled": true}
-		# 玩家盘 row 0 视觉上方紧贴敌方盘 row 2 视觉下方：
-		# 攻方朝 top，受击者 bottom 面（敌方单位视角已通过 Orientation 自动翻转）
-		await _combat.attack_cells(cell, [{
+		if not is_instance_valid(front_enemy) or not front_enemy.has_card:
+			return {"handled": true}
+		if not is_instance_valid(_combat):
+			return {"handled": true}
+		await _combat.attack_cells(attacker, [{
 			"cell": front_enemy, "dir": "top", "opp_dir": "bottom",
 		}])
 		return {"handled": true}
@@ -155,6 +192,8 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 		return {"handled": false}
 
 	var is_charge_unit: bool = cell.effects.has("charge") and not cell.has_charged
+	if not is_instance_valid(_combat):
+		return {"handled": true}
 	await _combat.move_card(cell, target_cell)
 	if not is_instance_valid(target_cell) or not target_cell.has_card:
 		return {"handled": true}
@@ -168,7 +207,8 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 			"board_model": board_model,
 			"hero_resolver": slot.hero_resolver,
 		}
-	return {"handled": true}
+	# 普通单位跨盘：返回落点信息，供调用方触发 vigilance
+	return {"handled": true, "landed_cell": target_cell, "board_model": board_model}
 
 # 当前所有有 bg_panel 的 ENEMY slot
 func _enemy_slots_with_panel() -> Array:

@@ -40,6 +40,10 @@ var counters: Dictionary = {}
 # 由章节场景在切到 main.tscn 前赋值；bootstrap 末尾自动清空避免下次脏读。
 var pending_chapter_config: String = ""
 
+# 覆盖关卡 JSON 路径。非空时 bootstrap() 优先读此文件而非默认 test_level.json。
+# 由调用方（test_main）在 bootstrap() 前赋值；bootstrap 末尾自动清空。
+var pending_level_path: String = ""
+
 # 由 main.gd 创建后注入。cell._can_drop_data 通过 Game.play 查询规则，避免对 main 的反向耦合。
 var play: PlayController
 
@@ -140,17 +144,31 @@ func bootstrap() -> void:
 		card_db[c.name] = c
 	cards_loaded.emit(deck_cards)
 
-	var level := DataLoader.load_level_from_chapter(pending_chapter_config) if pending_chapter_config != "" else DataLoader.load_level()
+	var level: Dictionary
+	if pending_chapter_config != "":
+		level = DataLoader.load_level_from_chapter(pending_chapter_config)
+	elif pending_level_path != "":
+		level = DataLoader.load_level_from_path(pending_level_path)
+	else:
+		level = DataLoader.load_level()
 	level_data = level
 	level_loaded.emit(level)
 
 	deck.setup(deck_cards)
 	mana.setup(1)
 	counters.clear()
+	# 重置英雄技能回合用量（防止上局退出时 HeroAbilities.reset_turn_usage 未执行导致残留）
+	if has_node("/root/HeroAbilities"):
+		HeroAbilities.reset_turn_usage()
+	# 重置回合系统运行状态（防止上局退出时 is_running 残留为 true）
+	if turn != null:
+		turn.is_running = false
+		turn.turn_number = 0
 
-	# 一次性消费：清空 pending_chapter_config，避免战斗结束返回主菜单后
-	# 再次进入战斗（玩家牌组）误用上一局的章节配置。
+	# 一次性消费：清空 pending 字段，避免战斗结束返回主菜单后
+	# 再次进入战斗（玩家牌组）误用上一局的配置。
 	pending_chapter_config = ""
+	pending_level_path = ""
 
 
 # JSON 解出的 abilities 可能是 Array of String（理想）或混入 null 等；统一为 Array[String]。

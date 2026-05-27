@@ -79,15 +79,20 @@ func _cleanup_all() -> void:
 		return
 	for slot in Game.registry.slots.duplicate():
 		BoardSlotFactory.destroy(slot)
-	# 释放附盘 panel 控制器
+	# 释放附盘面板管理器及其 clip 节点
 	for mgr in _side_panels.values():
 		if is_instance_valid(mgr):
+			for clip in mgr.get_clip_nodes():
+				if is_instance_valid(clip):
+					clip.queue_free()
 			mgr.queue_free()
 	_side_panels.clear()
 	_side_ui.clear()
 	_active.clear()
 	# 清 Game.turn 残留：旧 combat 节点已 free；信号连接表可能仍指向旧 FrontRowSelector
 	if Game.turn != null:
+		# 强制结束可能仍在运行的回合（退出时 run() 的协程被中断，is_running 可能残留 true）
+		Game.turn.is_running = false
 		Game.turn._combat = null
 		Game.turn._card_resolver = Callable()
 		Game.turn._front_row_resolve = Callable()
@@ -104,11 +109,16 @@ func setup(deps: Dictionary) -> void:
 	_side_gap_x       = float(deps.get("side_gap_x", 500.0))
 	_main_ui          = deps.get("main_ui", {})
 
-# 启动期：遍历 level_data.boards 创建所有 enabled=true 的盘。
-# 主棋盘 + boot 期附盘均不走滑入动画（瞬时摆放）。
+# 启动期：遍历 level_data.boards 创建需要在游戏开始时显示的棋盘。
+# 主棋盘（player_main / enemy_main）无条件创建；
+# 附盘根据数据内容自动决定：有 initial_units 或 spawners 则在开始时放好，否则不创建。
+# boot 期所有棋盘均不走滑入动画（瞬时摆放）。
 func boot() -> void:
 	if not has_node("/root/Game"):
 		return
+	# 连接回合开始信号，实现 board_events 局内触发
+	if Game.turn != null and not Game.turn.turn_started.is_connected(_on_turn_started):
+		Game.turn.turn_started.connect(_on_turn_started)
 	var boards: Dictionary = Game.level_data.get("boards", {})
 	var ordered_ids: Array = ["player_main", "enemy_main"]
 	for id in boards.keys():
@@ -119,9 +129,93 @@ func boot() -> void:
 		if not boards.has(id):
 			continue
 		var meta: Dictionary = boards[id]
-		if not bool(meta.get("enabled", true)):
-			continue
+		var is_main: bool = (id == "player_main" or id == "enemy_main")
+		# 附盘：有初始单位或生成器才在游戏开始时放好
+		if not is_main:
+			var has_units: bool = (meta.get("initial_units", []) as Array).size() > 0
+			var has_spawners: bool = (meta.get("spawners", []) as Array).size() > 0
+			if not has_units and not has_spawners:
+				continue
 		_create_slot(id, meta, false)
+		# boot 期不播动画，由 setup_intro_nodes() 统一交给场景入场 tween 处理
+
+# ── 局内棋盘事件 ──────────────────────────────────────────────────────
+# 每回合开始时由 turn_started 信号触发，读取 level_data["board_events"] 执行增减盘。
+func _on_turn_started() -> void:
+	if not has_node("/root/Game") or Game.turn == null:
+		return
+	var current_turn: int = Game.turn.turn_number
+	var events: Array = Game.level_data.get("board_events", [])
+	for ev in events:
+		if int(ev.get("turn", -1)) != current_turn:
+			continue
+		# ── Remove ──────────────────────────────────────────────────────
+		# 先同步将 slot 从 Game.registry 移除，确保本回合 _iter_phase_cells 快照
+		# 不包含这些棋盘（_on_turn_started 是信号处理，与 _run_phase 并发执行）。
+		# 动画和节点清理在之后 await 完成。
+		var to_remove: Array = []
+		for idx in ev.get("remove", []):
+			var board_id: String = _slot_index_to_id(int(idx))
+			if board_id == "" or not _active.has(board_id):
+				continue
+			to_remove.append(board_id)
+			# 同步移出注册表
+			if Game.registry != null:
+				Game.registry.remove(board_id)
+		# 再做异步动画 + 节点清理
+		for board_id in to_remove:
+			if _active.has(board_id):
+				await remove_board(board_id)
+
+		# ── Add ─────────────────────────────────────────────────────────
+		for idx in ev.get("add", []):
+			var board_id: String = _slot_index_to_id(int(idx))
+			if board_id != "" and not _active.has(board_id):
+				await add_board(board_id)
+
+# slot_index → board id（动态查 level_data，不硬编码）
+func _slot_index_to_id(idx: int) -> String:
+	if not has_node("/root/Game"):
+		return ""
+	for board_id in Game.level_data.get("boards", {}).keys():
+		var meta: Dictionary = Game.level_data["boards"][board_id]
+		if int(meta.get("slot_index", -99)) == idx:
+			return board_id
+	return ""
+
+# 供 test_main._play_intro_animation 调用：
+# 对每个附盘 bg 设置起始位置偏移，返回两组数据：
+#   "slides": Array of {node, target}  → 并入主棋盘的 tw_a（位移动画）
+#   "fades":  Array of Node            → 并入主棋盘的 tw_b（渐显）
+# 调用方在设置好 slide_specs 之后、创建 tween 之前调用本方法。
+func setup_intro_nodes(slide_distance: float) -> Dictionary:
+	var slides: Array = []
+	var fades: Array  = []
+	for id in _side_ui.keys():
+		var slot: BoardSlot = _active.get(id)
+		if slot == null:
+			continue
+		var ui: Dictionary = _side_ui[id]
+		var container: Control = ui.get("container")
+		if is_instance_valid(container):
+			container.visible = true
+
+		var bg: Panel = ui.get("bg")
+		if is_instance_valid(bg):
+			# 敌方从上方（负 y）；玩家从下方（正 y）
+			var sign_dir: float = -1.0 if slot.faction == BoardSlot.FACTION_ENEMY else 1.0
+			var target := bg.position
+			# 设起始偏移位置，modulate 保持 1.0（与主棋盘 slide_nodes 行为一致，只位移不淡变）
+			bg.position = target + Vector2(0.0, sign_dir * slide_distance)
+			slides.append({"node": bg, "target": target})
+
+		# ui_nodes（hp_pnl, grave_btn, banished_btn）并入 fade_targets，tw_b 渐显
+		for n in ui.get("ui_nodes", []):
+			if is_instance_valid(n):
+				n.modulate.a = 0.0
+				fades.append(n)
+
+	return {"slides": slides, "fades": fades}
 
 # ── 公开运行时 API ───────────────────────────────────────────────────
 func has_board(id: String) -> bool:
@@ -137,7 +231,7 @@ func add_board(id: String) -> BoardSlot:
 	var slot: BoardSlot = _create_slot(id, meta, true)
 	# 滑入动画（仅附盘）
 	if slot != null and _side_ui.has(id):
-		await _animate_slide_in(_side_ui[id])
+		await _animate_slide_in(_side_ui[id], slot.faction)
 	return slot
 
 # 运行时移除附盘（含滑出动画）。
@@ -150,13 +244,16 @@ func remove_board(id: String) -> void:
 		push_warning("BoardOrchestrator: refuse to remove main slot %s" % id)
 		return
 	if _side_ui.has(id):
-		await _animate_slide_out(_side_ui[id])
+		await _animate_slide_out(_side_ui[id], slot.faction)
 	board_removed.emit(slot)
 	BoardSlotFactory.destroy(slot)
-	# 销毁附盘的 EnemySidePanelManager
+	# 销毁附盘面板管理器及其 clip 节点（clip 挂在 _parent 下，不随 mgr.queue_free 自动释放）
 	if _side_panels.has(id):
 		var mgr = _side_panels[id]
 		if is_instance_valid(mgr):
+			for clip in mgr.get_clip_nodes():
+				if is_instance_valid(clip):
+					clip.queue_free()
 			mgr.queue_free()
 		_side_panels.erase(id)
 	if _side_ui.has(id):
@@ -197,7 +294,7 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 		# 附盘：动态构造 UI
 		var center_x: float = _side_center_x_for(id)
 		var side_top: bool = (faction == BoardSlot.FACTION_ENEMY)
-		var show_pile: bool = (faction == BoardSlot.FACTION_ENEMY)
+		var show_pile: bool = true   # 敌方和友军附盘均显示墓地/除外按钮
 		side_ui_dict = SideBoardUiScript.build(_parent, center_x, side_top,
 			"_" + id, show_pile)
 		grid = side_ui_dict["grid"]
@@ -238,10 +335,15 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 			lbl.text = str(slot.hero.health)
 		_wire_hero_long_press(hero_panel, slot)
 
-	# 附盘 + ENEMY 阵营：挂一个 EnemySidePanelManager 作为该盘的墓地/除外
+	# 附盘 ENEMY 阵营：挂一个 EnemySidePanelManager 作为该盘的墓地/除外
 	if not _main_ui.has(id) and faction == BoardSlot.FACTION_ENEMY \
 			and side_ui_dict.has("grave_btn") and side_ui_dict.has("banished_btn"):
 		_setup_side_enemy_panel(id, slot, side_ui_dict)
+
+	# 附盘 ALLY 阵营：挂一个 AllySidePanelManager 作为该盘的墓地/除外
+	if not _main_ui.has(id) and faction == BoardSlot.FACTION_PLAYER \
+			and side_ui_dict.has("grave_btn") and side_ui_dict.has("banished_btn"):
+		_setup_side_ally_panel(id, slot, side_ui_dict)
 
 	# phantom 预告
 	if slot.spawners != null:
@@ -271,6 +373,28 @@ func _setup_side_enemy_panel(id: String, slot: BoardSlot, ui: Dictionary) -> voi
 		grave_btn.pressed.connect(func(): mgr.toggle("enemy_grave"))
 	if is_instance_valid(banished_btn):
 		banished_btn.pressed.connect(func(): mgr.toggle("enemy_banished"))
+	_side_panels[id] = mgr
+
+# 为 ALLY 附盘创建独立 AllySidePanelManager 并接 grave/banished 按钮
+func _setup_side_ally_panel(id: String, slot: BoardSlot, ui: Dictionary) -> void:
+	var center_x: float = _side_center_x_for(id)
+	var mgr := AllySidePanelManager.new()
+	mgr.name = "AllySidePanels_" + id
+	add_child(mgr)
+	mgr.setup(_parent, slot, center_x)
+	# 转发长按信号到统一出口
+	mgr.long_press_requested.connect(func(p): side_panel_long_press_requested.emit(p))
+	mgr.long_press_canceled.connect(func(): side_panel_long_press_canceled.emit())
+	# 提升 clip 层级，确保面板覆盖棋盘
+	for clip in mgr.get_clip_nodes():
+		clip.move_to_front()
+	# 接按钮
+	var grave_btn: Button = ui["grave_btn"]
+	var banished_btn: Button = ui["banished_btn"]
+	if is_instance_valid(grave_btn):
+		grave_btn.pressed.connect(func(): mgr.toggle("ally_grave"))
+	if is_instance_valid(banished_btn):
+		banished_btn.pressed.connect(func(): mgr.toggle("ally_banished"))
 	_side_panels[id] = mgr
 
 func _side_center_x_for(id: String) -> float:
@@ -349,52 +473,64 @@ func close_all_side_panels() -> void:
 			mgr.close_current()
 
 # ── 滑入 / 滑出动画 ──────────────────────────────────────────────────
-func _animate_slide_in(ui: Dictionary) -> void:
+func _animate_slide_in(ui: Dictionary, faction: int = BoardSlot.FACTION_ENEMY) -> void:
 	var container: Control = ui.get("container", null)
 	if not is_instance_valid(container):
 		return
 	container.visible = true
+
 	var bg: Panel = ui.get("bg", null)
-	var nodes: Array = [bg]
-	for n in ui.get("ui_nodes", []):
-		nodes.append(n)
-	# 中心 x < 屏中 → 从左滑入；> 屏中 → 从右
-	var sign_dir: float = 1.0
-	if is_instance_valid(bg):
-		var bg_center_x: float = (bg.offset_left + bg.offset_right) / 2.0
-		sign_dir = -1.0 if bg_center_x < 0.0 else 1.0
-	var origin_offsets: Array = []
-	for n in nodes:
+	var ui_nodes: Array = ui.get("ui_nodes", [])
+
+	# 附属按钮/面板先隐藏，棋盘到位后再渐显
+	for n in ui_nodes:
 		if is_instance_valid(n):
-			origin_offsets.append(n.position)
-			n.position += Vector2(sign_dir * SLIDE_DISTANCE, 0.0)
 			n.modulate.a = 0.0
 
-	var tw := _parent.create_tween()
-	tw.set_parallel(true)
-	for i in range(nodes.size()):
-		var n = nodes[i]
-		if is_instance_valid(n):
-			tw.tween_property(n, "position", origin_offsets[i], SLIDE_DURATION) \
-				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-			tw.tween_property(n, "modulate:a", 1.0, FADE_DURATION)
-	await tw.finished
-
-func _animate_slide_out(ui: Dictionary) -> void:
-	var bg: Panel = ui.get("bg", null)
-	var nodes: Array = [bg]
-	for n in ui.get("ui_nodes", []):
-		nodes.append(n)
-	var sign_dir: float = 1.0
+	# 阶段①：棋盘 bg 滑入
+	# 敌方侧：从上方落下（负 y）；玩家侧：从下方升起（正 y）
+	var sign_dir: float = -1.0 if faction == BoardSlot.FACTION_ENEMY else 1.0
 	if is_instance_valid(bg):
-		var bg_center_x: float = (bg.offset_left + bg.offset_right) / 2.0
-		sign_dir = -1.0 if bg_center_x < 0.0 else 1.0
-	var tw := _parent.create_tween()
-	tw.set_parallel(true)
-	for n in nodes:
+		var origin := bg.position
+		bg.position += Vector2(0.0, sign_dir * SLIDE_DISTANCE)
+		bg.modulate.a = 0.0
+		var tw1 := _parent.create_tween()
+		tw1.set_parallel(true)
+		tw1.tween_property(bg, "position", origin, SLIDE_DURATION) \
+			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw1.tween_property(bg, "modulate:a", 1.0, FADE_DURATION)
+		await tw1.finished
+
+	# 阶段②：附属按钮和面板渐显
+	if ui_nodes.is_empty():
+		return
+	var tw2 := _parent.create_tween()
+	tw2.set_parallel(true)
+	for n in ui_nodes:
 		if is_instance_valid(n):
-			tw.tween_property(n, "position",
-				n.position + Vector2(sign_dir * SLIDE_DISTANCE, 0.0), SLIDE_DURATION) \
-				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-			tw.tween_property(n, "modulate:a", 0.0, FADE_DURATION)
-	await tw.finished
+			tw2.tween_property(n, "modulate:a", 1.0, FADE_DURATION)
+	await tw2.finished
+
+func _animate_slide_out(ui: Dictionary, faction: int = BoardSlot.FACTION_ENEMY) -> void:
+	var bg: Panel = ui.get("bg", null)
+	var ui_nodes: Array = ui.get("ui_nodes", [])
+
+	# 阶段①：附属按钮和面板渐隐
+	if not ui_nodes.is_empty():
+		var tw1 := _parent.create_tween()
+		tw1.set_parallel(true)
+		for n in ui_nodes:
+			if is_instance_valid(n):
+				tw1.tween_property(n, "modulate:a", 0.0, FADE_DURATION)
+		await tw1.finished
+
+	# 阶段②：棋盘 bg 向上/下滑出
+	var sign_dir: float = -1.0 if faction == BoardSlot.FACTION_ENEMY else 1.0
+	if is_instance_valid(bg):
+		var tw2 := _parent.create_tween()
+		tw2.set_parallel(true)
+		tw2.tween_property(bg, "position",
+			bg.position + Vector2(0.0, sign_dir * SLIDE_DISTANCE), SLIDE_DURATION) \
+			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tw2.tween_property(bg, "modulate:a", 0.0, FADE_DURATION)
+		await tw2.finished

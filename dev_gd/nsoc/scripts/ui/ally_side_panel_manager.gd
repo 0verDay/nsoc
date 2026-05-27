@@ -1,34 +1,30 @@
-class_name EnemySidePanelManager
+class_name AllySidePanelManager
 extends Node
 
-# 敌方"墓地 / 除外"两个顶部下拉面板。
-# 阶段 5：参数化数据源 = 一个 BoardSlot。每个敌方盘各自实例化一份。
-# 旧 Game.deck.enemy_* 已删除；本类读 _slot.graveyard / banished，监听 _slot.pile_changed。
+# 友军"墓地 / 除外"两个底部上拉面板。
+# 镜像 EnemySidePanelManager，但面板从下方滑入（玩家半场一侧）。
+# 每个友军盘（ally_left / ally_right）各自实例化一份。
+# 数据源 = 所绑定的 BoardSlot（slot.graveyard / slot.banished）。
 
-signal long_press_requested(payload)       # payload: {"name": "卡名"}
+signal long_press_requested(payload)
 signal long_press_canceled
 
-# 面板内部 key（仍叫 enemy_grave / enemy_banished 与 toggle 字符串保持兼容）
-const PANEL_NAMES: PackedStringArray = ["enemy_grave", "enemy_banished"]
-const PANEL_TITLES: Dictionary = {"enemy_grave": "敌方墓地", "enemy_banished": "敌方除外"}
-# slot.pile_changed 的 pile 名 → 本面板 key
-const PILE_TO_PANEL: Dictionary = {"graveyard": "enemy_grave", "banished": "enemy_banished"}
+const PANEL_NAMES: PackedStringArray = ["ally_grave", "ally_banished"]
+const PANEL_TITLES: Dictionary = {"ally_grave": "友军墓地", "ally_banished": "友军除外"}
+const PILE_TO_PANEL: Dictionary = {"graveyard": "ally_grave", "banished": "ally_banished"}
 
-# clip 区域 = 敌方半场（基于 Main.tscn 中 TopGridBg 范围扩边）
-const CLIP_TOP: float = 60.0
-const CLIP_BOTTOM_FROM_CENTER: float = 0.0   # 至画面垂直中线（viewport_height / 2）
+# clip 区域高度：从画面底部往上 CLIP_BOTTOM 留给按钮，再往上 PANEL_HEIGHT。
+const CLIP_BOTTOM: float = 55.0
 const PANEL_WIDTH: float = 480.0
 const PANEL_HEIGHT: float = 470.0
 const SLIDE_DURATION: float = 0.3
 
 var _parent: Control
 var _slot: BoardSlot = null
-var _center_x_offset: float = 0.0   # 面板水平中心相对视口中心的偏移（与 BOARD_SHIFT 同坐标系）
-# panel_name -> {"clip": Control, "panel": Panel, "list": VBoxContainer}
+var _center_x_offset: float = 0.0
 var _ui_panels: Dictionary = {}
 var _current_open: String = ""
 
-# slot 可选：传入则数据源切到 slot；不传 (null) 时维持空数据
 func setup(parent: Control, slot: BoardSlot = null, center_x_offset: float = 0.0) -> void:
 	_parent = parent
 	_center_x_offset = center_x_offset
@@ -37,7 +33,6 @@ func setup(parent: Control, slot: BoardSlot = null, center_x_offset: float = 0.0
 	if slot != null:
 		set_slot(slot)
 
-# 数据源：切换 / 注入 slot（boot 后由 test_main / Orchestrator 调）。
 func set_slot(slot: BoardSlot) -> void:
 	if _slot == slot:
 		return
@@ -46,11 +41,9 @@ func set_slot(slot: BoardSlot) -> void:
 	_slot = slot
 	if _slot != null:
 		_slot.pile_changed.connect(_on_slot_pile_changed)
-	# 重新拉取打开中的面板内容
 	if _current_open != "":
 		_refresh_content(_current_open)
 
-# 主棋盘在 test 动画后调用此方法跟随棋盘平移。
 func update_clip_center_x(new_center_x: float) -> void:
 	_center_x_offset = new_center_x
 	for entry in _ui_panels.values():
@@ -64,34 +57,34 @@ func _on_slot_pile_changed(pile_name: String) -> void:
 		_refresh_content(_current_open)
 
 func _build_panel(p_name: String) -> Dictionary:
-	# clip：固定在敌方半场顶部，水平居中于 _center_x_offset。
+	# clip：固定在玩家半场底部，水平居中于 _center_x_offset。
 	var clip_node := Control.new()
 	clip_node.name = p_name + "_clip"
 	_parent.add_child(clip_node)
-	clip_node.set_anchors_preset(Control.PRESET_TOP_WIDE, false)
+	clip_node.set_anchors_preset(Control.PRESET_BOTTOM_WIDE, false)
 	clip_node.anchor_left = 0.5
 	clip_node.anchor_right = 0.5
 	clip_node.offset_left  = _center_x_offset - PANEL_WIDTH / 2.0
 	clip_node.offset_right = _center_x_offset + PANEL_WIDTH / 2.0
-	clip_node.offset_top = CLIP_TOP
-	clip_node.offset_bottom = CLIP_TOP + PANEL_HEIGHT
+	clip_node.offset_top = -CLIP_BOTTOM - PANEL_HEIGHT
+	clip_node.offset_bottom = -CLIP_BOTTOM
 	clip_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	clip_node.clip_contents = true
 	clip_node.visible = false
-	# 高 z_index 压住战斗动画 visual（visual.z_index = 100）。
 	clip_node.z_index = 200
 
-	# panel：在 clip 内从上方滑入。初始位置 offset_top = -PANEL_HEIGHT（隐藏在 clip 上方）。
+	# panel：clip 内从下方滑入。初始 offset_top = PANEL_HEIGHT（藏在 clip 下方）。
 	var pnl := Panel.new()
 	pnl.name = p_name + "_panel"
 	clip_node.add_child(pnl)
 	pnl.set_anchors_preset(Control.PRESET_TOP_WIDE, false)
 	pnl.offset_left = 0
 	pnl.offset_right = 0
-	pnl.offset_top = -PANEL_HEIGHT
-	pnl.offset_bottom = 0
+	pnl.offset_top = PANEL_HEIGHT
+	pnl.offset_bottom = PANEL_HEIGHT * 2.0
 	pnl.mouse_filter = Control.MOUSE_FILTER_STOP
-	pnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color(0.94, 0.95, 0.96, 1.0), Color(1, 1, 1, 1.0), 1, 20))
+	pnl.add_theme_stylebox_override("panel",
+		ThemeFactory.panel(Color(0.94, 0.95, 0.96, 1.0), Color(1, 1, 1, 1.0), 1, 20))
 
 	var lbl := Label.new()
 	lbl.text = PANEL_TITLES.get(p_name, p_name)
@@ -117,7 +110,6 @@ func _build_panel(p_name: String) -> Dictionary:
 	vbox.add_theme_constant_override("separation", 10)
 	scroll.add_child(vbox)
 
-	# 拖动滚动支持（移动端）。
 	var helper := DragScrollHelper.new()
 	helper.name = "DragScroll"
 	scroll.add_child(helper)
@@ -137,12 +129,11 @@ func _refresh_content(p_name: String) -> void:
 		c.free()
 	if _slot == null or not is_instance_valid(_slot):
 		return
-
-	if p_name == "enemy_grave":
+	if p_name == "ally_grave":
 		var grave: Array = _slot.graveyard
 		for i in range(grave.size() - 1, -1, -1):
 			vbox.add_child(_create_list_item(grave[i].name, 1))
-	elif p_name == "enemy_banished":
+	elif p_name == "ally_banished":
 		var ban: Array = _slot.banished
 		for i in range(ban.size() - 1, -1, -1):
 			vbox.add_child(_create_list_item(ban[i].name, 1))
@@ -155,7 +146,6 @@ func _create_list_item(card_name: String, count: int) -> Button:
 	b.add_theme_color_override("font_color", Color(0.2, 0.2, 0.2, 1))
 	b.add_theme_color_override("font_hover_color", Color(0.1, 0.1, 0.1, 1))
 	b.add_theme_color_override("font_pressed_color", Color(0.0, 0.0, 0.0, 1))
-	# PASS：让 ScrollContainer 仍能收到鼠标事件以实现拖动滚动
 	b.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	var styles := ThemeFactory.list_item_styles()
@@ -186,8 +176,8 @@ func toggle(p_name: String) -> void:
 func _snap_close(p_name: String) -> void:
 	var entry: Dictionary = _ui_panels[p_name]
 	entry.clip.visible = false
-	entry.panel.offset_top = -PANEL_HEIGHT
-	entry.panel.offset_bottom = 0
+	entry.panel.offset_top = PANEL_HEIGHT
+	entry.panel.offset_bottom = PANEL_HEIGHT * 2.0
 
 func _open(p_name: String) -> void:
 	_current_open = p_name
@@ -196,8 +186,10 @@ func _open(p_name: String) -> void:
 	entry.clip.visible = true
 	var pnl: Panel = entry.panel
 	var tween := get_tree().create_tween()
-	tween.tween_property(pnl, "offset_top", 0.0, SLIDE_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(pnl, "offset_bottom", PANEL_HEIGHT, SLIDE_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property(pnl, "offset_top", 0.0, SLIDE_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(pnl, "offset_bottom", PANEL_HEIGHT, SLIDE_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 func close_current() -> void:
 	if _current_open == "":
@@ -209,8 +201,10 @@ func close_current() -> void:
 	if not is_instance_valid(pnl) or not is_instance_valid(clip):
 		return
 	var tween := get_tree().create_tween()
-	tween.tween_property(pnl, "offset_top", -PANEL_HEIGHT, SLIDE_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tween.parallel().tween_property(pnl, "offset_bottom", 0.0, SLIDE_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.tween_property(pnl, "offset_top", PANEL_HEIGHT, SLIDE_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.parallel().tween_property(pnl, "offset_bottom", PANEL_HEIGHT * 2.0, SLIDE_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tween.tween_callback(func():
 		if is_instance_valid(clip):
 			clip.visible = false)

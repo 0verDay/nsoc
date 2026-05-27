@@ -42,6 +42,14 @@ static func _parse_string_array(raw) -> Array:
 		out.append(String(item))
 	return out
 
+static func _parse_int_array(raw) -> Array:
+	if typeof(raw) != TYPE_ARRAY:
+		return []
+	var out: Array = []
+	for item in raw:
+		out.append(int(item))
+	return out
+
 # 卡牌读取。path 必传，调用方按用途选择 ALL/REVIEW/BATTLE 路径。
 static func load_cards(path: String) -> Array:
 	var j = _read_json(path)
@@ -96,6 +104,14 @@ static func load_level() -> Dictionary:
 		return out
 	return _parse_level(j)
 
+# 从任意路径加载关卡（供 Game.pending_level_path 使用）。
+static func load_level_from_path(path: String) -> Dictionary:
+	var out := _empty_level()
+	var j = _read_json(path)
+	if typeof(j) != TYPE_DICTIONARY:
+		return out
+	return _parse_level(j)
+
 # 从章节 JSON 中读取关卡结构。
 # 章节无关卡字段时返回空骨架，调用方走默认。
 static func load_level_from_chapter(chapter_json_path: String) -> Dictionary:
@@ -130,6 +146,8 @@ static func _empty_level() -> Dictionary:
 		# 旧聚合视图（向后兼容）
 		"initial_units": [],
 		"spawners": [],
+		# 局内棋盘事件：[{"turn":N, "add":[slot_idx,...], "remove":[slot_idx,...]}]
+		"board_events": [],
 	}
 
 # 默认 board meta：保证主棋盘永远在 boards 段中存在，且默认 enabled=true。
@@ -241,6 +259,18 @@ static func _parse_level(j: Dictionary) -> Dictionary:
 	for board_id in out["boards"].keys():
 		out["initial_units"].append_array(out["boards"][board_id]["initial_units"])
 		out["spawners"].append_array(out["boards"][board_id]["spawners"])
+	# 解析 board_events
+	if j.has("board_events") and typeof(j["board_events"]) == TYPE_ARRAY:
+		for ev in j["board_events"] as Array:
+			if typeof(ev) != TYPE_DICTIONARY:
+				continue
+			var parsed_ev: Dictionary = {
+				"turn": int(ev.get("turn", -1)),
+				"add":    _parse_int_array(ev.get("add", [])),
+				"remove": _parse_int_array(ev.get("remove", [])),
+			}
+			if parsed_ev["turn"] >= 1:
+				out["board_events"].append(parsed_ev)
 	return out
 
 # 解析 boards.<id> 子段。新格式 row/col 不做映射，按盘内 0..ROWS-1 读取。

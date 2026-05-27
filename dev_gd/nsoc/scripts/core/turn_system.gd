@@ -8,10 +8,11 @@ extends Node
 #   run() —— 跑一个完整回合（PLAYER 阶段 → spawn → ENEMY 阶段）
 #
 # 行/列遍历约定：
-#   PLAYER 阶段：cell 的 board.row 0→ROWS-1（自家后排到自家前排，因为玩家盘 row 0 是后排）
-#   ENEMY  阶段：board.row ROWS-1→0
-#   同 row 跨多盘按 visual_x 升序交错；
-#   同盘内 col：PLAYER 0→COLS-1；ENEMY COLS-1→0（沿用"自身视角左→右"约定）
+#   PLAYER 阶段：row 0→ROWS-1；棋盘按视觉 x 升序；col 0→COLS-1
+#   ENEMY  阶段：按"距玩家英雄由近到远"纯格子排序——
+#     玩家侧棋盘（已跨入 enemy）优先，row ROWS-1→0，棋盘 x 降序，col COLS-1→0；
+#     再是敌方侧棋盘，顺序同上。
+#     保证越靠近玩家英雄的 enemy 单位越早行动。
 #
 # 跨棋盘选择：仅当 cell 所属 slot 是 PLAYER 阵营，且 registry 内存在 ENEMY slot，且
 #   _can_cross_board(cell) 为真时触发 front_row_action_requested 信号。
@@ -29,6 +30,7 @@ const ENEMY: int = 1
 const STEP_INTERVAL: float = 0.5
 
 var is_running: bool = false
+var turn_number: int = 0   # 当前局内回合计数（bootstrap 后重置为 0，每次 run() 开头 +1）
 
 var _combat: CombatSystem
 var _card_resolver: Callable
@@ -95,6 +97,7 @@ func resolve_front_row_selection(target_id: String) -> void:
 
 func run() -> void:
 	is_running = true
+	turn_number += 1
 	turn_started.emit()
 	await _run_phase(PLAYER)
 	await _run_spawn_phase()
@@ -112,41 +115,75 @@ func run() -> void:
 func _run_phase(faction: int) -> void:
 	phase_started.emit(faction)
 	for entry in _iter_phase_cells(faction):
-		await _process_cell(faction, entry["cell"], entry["slot"])
+		var c = entry["cell"]
+		var s: BoardSlot = entry["slot"]
+		# 棋盘可能在上一次 await 后被动态移除，跳过已释放的 cell/slot
+		if not is_instance_valid(c) or not is_instance_valid(s) or not is_instance_valid(s.board):
+			continue
+		await _process_cell(faction, c, s)
 	phase_ended.emit(faction)
 
 # 构建本阶段的 (cell, slot) 序列。
-# 同 row 跨多盘按 slot.visual_x 升序；行方向按阶段决定。
+#
+# PLAYER 阶段：
+#   行 0→ROWS-1，棋盘 x 升序，列 0→COLS-1（自身视角后排→前排，左→右）
+#
+# ENEMY 阶段（按"距玩家英雄由近到远"纯格子排序）：
+#   先遍历所有玩家侧棋盘（enemy 单位已跨入，离玩家英雄更近），
+#   再遍历所有敌方侧棋盘（enemy 单位尚未跨入）。
+#   两组内部均：行 ROWS-1→0（敌方视角前排→后排），棋盘 x 降序，列 COLS-1→0。
+#   效果：玩家盘 row2 → 玩家盘 row1 → 玩家盘 row0 →
+#         敌方盘 row2 → 敌方盘 row1 → 敌方盘 row0
 func _iter_phase_cells(faction: int) -> Array:
 	var reg := _registry()
 	if reg == null:
 		return []
-	# 棋盘列表按视觉 x 升序
-	var slots: Array = reg.sorted_by_x()
-
-	var rows: Array = []
-	if faction == PLAYER:
-		for r in range(BoardModel.ROWS): rows.append(r)
-	else:
-		for r in range(BoardModel.ROWS - 1, -1, -1): rows.append(r)
 
 	var out: Array = []
-	for r in rows:
-		for slot in slots:
-			if not is_instance_valid(slot.board):
-				continue
-			var col_range: Array = []
-			if faction == PLAYER:
-				for c in range(BoardModel.COLS): col_range.append(c)
+
+	if faction == PLAYER:
+		var slots: Array = reg.sorted_by_x()
+		for r in range(BoardModel.ROWS):
+			for slot in slots:
+				if not is_instance_valid(slot.board):
+					continue
+				for c in range(BoardModel.COLS):
+					var key := Vector2(r, c)
+					if slot.board.grid_cells.has(key):
+						out.append({"cell": slot.board.grid_cells[key], "slot": slot})
+	else:
+		# 将棋盘分成两组：玩家侧（faction=PLAYER）和敌方侧（faction=ENEMY），
+		# 均按 x 降序（敌方自身视角左→右）。
+		var slots_desc: Array = reg.sorted_by_x().duplicate()
+		slots_desc.reverse()
+		var player_slots: Array = []
+		var enemy_slots: Array = []
+		for s in slots_desc:
+			if s.faction == BoardSlot.FACTION_PLAYER:
+				player_slots.append(s)
 			else:
-				for c in range(BoardModel.COLS - 1, -1, -1): col_range.append(c)
-			for c in col_range:
-				var key := Vector2(r, c)
-				if slot.board.grid_cells.has(key):
-					out.append({
-						"cell": slot.board.grid_cells[key],
-						"slot": slot,
-					})
+				enemy_slots.append(s)
+
+		# ① 玩家侧棋盘：已跨入的 enemy 单位，离玩家英雄最近，最先行动
+		for r in range(BoardModel.ROWS - 1, -1, -1):
+			for slot in player_slots:
+				if not is_instance_valid(slot.board):
+					continue
+				for c in range(BoardModel.COLS - 1, -1, -1):
+					var key := Vector2(r, c)
+					if slot.board.grid_cells.has(key):
+						out.append({"cell": slot.board.grid_cells[key], "slot": slot})
+
+		# ② 敌方侧棋盘：尚未跨入的 enemy 单位
+		for r in range(BoardModel.ROWS - 1, -1, -1):
+			for slot in enemy_slots:
+				if not is_instance_valid(slot.board):
+					continue
+				for c in range(BoardModel.COLS - 1, -1, -1):
+					var key := Vector2(r, c)
+					if slot.board.grid_cells.has(key):
+						out.append({"cell": slot.board.grid_cells[key], "slot": slot})
+
 	return out
 
 # 单 cell 行动结算。slot 是 cell 所属盘。
@@ -180,6 +217,14 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 	# hero_resolver：仅在敌方盘上到达 goal 才生效
 	var hero_resolver: Callable = slot.hero_resolver if (not on_home_board) else Callable()
 
+	# ── 先攻：有邻敌则直接攻击，冲锋作废 ─────────────────────────────
+	var enemies := board.find_adjacent_enemies(cell, for_enemy)
+	if enemies.size() > 0:
+		await _combat.attack_cells(cell, enemies)
+		if is_instance_valid(cell) and cell.has_card:
+			cell.has_attacked = true
+		return
+
 	# ── 跨棋盘选择（玩家阶段）：cell 在 PLAYER 阵营盘 + 存在敌方盘 + 可跨条件成立
 	var reg := _registry()
 	var enemy_slots: Array = reg.enemy_targets() if reg != null else []
@@ -206,6 +251,12 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 						and is_instance_valid(target_board) \
 						and target_hero.is_valid() \
 						and target_slot != null:
+					# 冲锋落地后先触发 vigilance（落点附近可能有敌方警戒单位）
+					await _trigger_vigilance_on_board(crossed, false, target_board)
+					if not is_instance_valid(target_board) or not is_instance_valid(crossed) \
+							or not crossed.has_card:
+						cell.has_attacked = true
+						return
 					# 玩家跨入敌方盘 row=front(=2)，要打敌方盘 row=back(=0)，方向 row 减小 step=-1
 					# 等价：以入侵者视角 = 反向于本盘 step
 					var x_step: int = -BoardModel.step_of(target_slot.faction)
@@ -216,11 +267,17 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 					if ended_cell_x != null:
 						ended_cell_x.has_attacked = true
 						ended_cell_x.has_charged = true
-			else:
-				cell.has_attacked = true
-				if cell.effects.has("charge"):
-					cell.has_charged = true
-			return
+		else:
+			cell.has_attacked = true
+			if cell.effects.has("charge"):
+				cell.has_charged = true
+			# 普通跨盘落地后触发 vigilance（landed_cell 由 _on_target_chosen 提供）
+			var landed = result.get("landed_cell")
+			var landed_board: BoardModel = result.get("board_model")
+			if is_instance_valid(landed) and landed.has_card \
+					and is_instance_valid(landed_board):
+				await _trigger_vigilance_on_board(landed, false, landed_board)
+		return
 
 	# ── 敌方阵营自动跨盘：cell 在 ENEMY 阵营盘 + cell.row == 自家 front_row +
 	#     存在 PLAYER 阵营盘。同列玩家盘前排（=row 0）有敌则跨盘攻击；无敌则跨入
@@ -243,13 +300,6 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 			ended_cell.has_charged = true
 		return
 
-	# ── 常规：攻击邻敌 → 推进 ────────────────────────────────────
-	var enemies := board.find_adjacent_enemies(cell, for_enemy)
-	if enemies.size() > 0:
-		await _combat.attack_cells(cell, enemies)
-		cell.has_attacked = true
-		return
-
 	# 已到 goal_row：
 	#   自家盘上 = 自家 front_row → idle（跨盘已处理）
 	#   敌方盘上 = 该盘 back_row → 打英雄
@@ -269,8 +319,13 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		if cell.effects.has("steadfast"):
 			return
 		await _combat.move_card(cell, target)
+		# await 后场景可能已被销毁（退出到菜单），检查节点有效性再继续
+		if not is_instance_valid(board) or not is_instance_valid(target):
+			return
 		target.has_attacked = true
 		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
+		if not is_instance_valid(board) or not is_instance_valid(target):
+			return
 		await _trigger_vigilance_on_board(target, for_enemy, board)
 
 # ── 跨棋盘可行性判定 ──────────────────────────────────────────────────
@@ -287,60 +342,80 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 func _enemy_auto_cross(cell, slot: BoardSlot, player_slots: Array) -> bool:
 	if cell == null or not cell.has_card:
 		return false
+	# steadfast 单位不移动，不跨盘
+	if cell.effects.has("steadfast"):
+		return false
 	var col: int = cell.col
 	# 玩家盘 front_row（朝中线/视觉上方） = 0；back_row = 2（玩家英雄所在）
-	# 敌方单位跨入玩家盘后，要继续向 row=2 推进打玩家英雄
+	# 敌方单位跨入玩家盘后，要从 row=0 向 row=2 推进打玩家英雄，方向 = +1
+	# 即与玩家自身的 step(-1) 相反，取反得 +1
 	var ply_front: int = BoardModel.front_row_of(BoardSlot.FACTION_PLAYER)
 	var ply_back: int  = BoardModel.back_row_of(BoardSlot.FACTION_PLAYER)
-	var ply_step: int  = BoardModel.step_of(BoardSlot.FACTION_PLAYER)  # -1 视角
+	var ply_step: int  = -BoardModel.step_of(BoardSlot.FACTION_PLAYER)  # +1，敌方在玩家盘内前进方向
 
-	# 1) 优先找有玩家单位的目标盘：同列 front_row 有玩家单位 → 跨盘攻击
+	# 1) 收集所有"同列 front_row 有玩家单位"的目标盘，随机选一个跨盘攻击
+	var attack_candidates: Array = []
 	for ply_slot in player_slots:
 		var pb: BoardModel = ply_slot.board
 		var tgt = pb.get_cell(Vector2(ply_front, col))
 		if tgt != null and tgt.has_card and not tgt.is_enemy:
-			await _combat.get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
-			if not is_instance_valid(cell) or not cell.has_card:
-				cell.has_attacked = true
-				return true
-			# 敌方单位在敌方盘 row 2(视觉下) 攻击玩家盘 row 0(视觉上)：
-			# 敌方攻击者朝下（bottom），受击者上面（top）
-			await _combat.attack_cells(cell, [{
-				"cell": tgt, "dir": "bottom", "opp_dir": "top",
-			}])
+			attack_candidates.append({"slot": ply_slot, "cell": tgt})
+	if attack_candidates.size() > 0:
+		var pick: Dictionary = attack_candidates[randi() % attack_candidates.size()]
+		var tgt = pick["cell"]
+		await _combat.get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
+		if not is_instance_valid(cell) or not cell.has_card:
 			cell.has_attacked = true
 			return true
+		# 敌方单位在敌方盘 row 2(视觉下) 攻击玩家盘 row 0(视觉上)：
+		# 敌方攻击者朝下（bottom），受击者上面（top）
+		await _combat.attack_cells(cell, [{
+			"cell": tgt, "dir": "bottom", "opp_dir": "top",
+		}])
+		cell.has_attacked = true
+		return true
 
-	# 2) 同列空 → 取第一个 front_row 同列空格的玩家盘跨入
+	# 2) 收集所有"同列 front_row 为空"的玩家盘，随机选一个跨入
+	var move_candidates: Array = []
 	for ply_slot in player_slots:
 		var pb2: BoardModel = ply_slot.board
 		var tgt2 = pb2.get_cell(Vector2(ply_front, col))
 		if tgt2 != null and not tgt2.has_card:
-			# 跨入：移动 cell → tgt2，cell.slot_id 更新
-			await _combat.move_card(cell, tgt2)
-			if not is_instance_valid(tgt2) or not tgt2.has_card:
-				return true
-			tgt2.has_attacked = true
-			tgt2.slot_id = ply_slot.id
-			# 冲锋单位：在玩家盘上继续穿透到 row=back（玩家英雄）
-			if tgt2.effects.has("charge") and not tgt2.has_charged:
-				var ended = await _run_charge_on_board(
-					tgt2, ply_step, true, ply_back, pb2,
-					ply_slot.hero_resolver)
-				if ended != null:
-					ended.has_attacked = true
-					ended.has_charged = true
+			move_candidates.append({"slot": ply_slot, "cell": tgt2})
+	if move_candidates.size() > 0:
+		var pick2: Dictionary = move_candidates[randi() % move_candidates.size()]
+		var ply_slot2: BoardSlot = pick2["slot"]
+		var tgt2 = pick2["cell"]
+		var pb2: BoardModel = ply_slot2.board
+		# 跨入：移动 cell → tgt2，cell.slot_id 更新
+		await _combat.move_card(cell, tgt2)
+		if not is_instance_valid(tgt2) or not tgt2.has_card:
 			return true
+		if not is_instance_valid(ply_slot2) or not is_instance_valid(pb2):
+			return true
+		tgt2.has_attacked = true
+		tgt2.slot_id = ply_slot2.id
+		# 落地后触发 vigilance（玩家盘上可能有警戒单位）
+		await _trigger_vigilance_on_board(tgt2, true, pb2)
+		if not is_instance_valid(pb2) or not is_instance_valid(tgt2) or not tgt2.has_card:
+			return true
+		# 冲锋单位：在玩家盘上继续穿透到 row=back（玩家英雄）
+		if tgt2.effects.has("charge") and not tgt2.has_charged:
+			var ended = await _run_charge_on_board(
+				tgt2, ply_step, true, ply_back, pb2,
+				ply_slot2.hero_resolver)
+			if ended != null:
+				ended.has_attacked = true
+				ended.has_charged = true
+		return true
 
 	# 3) 所有玩家盘同列都已被敌方单位/空缺占据 → idle
 	return false
 
 # ── 跨棋盘可行性判定 ──────────────────────────────────────────────────
-# 仅判断玩家本回合行动后是否"可能"跨入另一棋盘，是否真有目标棋盘交由
-# FrontRowSelector / resolver 决定。
-#   普通棋子：当前已在自家 front_row，下一步即跨界
-#   冲锋棋子（且本回合冲锋未用）：从当前 row 沿 step 方向到 front_row 的同列全空 且
-#       cell 行的同行三列邻格全空（即 "九宫格" 全空），可冲到前排再跨
+# 普通棋子：当前已在自家 front_row，下一步即跨界
+# 冲锋棋子（且本回合冲锋未用）：从当前 row 到 front_row 的同列全空
+# 邻列/邻格不作限制（邻敌由 _process_cell 开头的先攻判断拦截）
 func _can_cross_board(cell, slot: BoardSlot) -> bool:
 	if cell == null or not cell.has_card or slot == null:
 		return false
@@ -353,18 +428,13 @@ func _can_cross_board(cell, slot: BoardSlot) -> bool:
 		return true
 	if not (cell.effects.has("charge") and not cell.has_charged):
 		return false
-	# 同列：从 cell.row 沿 step 方向至 front_row 全空
+	# 同列：从 cell.row 沿 step 方向至 front_row（含）全空
 	var r: int = cell.row + step
-	while r != front_row + step:   # 包含 front_row 这一格也需为空
+	while r != front_row + step:
 		var c = board.get_cell(Vector2(r, cell.col))
 		if c == null or c.has_card:
 			return false
 		r += step
-	# 当前行九宫格（同行 col-1 / col+1，跳过自身）需全空
-	for dc in [-1, 1]:
-		var nb = board.get_cell(Vector2(cell.row, cell.col + dc))
-		if nb != null and nb.has_card:
-			return false
 	return true
 
 # ── 前排选择等待 ──────────────────────────────────────────────────────
@@ -411,8 +481,11 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 	if dest != cell:
 		await _combat.move_card(cell, dest)
 		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
+		# await 后节点可能已被销毁（退出到菜单）
+		if not is_instance_valid(board) or not is_instance_valid(dest):
+			return null
 		await _trigger_vigilance_on_board(dest, for_enemy, board)
-		if not dest.has_card:
+		if not is_instance_valid(board) or not is_instance_valid(dest) or not dest.has_card:
 			return null
 
 	if enemy_target != null:
@@ -445,7 +518,7 @@ func _run_spawn_phase() -> void:
 # ── 警戒触发 ────────────────────────────────────────────────────────
 func _trigger_vigilance_on_board(entered_cell, mover_for_enemy: bool,
 		board: BoardModel) -> void:
-	if entered_cell == null or not entered_cell.has_card:
+	if not is_instance_valid(board) or entered_cell == null or not entered_cell.has_card:
 		return
 	for d in BoardModel.DIRECTIONS:
 		var p: Vector2 = Vector2(entered_cell.row, entered_cell.col) + d.offset
@@ -456,10 +529,13 @@ func _trigger_vigilance_on_board(entered_cell, mover_for_enemy: bool,
 			continue
 		if not sentinel.effects.has("vigilance"):
 			continue
-		if not entered_cell.has_card:
+		if not is_instance_valid(board) or not entered_cell.has_card:
 			return
 		await _combat.attack_cells(sentinel, [{
 			"cell": entered_cell,
 			"dir": d.name,
 			"opp_dir": d.opp,
 		}])
+		# await 后再次检查
+		if not is_instance_valid(board) or not is_instance_valid(entered_cell):
+			return

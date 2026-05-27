@@ -99,6 +99,7 @@ func find_adjacent_enemies(cell, for_enemy: bool) -> Array:
 func reset_attack_flags() -> void:
 	for cell in grid_cells.values():
 		cell.has_attacked = false
+		cell.has_charged = false
 
 # 按关卡配置摆放初始单位。configs 来自 DataLoader 输出（每盘自己的子集）。
 # 配置项 positions 已是 Vector2(row,col)，row 0..2。
