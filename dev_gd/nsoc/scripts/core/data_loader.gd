@@ -91,6 +91,10 @@ static func _parse_card(card: Dictionary):
 				var hv: int = int(card["health"])
 				hp = {"front": hv, "back": hv, "left": hv, "right": hv}
 		new_card = CardUnit.new(c_name, c_cost, c_atk, hp, c_effects)
+	elif c_type == "装备":
+		var c_dura: int = int(card.get("durability", 1))
+		var c_opt: bool = bool(card.get("once_per_turn", false))
+		new_card = CardEquipment.new(c_name, c_cost, c_dura, c_effects, c_opt)
 	else:
 		var c_target: String = card.get("target", "")
 		new_card = CardSpell.new(c_name, c_cost, c_effects, c_target)

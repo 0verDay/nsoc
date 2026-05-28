@@ -93,6 +93,9 @@ func trigger_vigilance(entered_cell) -> void:
 			"dir": d.name,
 			"opp_dir": d.opp,
 		}])
+		# 退出到菜单时中止
+		if game.combat == null or game.combat.aborted:
+			return
 
 # ---- 卡牌去向 ----
 # 自动按 dying_is_enemy 路由：

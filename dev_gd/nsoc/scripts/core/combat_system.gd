@@ -14,10 +14,17 @@ var _root: Control                          # 用于挂载移动动画 visual / 
 var _cell_scene: PackedScene
 var _play_controller: PlayController        # 死亡时回调（牌入墓/除外）
 
+# 退出到菜单时置 true，所有 await 后检查此 flag 并提前 return，避免 invalid 引用报错。
+var aborted: bool = false
+
 func setup(root: Control, cell_scene: PackedScene, play_controller: PlayController) -> void:
 	_root = root
 	_cell_scene = cell_scene
 	_play_controller = play_controller
+
+# 退出到菜单时调用：标记中止，所有正在 await 的协程在下一个 resume 点安全退出。
+func abort() -> void:
+	aborted = true
 
 # 旧 API 兼容：英雄受伤面板闪红已下沉到 BoardSlot.damage_hero。
 # 调用方应改为通过 slot.hero_resolver / slot.damage_hero。
@@ -42,6 +49,9 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 		defender.play_damage_effect()
 
 	await get_tree().create_timer(ATTACK_HIT_DELAY).timeout
+	# 退出到菜单时 aborted=true 或节点已被 free，协程 resume 后立即返回
+	if aborted or not is_instance_valid(self):
+		return
 
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
@@ -62,6 +72,9 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 		for dc in dead_cells:
 			dc.play_death_effect()
 		await get_tree().create_timer(DEATH_DELAY).timeout
+		# 退出到菜单时 aborted=true 或节点已被 free
+		if aborted or not is_instance_valid(self):
+			return
 		# 收集 victim 快照（card_name / is_enemy）供 handle_kills 使用，
 		# 因 clear_card 会清空这些字段。
 		var victims: Array = []
@@ -124,7 +137,11 @@ func move_card(start, end) -> void:
 		0.0, 1.0, total_duration)
 
 	await tween.finished
-	visual.queue_free()
+	if is_instance_valid(visual):
+		visual.queue_free()
+	# 退出到菜单时 aborted=true，不再操作可能已 free 的 end 节点
+	if aborted or not is_instance_valid(self):
+		return
 
 	end.set_card(cname, atk, hp, is_e, effs)
 	end.has_charged = charged

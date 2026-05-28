@@ -33,7 +33,7 @@ var combat: CombatSystem
 
 var enemy_grave_btn: Button
 var enemy_banished_btn: Button
-var hero_ability_btn: Button
+var hero_action_bar: HeroActionBar
 
 # ── 抽出的控制器 ─────────────────────────────────────────────────────
 # 用 Node 弱类型避免 class_name 全局表未刷新时的解析报错。
@@ -74,10 +74,13 @@ func _ready() -> void:
 
 	_create_enemy_pile_buttons()
 	_create_player_pile_buttons()
-	_create_hero_ability_button()
+	_create_hero_action_bar()
 
 	settings_panel = SettingsPanelController.new(); settings_panel.name = "SettingsPanel"; add_child(settings_panel)
-	settings_panel.setup(self, {"create_trigger_button": false})
+	settings_panel.setup(self, {
+		"create_trigger_button": false,
+		"exit_action": Callable(self, "_on_exit_to_menu"),
+	})
 	_create_settings_button()
 
 	_collect_main_enemy_nodes()
@@ -117,7 +120,8 @@ func _ready() -> void:
 		},
 	})
 	board_orchestrator.boot()
-	_refresh_hero_ability_button()
+	if hero_action_bar != null:
+		hero_action_bar._refresh_all()
 	# boot 后把主敌盘 slot 注入 enemy_side_panels 作数据源
 	var enemy_main_slot: BoardSlot = Game.registry.get_by_id("enemy_main") if Game.registry != null else null
 	if enemy_main_slot != null:
@@ -168,6 +172,12 @@ func _install_controllers() -> void:
 		"detail_panel": detail_panel,
 		"long_press_hero_args": Callable(self, "_get_player_hero_long_press_args"),
 	})
+	# 装备展开动画期间阻断 / 恢复拖拽
+	if is_instance_valid(hero_action_bar):
+		hero_action_bar.panel_expansion_started.connect(
+			func(): hero_drag_ctrl.set_drag_blocked(true))
+		hero_action_bar.panel_expansion_finished.connect(
+			func(): hero_drag_ctrl.set_drag_blocked(false))
 	# 不再通过 gui_input 连接：附盘 ui_nodes 覆盖在 LeftSidePnl 上会拦截 gui_input。
 	# 改为在全局 _input 中手动转发，保证附盘存在时拖拽仍可用。
 	# $LeftSidePnl.gui_input.connect(hero_drag_ctrl.on_gui_input)
@@ -183,14 +193,16 @@ func _get_player_hero_long_press_args() -> Array:
 # ── 信号连接 ─────────────────────────────────────────────────────────
 func _wire_signals() -> void:
 	# 主玩家盘 / 主敌盘 hero 各自连信号到对应 UI 标签
+	# 注意：HeroState 属于 Game autoload，场景切换后仍存活。
+	# 必须用命名方法（非 lambda），Godot 4 才会在本节点 free 时自动断开连接。
 	var p_hero: HeroState = Game.player_hero()
 	if p_hero != null:
-		p_hero.health_changed.connect(func(v): player_health_label.text = str(v))
-		p_hero.died.connect(func(): _on_hero_died(false))
+		p_hero.health_changed.connect(_on_player_health_changed)
+		p_hero.died.connect(_on_player_hero_died)
 	var e_hero: HeroState = Game.enemy_main_hero()
 	if e_hero != null:
-		e_hero.health_changed.connect(func(v): enemy_health_label.text = str(v))
-		e_hero.died.connect(func(): _on_hero_died(true))
+		e_hero.health_changed.connect(_on_enemy_health_changed)
+		e_hero.died.connect(_on_enemy_hero_died)
 	Game.mana.mana_changed.connect(_on_mana_changed)
 
 	end_turn_btn.pressed.connect(_on_end_turn_pressed)
@@ -199,7 +211,6 @@ func _wire_signals() -> void:
 	banished_btn.pressed.connect(func(): side_panels.toggle("banished"))
 	enemy_grave_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_grave"))
 	enemy_banished_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_banished"))
-	hero_ability_btn.pressed.connect(_on_hero_ability_pressed)
 
 	side_panels.long_press_requested.connect(detail_panel.start_long_press)
 	side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
@@ -213,15 +224,29 @@ func _wire_signals() -> void:
 	hand_view.hand_card_long_press_canceled.connect(detail_panel.cancel_long_press)
 	play_controller.hand_consumed.connect(hand_view.draw_into_slot)
 
-	Game.turn.turn_started.connect(_refresh_hero_ability_button)
-	Game.turn.turn_ended.connect(_refresh_hero_ability_button)
-	Game.mana.mana_changed.connect(func(_c, _m): _refresh_hero_ability_button())
-	HeroAbilities.ability_used.connect(func(_id): _refresh_hero_ability_button())
-	HeroAbilities.turn_reset.connect(_refresh_hero_ability_button)
+	# HeroActionBar 自连 turn / mana / abilities / equipments；不再重复连。
+
+	# 装备拖拽高亮
+	hand_view.equip_drag_started.connect(hero_action_bar.show_equip_drag_highlight)
+	hand_view.equip_drag_ended.connect(hero_action_bar.hide_equip_drag_highlight)
+
+	# 确保 LeftSidePnl 在节点顺序最末（同 z_index 时后画的在上），
+	# 视觉和 drop 检测始终优先于棋盘格子。
+	$LeftSidePnl.move_to_front()
 
 # ── UI 刷新槽 ────────────────────────────────────────────────────────
 func _on_mana_changed(current: int, maximum: int) -> void:
 	mana_label.text = str(current) + "/" + str(maximum)
+
+# 命名方法替代 lambda，确保节点 free 时 Godot 自动断开与 HeroState 的连接
+func _on_player_health_changed(v: int) -> void:
+	player_health_label.text = str(v)
+func _on_enemy_health_changed(v: int) -> void:
+	enemy_health_label.text = str(v)
+func _on_player_hero_died() -> void:
+	_on_hero_died(false)
+func _on_enemy_hero_died() -> void:
+	_on_hero_died(true)
 
 func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.disabled = true
@@ -252,6 +277,7 @@ func _on_end_turn_pressed() -> void:
 	await Game.turn.run()
 	Game.mana.start_new_turn()
 	HeroAbilities.reset_turn_usage()
+	Equipments.reset_turn_usage()
 	end_turn_btn.disabled = false
 	end_turn_btn.text = "结束回合"
 
@@ -369,6 +395,31 @@ func _apply_styles() -> void:
 	$EnemyHpPnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#ff6b6b"), 2, 12, true))
 	ThemeFactory.apply_button_styles(end_turn_btn, ThemeFactory.primary_button_styles())
 
+# ── 退出到菜单 ────────────────────────────────────────────────────────
+# 立即标记 combat.aborted = true，所有正在 await 的协程在下一个 resume 点安全退出，
+# 然后等一帧让协程有机会感知 aborted 并提前 return，再切场景。
+const EXIT_DELAY: float = 1.0   # 覆盖 attack_hit(0.45) + death(0.45) + move(0.4) + buffer
+func _on_exit_to_menu() -> void:
+	# 标记中止：所有 combat/turn await 后检查此 flag 并立即 return
+	if combat != null:
+		combat.abort()
+	if Game.turn != null:
+		Game.turn.is_running = false
+
+	# 全屏黑色遮罩，屏蔽用户输入，并渐入表示正在退出
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.0, 0.0, 0.0, 0.0)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 500
+	add_child(overlay)
+	var tw := create_tween()
+	tw.tween_property(overlay, "color:a", 0.7, EXIT_DELAY * 0.5)
+
+	# 等待足够时间让所有协程安全退出后再切场景
+	await get_tree().create_timer(EXIT_DELAY).timeout
+	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+
 func _create_settings_button() -> void:
 	const SIDEBAR_W: float = 310.0
 	const GAP: float = 10.0
@@ -460,25 +511,30 @@ func _create_player_pile_buttons() -> void:
 		add_child(b)
 		ThemeFactory.apply_button_styles(b, ThemeFactory.primary_button_styles())
 
-func _create_hero_ability_button() -> void:
-	const BTN_W: float = 240.0
-	const BTN_H: float = 56.0
-	const BOTTOM_MARGIN: float = 30.0
+func _create_hero_action_bar() -> void:
+	hero_action_bar = HeroActionBar.new()
+	hero_action_bar.name = "HeroActionBar"
+	hero_action_bar.setup($LeftSidePnl, Callable(self, "_make_hero_ability_ctx"), detail_panel, hand_card_scene)
 
-	hero_ability_btn = Button.new()
-	hero_ability_btn.name = "HeroAbilityBtn"
-	hero_ability_btn.text = _get_player_ability_label()
-	hero_ability_btn.anchor_left = 0.5; hero_ability_btn.anchor_right = 0.5
-	hero_ability_btn.anchor_top = 1.0; hero_ability_btn.anchor_bottom = 1.0
-	hero_ability_btn.offset_left  = -BTN_W * 0.5; hero_ability_btn.offset_right = BTN_W * 0.5
-	hero_ability_btn.offset_top = -BTN_H - BOTTOM_MARGIN; hero_ability_btn.offset_bottom = -BOTTOM_MARGIN
-	hero_ability_btn.add_theme_font_size_override("font_size", 22)
-	hero_ability_btn.add_theme_color_override("font_color", Color.WHITE)
-	hero_ability_btn.add_theme_color_override("font_hover_color", Color.WHITE)
-	hero_ability_btn.add_theme_color_override("font_pressed_color", Color.WHITE)
-	$LeftSidePnl.add_child(hero_ability_btn)
-	ThemeFactory.apply_button_styles(hero_ability_btn, ThemeFactory.primary_button_styles())
-	_refresh_hero_ability_button()
+	# LeftSidePnl 接受装备拖入
+	for pnl in [$LeftSidePnl, $LeftSidePnl/PHpPnl]:
+		pnl.set_drag_forwarding(
+			Callable(),
+			Callable(self, "_left_side_pnl_can_drop"),
+			Callable(self, "_left_side_pnl_drop"))
+
+func _make_hero_ability_ctx() -> Dictionary:
+	return {"main": self, "hand_view": hand_view, "hero": Game.player_hero()}
+
+func _left_side_pnl_can_drop(_pos: Vector2, data) -> bool:
+	if play_controller == null:
+		return false
+	return play_controller.can_equip(data)
+
+func _left_side_pnl_drop(_pos: Vector2, data) -> void:
+	if play_controller == null:
+		return
+	play_controller.handle_equip(data)
 
 # ── 收集原敌方区域节点（test 动画时整体右移）────────────────────────
 func _collect_main_enemy_nodes() -> void:
@@ -505,40 +561,7 @@ func _on_enemy_hero_panel_gui_input(event: InputEvent) -> void:
 		tween.tween_property(pnl, "scale", Vector2(1.08, 1.08), 0.1)
 
 # ── 英雄技能 ────────────────────────────────────────────────────────
-func _on_hero_ability_pressed() -> void:
-	var hero: HeroState = Game.player_hero()
-	if hero == null:
-		return
-	var ability_id: String = hero.ability_id()
-	if ability_id == "" or not HeroAbilities.has(ability_id):
-		return
-	var ctx := {"main": self, "hand_view": hand_view, "hero": hero}
-	if not HeroAbilities.can_activate(ability_id, ctx):
-		return
-	await HeroAbilities.activate(ability_id, ctx)
-
-func _get_player_ability_label() -> String:
-	var hero: HeroState = Game.player_hero()
-	if hero == null:
-		return "英雄能力"
-	var ability_id: String = hero.ability_id()
-	if ability_id != "" and HeroAbilities.has(ability_id):
-		return HeroAbilities.get_display_name(ability_id)
-	return "英雄能力"
-
-func _refresh_hero_ability_button() -> void:
-	if hero_ability_btn == null:
-		return
-	var hero: HeroState = Game.player_hero()
-	if hero == null:
-		hero_ability_btn.disabled = true
-		return
-	var ability_id: String = hero.ability_id()
-	if ability_id == "" or not HeroAbilities.has(ability_id):
-		hero_ability_btn.disabled = true
-		return
-	var ctx := {"main": self, "hand_view": hand_view, "hero": hero}
-	hero_ability_btn.disabled = not HeroAbilities.can_activate(ability_id, ctx)
+# 已迁移至 HeroActionBar。
 
 # ── 入场动画 ─────────────────────────────────────────────────────────
 const INTRO_SLIDE_DURATION: float = 0.5

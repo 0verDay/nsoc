@@ -8,9 +8,13 @@ extends Panel
 
 signal long_press_requested(card_data)
 signal long_press_canceled
+# 装备牌专用：拖拽开始/结束通知英雄面板显示高亮。
+signal equip_drag_started
+signal equip_drag_ended
 
 var card_data = {}
 var card_id: int = 0
+var _was_equip_drag: bool = false   # 追踪本次拖拽是否为装备
 
 @onready var cost_lbl = $CostBg/CostLbl
 @onready var name_lbl = $NameLbl
@@ -70,10 +74,13 @@ func setup(data, id: int) -> void:
 	name_lbl.text = data.name
 
 	var is_unit := false
+	var is_equip := false
 	if typeof(data) == TYPE_DICTIONARY:
 		is_unit = (data.type == "单位")
+		is_equip = (data.type == "装备")
 	else:
 		is_unit = (data is CardUnit)
+		is_equip = (data is CardEquipment)
 
 	if is_unit:
 		atk_lbl.text = str(data.attack)
@@ -86,6 +93,16 @@ func setup(data, id: int) -> void:
 		$AtkBg.visible = true
 		for lbl in hp_labels_abs.values():
 			lbl.visible = true
+	elif is_equip:
+		# 装备：复用 BottomHp 槽位显示耐久；隐藏 atk + 其它 hp 槽。
+		atk_lbl.visible = false
+		$AtkBg.visible = false
+		for k in hp_labels_abs.keys():
+			hp_labels_abs[k].visible = false
+		var dura_lbl: Label = hp_labels_abs["bottom"]
+		dura_lbl.text = str(data.durability)
+		dura_lbl.add_theme_stylebox_override("normal", ThemeFactory.pill(Color("#fcc419"), 10))
+		dura_lbl.visible = true
 	else:
 		atk_lbl.visible = false
 		$AtkBg.visible = false
@@ -100,6 +117,8 @@ func _get_drag_data(_pos):
 		return null
 
 	var root := Control.new()
+	root.z_index = 200          # 确保拖拽预览在所有面板、棋子之上渲染
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var preview := Panel.new()
 	preview.size = self.size
 	preview.position = -_pos
@@ -134,10 +153,25 @@ func _get_drag_data(_pos):
 		drag_dict["attack"] = card_data.attack
 		# health 以 side 字典传递，落到 cell 时由 cell.set_card 直接消费
 		drag_dict["health"] = Orientation.clone_side_health(card_data.health)
+
+	# 装备拖拽：通知英雄面板显示高亮提示
+	var is_equip := false
+	if typeof(card_data) == TYPE_DICTIONARY:
+		is_equip = (card_data.type == "装备")
+	else:
+		is_equip = (card_data is CardEquipment)
+	if is_equip:
+		_was_equip_drag = true
+		equip_drag_started.emit()
+
 	return drag_dict
 
 func _notification(what) -> void:
 	if what == NOTIFICATION_DRAG_END:
+		# 装备拖拽结束（无论成功与否）都要移除高亮
+		if _was_equip_drag:
+			_was_equip_drag = false
+			equip_drag_ended.emit()
 		if get_meta("consumed", false):
 			return
 		modulate.a = 1.0

@@ -41,7 +41,7 @@ var enemy_grave_btn: Button
 var enemy_banished_btn: Button
 
 # 玩家英雄面板按钮（动态创建，挂在 LeftSidePnl 内）
-var hero_ability_btn: Button
+var hero_action_bar: HeroActionBar
 
 func _ready() -> void:
 	# 整个根 Control 先隐藏，等入场动画把节点移到屏外起点后再显示，
@@ -67,10 +67,10 @@ func _ready() -> void:
 
 	_create_enemy_pile_buttons()
 	_create_player_pile_buttons()
-	_create_hero_ability_button()
+	_create_hero_action_bar()
 
 	settings_panel = SettingsPanelController.new(); settings_panel.name = "SettingsPanel"; add_child(settings_panel)
-	settings_panel.setup(self)
+	settings_panel.setup(self, {"exit_action": Callable(self, "_on_exit_to_menu")})
 
 	# 业务控制器
 	play_controller = PlayController.new(); play_controller.name = "PlayController"; add_child(play_controller)
@@ -108,7 +108,9 @@ func _ready() -> void:
 		},
 	})
 	board_orchestrator.boot()
-	_refresh_hero_ability_button()
+	# HeroActionBar 内部自检；boot 后再刷一次确保 player_hero 就绪。
+	if hero_action_bar != null:
+		hero_action_bar._refresh_all()
 	var enemy_main_slot: BoardSlot = Game.registry.get_by_id("enemy_main") if Game.registry != null else null
 	if enemy_main_slot != null:
 		enemy_side_panels.set_slot(enemy_main_slot)
@@ -150,12 +152,12 @@ func _install_controllers() -> void:
 func _wire_signals() -> void:
 	var p_hero: HeroState = Game.player_hero()
 	if p_hero != null:
-		p_hero.health_changed.connect(func(v): player_health_label.text = str(v))
-		p_hero.died.connect(func(): _on_hero_died(false))
+		p_hero.health_changed.connect(_on_player_health_changed)
+		p_hero.died.connect(_on_player_hero_died)
 	var e_hero: HeroState = Game.enemy_main_hero()
 	if e_hero != null:
-		e_hero.health_changed.connect(func(v): enemy_health_label.text = str(v))
-		e_hero.died.connect(func(): _on_hero_died(true))
+		e_hero.health_changed.connect(_on_enemy_health_changed)
+		e_hero.died.connect(_on_enemy_hero_died)
 	Game.mana.mana_changed.connect(_on_mana_changed)
 
 	end_turn_btn.pressed.connect(_on_end_turn_pressed)
@@ -164,7 +166,6 @@ func _wire_signals() -> void:
 	banished_btn.pressed.connect(func(): side_panels.toggle("banished"))
 	enemy_grave_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_grave"))
 	enemy_banished_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_banished"))
-	hero_ability_btn.pressed.connect(_on_hero_ability_pressed)
 
 	# 侧栏长按 → 详情面板
 	side_panels.long_press_requested.connect(detail_panel.start_long_press)
@@ -183,21 +184,54 @@ func _wire_signals() -> void:
 	# 出牌后补手牌
 	play_controller.hand_consumed.connect(hand_view.draw_into_slot)
 
-	# 英雄技能按钮的可用性：受回合状态/费用/每回合次数 影响。
-	Game.turn.turn_started.connect(_refresh_hero_ability_button)
-	Game.turn.turn_ended.connect(_refresh_hero_ability_button)
-	Game.mana.mana_changed.connect(func(_c, _m): _refresh_hero_ability_button())
-	HeroAbilities.ability_used.connect(func(_id): _refresh_hero_ability_button())
-	HeroAbilities.turn_reset.connect(_refresh_hero_ability_button)
+	# HeroActionBar 自连 turn / mana / abilities / equipments；此处不再重复连。
+
+	# 装备拖拽高亮：手牌拖装备时英雄面板显示蓝色描边。
+	hand_view.equip_drag_started.connect(hero_action_bar.show_equip_drag_highlight)
+	hand_view.equip_drag_ended.connect(hero_action_bar.hide_equip_drag_highlight)
+
+	# 确保 LeftSidePnl 在节点顺序中最末（同 z_index 时后画的在上），
+	# 使其在视觉和 drop 检测上始终优先于棋盘格子。
+	$LeftSidePnl.move_to_front()
 
 # ---------------- UI 刷新槽 ----------------
 func _on_mana_changed(current: int, maximum: int) -> void:
 	mana_label.text = str(current) + "/" + str(maximum)
 
+# 命名方法替代 lambda，确保节点 free 时 Godot 自动断开与 HeroState 的连接
+func _on_player_health_changed(v: int) -> void:
+	player_health_label.text = str(v)
+func _on_enemy_health_changed(v: int) -> void:
+	enemy_health_label.text = str(v)
+func _on_player_hero_died() -> void:
+	_on_hero_died(false)
+func _on_enemy_hero_died() -> void:
+	_on_hero_died(true)
+
 func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利" if is_enemy else "失败"
 	_show_game_over(is_enemy)
+
+# ---------------- 退出到菜单 ----------------
+const EXIT_DELAY: float = 1.0
+func _on_exit_to_menu() -> void:
+	if combat != null:
+		combat.abort()
+	if Game.turn != null:
+		Game.turn.is_running = false
+
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.0, 0.0, 0.0, 0.0)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 500
+	add_child(overlay)
+	var tw := create_tween()
+	tw.tween_property(overlay, "color:a", 0.7, EXIT_DELAY * 0.5)
+
+	await get_tree().create_timer(EXIT_DELAY).timeout
+	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
 
 func _show_game_over(victory: bool) -> void:
 	var overlay := ColorRect.new()
@@ -225,6 +259,7 @@ func _on_end_turn_pressed() -> void:
 	await Game.turn.run()
 	Game.mana.start_new_turn()
 	HeroAbilities.reset_turn_usage()
+	Equipments.reset_turn_usage()
 	end_turn_btn.disabled = false
 	end_turn_btn.text = "结束回合"
 
@@ -400,40 +435,38 @@ func _create_player_pile_buttons() -> void:
 	ThemeFactory.apply_button_styles(grave_btn, pile_styles)
 	ThemeFactory.apply_button_styles(banished_btn, pile_styles)
 
-# 创建玩家英雄面板按钮，挂在 LeftSidePnl 底部居中。
-# 复用 ThemeFactory.primary_button_styles 与项目蓝色主按钮风格一致。
-func _create_hero_ability_button() -> void:
-	const BTN_W: float = 240.0
-	const BTN_H: float = 56.0
-	const BOTTOM_MARGIN: float = 30.0
-
-	hero_ability_btn = Button.new()
-	hero_ability_btn.name = "HeroAbilityBtn"
-	hero_ability_btn.text = _get_player_ability_label()
-	# 锚定到 LeftSidePnl 底部水平居中。
-	hero_ability_btn.anchor_left = 0.5
-	hero_ability_btn.anchor_right = 0.5
-	hero_ability_btn.anchor_top = 1.0
-	hero_ability_btn.anchor_bottom = 1.0
-	hero_ability_btn.offset_left = -BTN_W * 0.5
-	hero_ability_btn.offset_right = BTN_W * 0.5
-	hero_ability_btn.offset_top = -BTN_H - BOTTOM_MARGIN
-	hero_ability_btn.offset_bottom = -BOTTOM_MARGIN
-	hero_ability_btn.add_theme_font_size_override("font_size", 22)
-	hero_ability_btn.add_theme_color_override("font_color", Color.WHITE)
-	hero_ability_btn.add_theme_color_override("font_hover_color", Color.WHITE)
-	hero_ability_btn.add_theme_color_override("font_pressed_color", Color.WHITE)
-	$LeftSidePnl.add_child(hero_ability_btn)
-
-	ThemeFactory.apply_button_styles(hero_ability_btn, ThemeFactory.primary_button_styles())
-
-	# 初始刷新一次按钮状态（费用够用 + 非运行中 + 未用过 → 可用）。
-	_refresh_hero_ability_button()
+# 创建玩家英雄行动条（技能 + 装备按钮）。挂在 LeftSidePnl 底部居中。
+func _create_hero_action_bar() -> void:
+	hero_action_bar = HeroActionBar.new()
+	hero_action_bar.name = "HeroActionBar"
+	hero_action_bar.setup($LeftSidePnl, Callable(self, "_make_hero_ability_ctx"), detail_panel, hand_card_scene)
 
 	# LeftSidePnl 长按监听（按钮区由按钮自身消费事件，不会冒泡到 panel）。
 	$LeftSidePnl.gui_input.connect(_on_player_hero_panel_gui_input)
 	# EnemyHpPnl 长按监听
 	$EnemyHpPnl.gui_input.connect(_on_enemy_hero_panel_gui_input)
+
+	# LeftSidePnl 接受装备拖入：转给 PlayController.handle_equip。
+	# 子 PHpPnl 会拦截鼠标事件，需同步挂 forwarding 才能在英雄头像上释放。
+	for pnl in [$LeftSidePnl, $LeftSidePnl/PHpPnl]:
+		pnl.set_drag_forwarding(
+			Callable(),
+			Callable(self, "_left_side_pnl_can_drop"),
+			Callable(self, "_left_side_pnl_drop"))
+
+func _make_hero_ability_ctx() -> Dictionary:
+	return {"main": self, "hand_view": hand_view, "hero": Game.player_hero()}
+
+# LeftSidePnl 拖入裁决：仅装备类。play_controller 此时可能尚未创建（_ready 顺序）。
+func _left_side_pnl_can_drop(_pos: Vector2, data) -> bool:
+	if play_controller == null:
+		return false
+	return play_controller.can_equip(data)
+
+func _left_side_pnl_drop(_pos: Vector2, data) -> void:
+	if play_controller == null:
+		return
+	play_controller.handle_equip(data)
 
 # 玩家英雄面板长按 → 详情面板显示英雄名字。
 func _on_player_hero_panel_gui_input(event: InputEvent) -> void:
@@ -480,43 +513,7 @@ func _animate_enemy_hero_panel_release() -> void:
 	var tween := pnl.create_tween()
 	tween.tween_property(pnl, "scale", Vector2.ONE, 0.1)
 
-# 英雄能力按钮点击处理。委托给 HeroAbilityRegistry.activate。
-func _on_hero_ability_pressed() -> void:
-	var hero: HeroState = Game.player_hero()
-	if hero == null:
-		return
-	var ability_id: String = hero.ability_id()
-	if ability_id == "" or not HeroAbilities.has(ability_id):
-		return
-	var ctx := {"main": self, "hand_view": hand_view, "hero": hero}
-	if not HeroAbilities.can_activate(ability_id, ctx):
-		return
-	await HeroAbilities.activate(ability_id, ctx)
-
-# 取按钮显示文字：仅技能名，未注册则回退默认。
-func _get_player_ability_label() -> String:
-	var hero: HeroState = Game.player_hero()
-	if hero == null:
-		return "英雄能力"
-	var ability_id: String = hero.ability_id()
-	if ability_id != "" and HeroAbilities.has(ability_id):
-		return HeroAbilities.get_display_name(ability_id)
-	return "英雄能力"
-
-# 刷新英雄技能按钮 disabled 状态。
-func _refresh_hero_ability_button() -> void:
-	if hero_ability_btn == null:
-		return
-	var hero: HeroState = Game.player_hero()
-	if hero == null:
-		hero_ability_btn.disabled = true
-		return
-	var ability_id: String = hero.ability_id()
-	if ability_id == "" or not HeroAbilities.has(ability_id):
-		hero_ability_btn.disabled = true
-		return
-	var ctx := {"main": self, "hand_view": hand_view, "hero": hero}
-	hero_ability_btn.disabled = not HeroAbilities.can_activate(ability_id, ctx)
+# 英雄能力按钮逻辑已迁移至 HeroActionBar。
 
 
 # ---------------- 入场动画 ----------------

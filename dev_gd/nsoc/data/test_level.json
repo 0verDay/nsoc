@@ -4,9 +4,7 @@
 	  "name": "看门狗",
 	  "faction": 1,
 	  "positions": [
-		{ "row": 1, "col": 0 },
-		{ "row": 1, "col": 1 },
-		{ "row": 1, "col": 2 }
+		{ "row": 1, "col": 1 }
 	  ]
 	},
 	{

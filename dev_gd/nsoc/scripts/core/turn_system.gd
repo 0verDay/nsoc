@@ -100,8 +100,17 @@ func run() -> void:
 	turn_number += 1
 	turn_started.emit()
 	await _run_phase(PLAYER)
+	if _combat == null or _combat.aborted:
+		is_running = false
+		return
 	await _run_spawn_phase()
+	if _combat == null or _combat.aborted:
+		is_running = false
+		return
 	await _run_phase(ENEMY)
+	if _combat == null or _combat.aborted:
+		is_running = false
+		return
 	var reg := _registry()
 	if reg != null:
 		for slot in reg.slots:
@@ -115,12 +124,18 @@ func run() -> void:
 func _run_phase(faction: int) -> void:
 	phase_started.emit(faction)
 	for entry in _iter_phase_cells(faction):
+		# 每次循环开头先检查：aborted 或节点已被 free（退出到菜单）
+		if _combat == null or _combat.aborted:
+			return
 		var c = entry["cell"]
 		var s: BoardSlot = entry["slot"]
 		# 棋盘可能在上一次 await 后被动态移除，跳过已释放的 cell/slot
 		if not is_instance_valid(c) or not is_instance_valid(s) or not is_instance_valid(s.board):
 			continue
 		await _process_cell(faction, c, s)
+		# await 后再次检查，防止 process_cell 内部触发退出
+		if _combat == null or _combat.aborted:
+			return
 	phase_ended.emit(faction)
 
 # 构建本阶段的 (cell, slot) 序列。
@@ -221,6 +236,8 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 	var enemies := board.find_adjacent_enemies(cell, for_enemy)
 	if enemies.size() > 0:
 		await _combat.attack_cells(cell, enemies)
+		if _combat == null or _combat.aborted:
+			return
 		if is_instance_valid(cell) and cell.has_card:
 			cell.has_attacked = true
 		return
@@ -247,26 +264,82 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 				var target_board: BoardModel = result["board_model"]
 				var target_hero: Callable = result.get("hero_resolver", Callable())
 				var target_slot: BoardSlot = reg.get_by_board(target_board) if reg != null else null
-				if is_instance_valid(crossed) and crossed.has_card \
-						and is_instance_valid(target_board) \
-						and target_hero.is_valid() \
+				if is_instance_valid(target_board) and target_hero.is_valid() \
 						and target_slot != null:
-					# 冲锋落地后先触发 vigilance（落点附近可能有敌方警戒单位）
-					await _trigger_vigilance_on_board(crossed, false, target_board)
-					if not is_instance_valid(target_board) or not is_instance_valid(crossed) \
-							or not crossed.has_card:
-						cell.has_attacked = true
-						return
 					# 玩家跨入敌方盘 row=front(=2)，要打敌方盘 row=back(=0)，方向 row 减小 step=-1
 					# 等价：以入侵者视角 = 反向于本盘 step
 					var x_step: int = -BoardModel.step_of(target_slot.faction)
 					var x_goal: int = BoardModel.back_row_of(target_slot.faction)
-					var ended_cell_x = await _run_charge_on_board(crossed,
-						x_step, false, x_goal,
-						target_board, target_hero)
-					if ended_cell_x != null:
-						ended_cell_x.has_attacked = true
-						ended_cell_x.has_charged = true
+					if result.get("deferred_move", false):
+						# 延迟移动：探查敌方盘上的冲锋终点，从原格一次性冲到位（无中间停顿）
+						var source_cell = result.get("source_cell", null)
+						if not is_instance_valid(source_cell) or not source_cell.has_card:
+							cell.has_attacked = true
+							return
+						# 从 crossed（敌方盘 front_row）开始向内探查冲锋终点
+						var probe_dest = crossed
+						var probe_enemy = null
+						var probe_hit_hero: bool = false
+						var probe_r: int = crossed.row + x_step
+						while probe_r >= 0 and probe_r < BoardModel.ROWS:
+							var nc = target_board.get_cell(Vector2(probe_r, crossed.col))
+							if nc == null:
+								break
+							if nc.has_card:
+								if not nc.is_enemy:  # 同阵营（友军）阻挡
+									break
+								probe_enemy = nc
+								break
+							probe_dest = nc
+							if probe_dest.row == x_goal:
+								probe_hit_hero = true
+								break
+							probe_r += x_step
+						# 一次性从源格直接冲到终点，消除中间停顿
+						await _combat.move_card(source_cell, probe_dest)
+						if _combat == null or _combat.aborted:
+							return
+						if not is_instance_valid(probe_dest) or not probe_dest.has_card:
+							cell.has_attacked = true
+							return
+						probe_dest.slot_id = target_slot.id
+						await _trigger_vigilance_on_board(probe_dest, false, target_board)
+						if _combat == null or _combat.aborted:
+							return
+						if not is_instance_valid(target_board) or not is_instance_valid(probe_dest) \
+								or not probe_dest.has_card:
+							cell.has_attacked = true
+							return
+						if probe_enemy != null:
+							var dir_name: String = "bottom" if x_step > 0 else "top"
+							var opp_name: String = "top" if x_step > 0 else "bottom"
+							await _combat.attack_cells(probe_dest, [{
+								"cell": probe_enemy, "dir": dir_name, "opp_dir": opp_name,
+							}])
+							if _combat == null or _combat.aborted:
+								return
+						elif probe_hit_hero and target_hero.is_valid():
+							target_hero.call(probe_dest.attack)
+							await get_tree().create_timer(STEP_INTERVAL).timeout
+						if is_instance_valid(probe_dest) and probe_dest.has_card:
+							probe_dest.has_attacked = true
+							probe_dest.has_charged = true
+					else:
+						if is_instance_valid(crossed) and crossed.has_card:
+							# 冲锋落地后先触发 vigilance（落点附近可能有敌方警戒单位）
+							await _trigger_vigilance_on_board(crossed, false, target_board)
+							if _combat == null or _combat.aborted:
+								return
+							if not is_instance_valid(target_board) or not is_instance_valid(crossed) \
+									or not crossed.has_card:
+								cell.has_attacked = true
+								return
+							var ended_cell_x = await _run_charge_on_board(crossed,
+								x_step, false, x_goal,
+								target_board, target_hero)
+							if ended_cell_x != null:
+								ended_cell_x.has_attacked = true
+								ended_cell_x.has_charged = true
 		else:
 			cell.has_attacked = true
 			if cell.effects.has("charge"):
@@ -307,7 +380,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		if not on_home_board and hero_resolver.is_valid():
 			hero_resolver.call(cell.attack)
 		cell.has_attacked = true
-		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
+		await get_tree().create_timer(STEP_INTERVAL).timeout
 		return
 
 	# 向 goal_row 推进一格
@@ -319,12 +392,14 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		if cell.effects.has("steadfast"):
 			return
 		await _combat.move_card(cell, target)
-		# await 后场景可能已被销毁（退出到菜单），检查节点有效性再继续
+		# await 后检查 aborted 或节点失效
+		if _combat == null or _combat.aborted:
+			return
 		if not is_instance_valid(board) or not is_instance_valid(target):
 			return
 		target.has_attacked = true
-		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
-		if not is_instance_valid(board) or not is_instance_valid(target):
+		await get_tree().create_timer(STEP_INTERVAL).timeout
+		if _combat == null or _combat.aborted or not is_instance_valid(board) or not is_instance_valid(target):
 			return
 		await _trigger_vigilance_on_board(target, for_enemy, board)
 
@@ -363,8 +438,8 @@ func _enemy_auto_cross(cell, slot: BoardSlot, player_slots: Array) -> bool:
 	if attack_candidates.size() > 0:
 		var pick: Dictionary = attack_candidates[randi() % attack_candidates.size()]
 		var tgt = pick["cell"]
-		await _combat.get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
-		if not is_instance_valid(cell) or not cell.has_card:
+		await get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
+		if _combat == null or _combat.aborted or not is_instance_valid(cell) or not cell.has_card:
 			cell.has_attacked = true
 			return true
 		# 敌方单位在敌方盘 row 2(视觉下) 攻击玩家盘 row 0(视觉上)：
@@ -372,6 +447,8 @@ func _enemy_auto_cross(cell, slot: BoardSlot, player_slots: Array) -> bool:
 		await _combat.attack_cells(cell, [{
 			"cell": tgt, "dir": "bottom", "opp_dir": "top",
 		}])
+		if _combat == null or _combat.aborted:
+			return true
 		cell.has_attacked = true
 		return true
 
@@ -387,8 +464,57 @@ func _enemy_auto_cross(cell, slot: BoardSlot, player_slots: Array) -> bool:
 		var ply_slot2: BoardSlot = pick2["slot"]
 		var tgt2 = pick2["cell"]
 		var pb2: BoardModel = ply_slot2.board
-		# 跨入：移动 cell → tgt2，cell.slot_id 更新
+
+		# 冲锋单位：探查玩家盘上的终点，一次性冲到位（无中间停顿）
+		if cell.effects.has("charge") and not cell.has_charged:
+			var probe_dest = tgt2
+			var probe_enemy = null
+			var probe_hit_hero: bool = false
+			var probe_r: int = tgt2.row + ply_step
+			while probe_r >= 0 and probe_r < BoardModel.ROWS:
+				var nc = pb2.get_cell(Vector2(probe_r, col))
+				if nc == null:
+					break
+				if nc.has_card:
+					if nc.is_enemy:  # 同阵营（敌方友军）阻挡，for_enemy=true
+						break
+					probe_enemy = nc
+					break
+				probe_dest = nc
+				if probe_dest.row == ply_back:
+					probe_hit_hero = true
+					break
+				probe_r += ply_step
+			# 一次性从源格直接冲到终点
+			await _combat.move_card(cell, probe_dest)
+			if _combat == null or _combat.aborted:
+				return true
+			if not is_instance_valid(probe_dest) or not probe_dest.has_card:
+				return true
+			probe_dest.slot_id = ply_slot2.id
+			await _trigger_vigilance_on_board(probe_dest, true, pb2)
+			if _combat == null or _combat.aborted:
+				return true
+			if not is_instance_valid(pb2) or not is_instance_valid(probe_dest) or not probe_dest.has_card:
+				return true
+			if probe_enemy != null:
+				await _combat.attack_cells(probe_dest, [{
+					"cell": probe_enemy, "dir": "bottom", "opp_dir": "top",
+				}])
+				if _combat == null or _combat.aborted:
+					return true
+			elif probe_hit_hero and ply_slot2.hero_resolver.is_valid():
+				ply_slot2.hero_resolver.call(probe_dest.attack)
+				await get_tree().create_timer(STEP_INTERVAL).timeout
+			if is_instance_valid(probe_dest) and probe_dest.has_card:
+				probe_dest.has_attacked = true
+				probe_dest.has_charged = true
+			return true
+
+		# 普通单位：跨入 → 落地触发 vigilance → idle
 		await _combat.move_card(cell, tgt2)
+		if _combat == null or _combat.aborted:
+			return true
 		if not is_instance_valid(tgt2) or not tgt2.has_card:
 			return true
 		if not is_instance_valid(ply_slot2) or not is_instance_valid(pb2):
@@ -399,14 +525,6 @@ func _enemy_auto_cross(cell, slot: BoardSlot, player_slots: Array) -> bool:
 		await _trigger_vigilance_on_board(tgt2, true, pb2)
 		if not is_instance_valid(pb2) or not is_instance_valid(tgt2) or not tgt2.has_card:
 			return true
-		# 冲锋单位：在玩家盘上继续穿透到 row=back（玩家英雄）
-		if tgt2.effects.has("charge") and not tgt2.has_charged:
-			var ended = await _run_charge_on_board(
-				tgt2, ply_step, true, ply_back, pb2,
-				ply_slot2.hero_resolver)
-			if ended != null:
-				ended.has_attacked = true
-				ended.has_charged = true
 		return true
 
 	# 3) 所有玩家盘同列都已被敌方单位/空缺占据 → idle
@@ -443,6 +561,8 @@ func _run_front_row_selection(cell: Node) -> String:
 	_front_row_result = ""
 	front_row_action_requested.emit(cell)
 	while not _front_row_resolved:
+		if _combat == null or _combat.aborted:
+			return ""
 		await _combat.get_tree().process_frame
 	return _front_row_result
 
@@ -456,7 +576,9 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 	if cell.row == goal_row:
 		if hero_resolver.is_valid():
 			hero_resolver.call(cell.attack)
-		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
+		await get_tree().create_timer(STEP_INTERVAL).timeout
+		if _combat == null or _combat.aborted:
+			return null
 		return cell
 
 	var dest = cell
@@ -480,11 +602,14 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 
 	if dest != cell:
 		await _combat.move_card(cell, dest)
-		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
-		# await 后节点可能已被销毁（退出到菜单）
+		# await 后检查 aborted 或节点失效
+		if _combat == null or _combat.aborted:
+			return null
 		if not is_instance_valid(board) or not is_instance_valid(dest):
 			return null
 		await _trigger_vigilance_on_board(dest, for_enemy, board)
+		if _combat == null or _combat.aborted:
+			return null
 		if not is_instance_valid(board) or not is_instance_valid(dest) or not dest.has_card:
 			return null
 
@@ -495,9 +620,13 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 		await _combat.attack_cells(dest, [{
 			"cell": enemy_target, "dir": dir_name, "opp_dir": opp_name,
 		}])
+		if _combat == null or _combat.aborted:
+			return null
 	elif hit_hero and hero_resolver.is_valid():
 		hero_resolver.call(dest.attack)
-		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
+		await get_tree().create_timer(STEP_INTERVAL).timeout
+		if _combat == null or _combat.aborted:
+			return null
 
 	return dest
 
@@ -513,8 +642,7 @@ func _run_spawn_phase() -> void:
 		if slot.spawners.advance(slot.board, _card_resolver):
 			any_spawned = true
 	if any_spawned:
-		await _combat.get_tree().create_timer(STEP_INTERVAL).timeout
-
+		await get_tree().create_timer(STEP_INTERVAL).timeout
 # ── 警戒触发 ────────────────────────────────────────────────────────
 func _trigger_vigilance_on_board(entered_cell, mover_for_enemy: bool,
 		board: BoardModel) -> void:
@@ -536,6 +664,8 @@ func _trigger_vigilance_on_board(entered_cell, mover_for_enemy: bool,
 			"dir": d.name,
 			"opp_dir": d.opp,
 		}])
-		# await 后再次检查
+		# await 后检查 aborted 或节点失效
+		if _combat == null or _combat.aborted:
+			return
 		if not is_instance_valid(board) or not is_instance_valid(entered_cell):
 			return

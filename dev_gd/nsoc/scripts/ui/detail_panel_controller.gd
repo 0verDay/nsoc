@@ -11,7 +11,7 @@ var _clip: Control
 var _panel: Panel
 var _long_press_timer: Timer
 var _long_press_target = null
-var _long_press_kind: String = "card"  # "card" | "hero"
+var _long_press_kind: String = "card"  # "card" | "hero" | "equipment"
 var _is_open: bool = false
 
 const LONG_PRESS_TIME: float = 0.4
@@ -154,6 +154,13 @@ func start_long_press_hero(hero_name: String, ability_id: String = "", display_h
 	if _long_press_timer:
 		_long_press_timer.start()
 
+# 装备按钮长按。target 为 EquipmentInstance。
+func start_long_press_equipment(inst) -> void:
+	_long_press_target = inst
+	_long_press_kind = "equipment"
+	if _long_press_timer:
+		_long_press_timer.start()
+
 func cancel_long_press() -> void:
 	if _long_press_timer:
 		_long_press_timer.stop()
@@ -166,6 +173,8 @@ func _on_long_press_timeout() -> void:
 			show_hero(String(t.get("name", "")), String(t.get("ability_id", "")), int(t.get("hp", -1)))
 		else:
 			show_hero(String(t))
+	elif _long_press_kind == "equipment":
+		show_equipment(_long_press_target)
 	else:
 		show_for(_long_press_target)
 
@@ -207,11 +216,16 @@ func show_for(data) -> void:
 		visual.scale = Vector2.ONE
 
 		name_lbl.text = cname
-		cost_lbl.text = "费用: " + str(cdata.cost)
+		if cdata is CardEquipment:
+			cost_lbl.text = "费用：%d   耐久：%d" % [cdata.cost, cdata.durability]
+		else:
+			cost_lbl.text = "费用: " + str(cdata.cost)
 
 		var effect_texts: Array = []
 		for eff in cdata.effects:
 			effect_texts.append(Effects.get_description(eff))
+		if cdata is CardEquipment and cdata.once_per_turn:
+			effect_texts.append("（每回合最多触发一次）")
 		effect_lbl.text = "\n".join(effect_texts) if effect_texts.size() > 0 else "无附加效果"
 
 	if _is_open:
@@ -287,3 +301,61 @@ func hide_panel() -> void:
 
 func get_clip() -> Control:
 	return _clip
+
+# 装备详情：显示装备名 + 费用 + 耐久 + 效果描述。
+# inst 为 EquipmentInstance（带运行时耐久 / 一回合一次状态）。
+func show_equipment(inst) -> void:
+	if inst == null:
+		return
+	var card = inst.card_data
+	if card == null:
+		return
+	if _hand_card_scene == null:
+		push_warning("DetailPanelController.show_equipment: _hand_card_scene is null")
+		return
+	var vbox := _panel.get_node_or_null("DetailVBox")
+	if vbox == null:
+		return
+	var card_center := vbox.get_node_or_null("CardCenter") as Control
+	var name_lbl    := vbox.get_node_or_null("NameLbl")   as Label
+	var hp_lbl      := vbox.get_node_or_null("HpLbl")     as Label
+	var cost_lbl    := vbox.get_node_or_null("CostLbl")   as Label
+	var effect_lbl  := vbox.get_node_or_null("EffectLbl") as Label
+	if card_center == null or name_lbl == null or cost_lbl == null or effect_lbl == null:
+		return
+
+	# 复用卡牌模式视觉：CardCenter 渲染装备牌面。
+	card_center.visible = true
+	card_center.custom_minimum_size = Vector2(0, 240)
+	hp_lbl.visible = false
+	for c in card_center.get_children():
+		c.queue_free()
+
+	var visual = _hand_card_scene.instantiate()
+	card_center.add_child(visual)
+	visual.setup(card, 0)
+	visual.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	visual.scale = Vector2.ONE
+
+	name_lbl.text = card.name
+	cost_lbl.text = "费用：%d   剩余耐久：%d / %d" % [card.cost, inst.durability_left, card.durability]
+
+	var effect_texts: Array = []
+	for eff in card.effects:
+		effect_texts.append(Effects.get_description(eff))
+	if card.once_per_turn:
+		effect_texts.append("（每回合最多触发一次）")
+	effect_lbl.text = "\n".join(effect_texts) if effect_texts.size() > 0 else "无附加效果"
+
+	if _is_open:
+		return
+	_is_open = true
+	_clip.visible = true
+	var w: float = _current_width()
+	_panel.offset_left = -w
+	_panel.offset_right = 0
+	_animating = true
+	var tween := get_tree().create_tween()
+	tween.tween_property(_panel, "offset_left", 0.0, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_panel, "offset_right", w, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(func(): _animating = false)

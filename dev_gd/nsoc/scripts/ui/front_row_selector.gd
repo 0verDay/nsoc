@@ -170,12 +170,12 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 					Vector2(player_front_row, cell.col))
 				if is_instance_valid(front_cell) and not front_cell.has_card:
 					await _combat.move_card(cell, front_cell)
-					if not is_instance_valid(front_cell) or not front_cell.has_card:
+					if _combat.aborted or not is_instance_valid(front_cell) or not front_cell.has_card:
 						return {"handled": true}
 					attacker = front_cell
 		await get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
 		# await 后检查攻击双方节点有效性（可能在动画期间退出到菜单）
-		if not is_instance_valid(attacker) or not attacker.has_card:
+		if _combat.aborted or not is_instance_valid(attacker) or not attacker.has_card:
 			return {"handled": true}
 		if not is_instance_valid(front_enemy) or not front_enemy.has_card:
 			return {"handled": true}
@@ -194,19 +194,24 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 	var is_charge_unit: bool = cell.effects.has("charge") and not cell.has_charged
 	if not is_instance_valid(_combat):
 		return {"handled": true}
+
+	# 冲锋单位：跳过"先移动到敌方前排"的中间动画，由 TurnSystem 探查终点后一次性冲到位
+	if is_charge_unit:
+		return {
+			"handled": true,
+			"deferred_move": true,
+			"source_cell": cell,
+			"crossed_cell": target_cell,
+			"board_model": board_model,
+			"hero_resolver": slot.hero_resolver,
+		}
+
 	await _combat.move_card(cell, target_cell)
 	if not is_instance_valid(target_cell) or not target_cell.has_card:
 		return {"handled": true}
 	target_cell.has_attacked = true
 	target_cell.slot_id = slot.id   # 跨入新盘后更新 slot 归属
 
-	if is_charge_unit:
-		return {
-			"handled": true,
-			"crossed_cell": target_cell,
-			"board_model": board_model,
-			"hero_resolver": slot.hero_resolver,
-		}
 	# 普通单位跨盘：返回落点信息，供调用方触发 vigilance
 	return {"handled": true, "landed_cell": target_cell, "board_model": board_model}
 

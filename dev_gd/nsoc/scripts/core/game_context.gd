@@ -160,6 +160,9 @@ func bootstrap() -> void:
 	# 重置英雄技能回合用量（防止上局退出时 HeroAbilities.reset_turn_usage 未执行导致残留）
 	if has_node("/root/HeroAbilities"):
 		HeroAbilities.reset_turn_usage()
+	# 清空玩家装备（防止上局残留）
+	if has_node("/root/Equipments"):
+		Equipments.clear_all()
 	# 重置回合系统运行状态（防止上局退出时 is_running 残留为 true）
 	if turn != null:
 		turn.is_running = false

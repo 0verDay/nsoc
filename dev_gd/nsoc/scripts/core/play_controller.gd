@@ -14,11 +14,50 @@ func setup(root: Control, cell_scene: PackedScene) -> void:
 	_root = root
 	_cell_scene = cell_scene
 
+# ============================================================================
+# 装备：拖到玩家英雄面板触发。
+# ============================================================================
+
+# 是否允许把装备拖到英雄面板上释放。data 同 hand_card._get_drag_data 的 drag_dict。
+func can_equip(data) -> bool:
+	if typeof(data) != TYPE_DICTIONARY or not data.has("type"):
+		return false
+	if String(data.type) != "装备":
+		return false
+	if Game.turn != null and Game.turn.is_running:
+		return false
+	if not Game.mana.can_spend(int(data.cost)):
+		return false
+	return true
+
+# 处理装备落地：扣费 → equip → 通知 HandView 补手牌。
+# 装备本体卡不入墓不入除外，已转化为英雄身上的运行时实例。
+func handle_equip(data) -> void:
+	if not can_equip(data):
+		return
+	var full = data.get("full_data")
+	if not (full is CardEquipment):
+		return
+	if not Game.mana.spend(int(data.cost)):
+		return
+	var src = data.get("source_card")
+	var slot_index: int = -1
+	if src and is_instance_valid(src):
+		slot_index = src.get_index()
+		src.modulate.a = 0.0
+		src.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		src.set_meta("consumed", true)
+	Equipments.equip(full)
+	hand_consumed.emit(slot_index, src)
+
 # 是否允许在 cell 上释放该卡。供 cell._can_drop_data 调用。
 # 多盘语义：cell 必须属于一个 PLAYER 阵营盘且 slot.allow_player_deploy == true。
 # data 形态约定见 hand_card._get_drag_data 构造的 drag_dict。
 func can_play_at(cell, data) -> bool:
 	if typeof(data) != TYPE_DICTIONARY or not data.has("type"):
+		return false
+	# 装备牌只能拖到玩家英雄面板（handle_equip），不允许放到棋盘格
+	if String(data.get("type", "")) == "装备":
 		return false
 	if Game.turn.is_running:
 		return false
