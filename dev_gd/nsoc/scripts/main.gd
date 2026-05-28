@@ -214,7 +214,12 @@ func _on_hero_died(is_enemy: bool) -> void:
 	_show_game_over(is_enemy)
 
 # ---------------- 退出到菜单 ----------------
-const EXIT_DELAY: float = 1.0
+# 过渡动画：白覆盖渐入 → 切到黑 → 切场景。下一个场景 _ready 接力 黑→透明，
+# 形成 白→黑→白 三段过渡。
+const EXIT_FADE_TO_WHITE: float = 0.25   # 渐入白
+const EXIT_HOLD_WHITE: float = 0.05      # 白色短暂停顿
+const EXIT_FADE_TO_BLACK: float = 0.25   # 白→黑
+const EXIT_DELAY: float = 1.0            # 总等待时间，覆盖战斗协程安全退出
 func _on_exit_to_menu() -> void:
 	if combat != null:
 		combat.abort()
@@ -222,13 +227,18 @@ func _on_exit_to_menu() -> void:
 		Game.turn.is_running = false
 
 	var overlay := ColorRect.new()
-	overlay.color = Color(0.0, 0.0, 0.0, 0.0)
+	overlay.color = Color(1.0, 1.0, 1.0, 0.0)
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	overlay.z_index = 500
 	add_child(overlay)
 	var tw := create_tween()
-	tw.tween_property(overlay, "color:a", 0.7, EXIT_DELAY * 0.5)
+	tw.tween_property(overlay, "color:a", 1.0, EXIT_FADE_TO_WHITE)
+	tw.tween_interval(EXIT_HOLD_WHITE)
+	tw.tween_property(overlay, "color", Color(0.0, 0.0, 0.0, 1.0), EXIT_FADE_TO_BLACK)
+
+	# 标记下一个场景接力播放 黑→透明
+	Game.pending_fade_in_from_black = true
 
 	await get_tree().create_timer(EXIT_DELAY).timeout
 	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
@@ -414,7 +424,8 @@ func _create_player_pile_buttons() -> void:
 	banished_btn.name = "BanishedBtn"
 	banished_btn.text = "除外"
 
-	var btns: Array[Button] = [deck_btn, grave_btn, banished_btn]
+	# 视觉顺序：墓地 | 牌库 | 除外
+	var btns: Array[Button] = [grave_btn, deck_btn, banished_btn]
 	var x_start: float = -BOARD_HALF_W
 	for i in btns.size():
 		var b: Button = btns[i]

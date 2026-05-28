@@ -398,6 +398,11 @@ func _apply_styles() -> void:
 # ── 退出到菜单 ────────────────────────────────────────────────────────
 # 立即标记 combat.aborted = true，所有正在 await 的协程在下一个 resume 点安全退出，
 # 然后等一帧让协程有机会感知 aborted 并提前 return，再切场景。
+# 过渡动画：白覆盖渐入 → 切到黑 → 切场景。下一个场景 _ready 接力 黑→透明，
+# 形成 白→黑→白 三段过渡。
+const EXIT_FADE_TO_WHITE: float = 0.25
+const EXIT_HOLD_WHITE: float = 0.05
+const EXIT_FADE_TO_BLACK: float = 0.25
 const EXIT_DELAY: float = 1.0   # 覆盖 attack_hit(0.45) + death(0.45) + move(0.4) + buffer
 func _on_exit_to_menu() -> void:
 	# 标记中止：所有 combat/turn await 后检查此 flag 并立即 return
@@ -406,15 +411,19 @@ func _on_exit_to_menu() -> void:
 	if Game.turn != null:
 		Game.turn.is_running = false
 
-	# 全屏黑色遮罩，屏蔽用户输入，并渐入表示正在退出
+	# 全屏过渡遮罩：白渐入 → 转黑，下一个场景接力黑→透明
 	var overlay := ColorRect.new()
-	overlay.color = Color(0.0, 0.0, 0.0, 0.0)
+	overlay.color = Color(1.0, 1.0, 1.0, 0.0)
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	overlay.z_index = 500
 	add_child(overlay)
 	var tw := create_tween()
-	tw.tween_property(overlay, "color:a", 0.7, EXIT_DELAY * 0.5)
+	tw.tween_property(overlay, "color:a", 1.0, EXIT_FADE_TO_WHITE)
+	tw.tween_interval(EXIT_HOLD_WHITE)
+	tw.tween_property(overlay, "color", Color(0.0, 0.0, 0.0, 1.0), EXIT_FADE_TO_BLACK)
+
+	Game.pending_fade_in_from_black = true
 
 	# 等待足够时间让所有协程安全退出后再切场景
 	await get_tree().create_timer(EXIT_DELAY).timeout
@@ -498,7 +507,8 @@ func _create_player_pile_buttons() -> void:
 	grave_btn = Button.new(); grave_btn.name = "GraveBtn"; grave_btn.text = "墓地"
 	banished_btn = Button.new(); banished_btn.name = "BanishedBtn"; banished_btn.text = "除外"
 
-	var btns: Array[Button] = [deck_btn, grave_btn, banished_btn]
+	# 视觉顺序：墓地 | 牌库 | 除外
+	var btns: Array[Button] = [grave_btn, deck_btn, banished_btn]
 	var x_start: float = BOARD_SHIFT - BOARD_HALF_W
 	for i in btns.size():
 		var b: Button = btns[i]

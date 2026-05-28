@@ -18,6 +18,22 @@ var is_enemy: bool = false
 # 该 cell 所属的 BoardSlot id。由 BoardSlotFactory / setup 注入。
 # 用于 PlayController / TurnSystem 反查 slot.faction / slot.allow_player_deploy 等。
 var slot_id: String = ""
+# 该 cell 上当前单位的"原属盘"id（即单位最初被生成/部署的盘）。
+# 与 slot_id 区别：slot_id 是格子物理位置所属盘；owner_slot_id 是单位归属。
+# 跨盘冲锋 / 玩家跨盘移动 时，slot_id 会被更新为新盘，owner_slot_id 保持不变，
+# 保证单位死亡时入"原属盘"墓地，而非当前位置盘墓地（详见 PlayController.handle_unit_death）。
+# 空串表示尚未注入归属（如 phantom / 初始空格）。
+var owner_slot_id: String = ""
+
+# 单位"出处"枚举：决定死亡时去向。
+#   "hand"    = 玩家手牌部署 → Game.deck.graveyard（不论部署到主盘还是 ally 盘）
+#   "spawner" = 该盘 spawner 生成 → owner slot 的 graveyard
+#   "initial" = 关卡初始铺盘（json initial_units）→ owner slot 的 graveyard
+#   ""        = 未设置（phantom / 空格）
+const ORIGIN_HAND: String = "hand"
+const ORIGIN_SPAWNER: String = "spawner"
+const ORIGIN_INITIAL: String = "initial"
+var origin: String = ""
 var card_name: String = ""
 var attack: int = 0
 # 以单位视角 side 存储：{front, back, left, right}
@@ -107,7 +123,7 @@ func set_selection_highlight(enabled: bool) -> void:
 			int(_HIGHLIGHT_BORDER), 20))
 	add_child(frame)
 
-func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> void:
+func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = [], owner_id: String = "", p_origin: String = "") -> void:
 	has_card = true
 	is_phantom = false
 	inner_panel.modulate.a = 1.0
@@ -117,6 +133,11 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> vo
 	health = Orientation.clone_side_health(hp)
 	effects = effects_in.duplicate()
 	is_enemy = enemy
+	# 归属盘：显式传入则用之（跨盘 move 透传），否则取格子当前所在盘 = 单位起源盘
+	owner_slot_id = owner_id if owner_id != "" else slot_id
+	# 出处：显式传入用之；不传则保留旧值（兼容旧调用，避免覆盖已有 origin）
+	if p_origin != "":
+		origin = p_origin
 	name_lbl.text = cname
 	atk_lbl.text = str(attack)
 
@@ -164,6 +185,8 @@ func _do_clear() -> void:
 	is_enemy = false
 	is_phantom = false
 	has_charged = false
+	owner_slot_id = ""
+	origin = ""
 	inner_panel.visible = false
 	inner_panel.scale = Vector2.ONE
 	inner_panel.modulate.a = 1.0

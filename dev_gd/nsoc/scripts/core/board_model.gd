@@ -116,4 +116,5 @@ func populate_initial_units(configs: Array, card_resolver: Callable,
 		for pos in cfg.positions:
 			var cell = get_cell(pos)
 			if cell:
-				cell.set_card(cdata.name, cdata.attack, cdata.health, enemy_flag, cdata.effects)
+				# origin = "initial"：关卡初始铺盘。死亡入 cell 所属盘墓地。
+				cell.set_card(cdata.name, cdata.attack, cdata.health, enemy_flag, cdata.effects, "", "initial")

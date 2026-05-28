@@ -85,6 +85,10 @@ func handle_global_release() -> void:
 	if _dragging:
 		_bounce_from_boundary()
 		_dragging = false
+	else:
+		# 非拖拽情况下也要还原按压缩放，否则点击装备/技能按钮后面板停留在 1.08x。
+		# _animate_release 内部用 ONE 判断不会重复触发动画。
+		_animate_release()
 
 # 动画期间阻断 / 恢复拖拽（由 HeroActionBar 发信号时调用）。
 func set_drag_blocked(blocked: bool) -> void:
@@ -239,5 +243,6 @@ func _animate_press() -> void:
 
 func _animate_release() -> void:
 	if not is_instance_valid(_panel): return
+	if _panel.scale == Vector2.ONE: return
 	var tween := _panel.create_tween()
 	tween.tween_property(_panel, "scale", Vector2.ONE, 0.1)

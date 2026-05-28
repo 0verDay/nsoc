@@ -75,14 +75,18 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 		# 退出到菜单时 aborted=true 或节点已被 free
 		if aborted or not is_instance_valid(self):
 			return
-		# 收集 victim 快照（card_name / is_enemy）供 handle_kills 使用，
-		# 因 clear_card 会清空这些字段。
+		# 收集 victim 快照（card_name / is_enemy / owner_slot_id / origin）供 handle_kills 使用，
+		# 因 clear_card 会清空这些字段。owner_slot_id / origin 用于 terrify 等 on_kill 效果
+		# 准确路由到对应墓地（跨盘冲锋单位 cell.slot_id 已变，不能再用）。
 		var victims: Array = []
 		for dc in dead_cells:
 			var snap := {
 				"cell": dc,
 				"card_name": dc.card_name,
 				"is_enemy": dc.is_enemy,
+				"owner_slot_id": dc.owner_slot_id,
+				"slot_id": dc.slot_id,
+				"origin": dc.origin,
 			}
 			_play_controller.handle_unit_death(dc)
 			if dc.has_card:
@@ -99,6 +103,9 @@ func move_card(start, end) -> void:
 	var is_e: bool = start.is_enemy
 	var effs: Array = start.effects
 	var charged: bool = start.has_charged
+	# 跨盘移动时也保留单位"原属盘"和"出处"，死亡按归属/出处入墓
+	var owner_id: String = start.owner_slot_id
+	var origin_str: String = start.origin
 
 	var visual = _cell_scene.instantiate()
 	_root.add_child(visual)
@@ -143,5 +150,5 @@ func move_card(start, end) -> void:
 	if aborted or not is_instance_valid(self):
 		return
 
-	end.set_card(cname, atk, hp, is_e, effs)
+	end.set_card(cname, atk, hp, is_e, effs, owner_id, origin_str)
 	end.has_charged = charged

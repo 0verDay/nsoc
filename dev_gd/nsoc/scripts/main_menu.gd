@@ -85,6 +85,28 @@ func _ready() -> void:
 		_options_btn.pressed.connect(_on_options_pressed)
 	# 延迟一帧待 layout 稳定后记录初始状态、装配转场。
 	call_deferred("_setup_transition")
+	# 退出到菜单的 黑→透明 接力（白→黑→白 三段过渡的最后一段）
+	_maybe_play_fade_in_from_black()
+
+# 由 main / test_main 在退出时设置 Game.pending_fade_in_from_black=true，
+# 本场景 _ready 接力播放黑色 overlay 渐隐，组成 白→黑→白 完整过渡。
+const FADE_IN_FROM_BLACK_DURATION: float = 0.35
+func _maybe_play_fade_in_from_black() -> void:
+	if not has_node("/root/Game"):
+		return
+	if not Game.pending_fade_in_from_black:
+		return
+	Game.pending_fade_in_from_black = false
+	var overlay := ColorRect.new()
+	overlay.name = "_FadeInFromBlackOverlay"
+	overlay.color = Color(0.0, 0.0, 0.0, 1.0)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 500
+	add_child(overlay)
+	var tw := create_tween()
+	tw.tween_property(overlay, "color:a", 0.0, FADE_IN_FROM_BLACK_DURATION)
+	tw.tween_callback(overlay.queue_free)
 
 # 与 main.gd:264 一致：白底 + 浅灰边 + 圆角 0
 func _apply_bg_style() -> void:

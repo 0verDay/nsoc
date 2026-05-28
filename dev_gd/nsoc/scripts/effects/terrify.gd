@@ -20,25 +20,33 @@ func on_kill(_attacker_cell, victim_cells: Array, ctx) -> void:
 		if v == null:
 			continue
 		var v_name: String = v.card_name if typeof(v) == TYPE_DICTIONARY else v.card_name
-		var v_is_enemy: bool = v.is_enemy if typeof(v) == TYPE_DICTIONARY else v.is_enemy
-		var v_slot_id: String = ""
-		if typeof(v) != TYPE_DICTIONARY:
-			v_slot_id = v.slot_id
+		# 取原属盘 id 与 origin（victim 快照含 owner_slot_id / origin）
+		var v_owner_id: String = ""
+		var v_origin: String = ""
+		if typeof(v) == TYPE_DICTIONARY:
+			v_owner_id = v.get("owner_slot_id", "")
+			if v_owner_id == "":
+				v_owner_id = v.get("slot_id", "")
+			v_origin = v.get("origin", "")
+		else:
+			v_owner_id = v.owner_slot_id if v.owner_slot_id != "" else v.slot_id
+			v_origin = v.origin
 		var cdata = ctx.game.get_card(v_name)
 		if cdata == null:
 			continue
-		if v_is_enemy:
-			# 敌方阵营单位：从所属 slot 的 graveyard 取出 → banished
-			var slot: BoardSlot = ctx.game.registry.get_by_id(v_slot_id) if ctx.game.registry != null else null
-			if slot != null:
-				if slot.graveyard.has(cdata):
-					slot.graveyard.erase(cdata)
-					slot.pile_changed.emit("graveyard")
-				slot.banish(cdata)
-		else:
-			# 玩家阵营单位：从 game.deck 取出 → banished
+		# origin == "hand" → game.deck（玩家手牌部署的单位）
+		# 其他 → 原属盘 slot.graveyard
+		if v_origin == "hand":
 			var deck = ctx.game.deck
 			if deck.graveyard.has(cdata):
 				deck.graveyard.erase(cdata)
 				deck.pile_changed.emit("graveyard")
 			deck.banish(cdata)
+		else:
+			# 从原属盘 graveyard 取出 → banished。原属盘已销毁则跳过。
+			var slot: BoardSlot = ctx.game.registry.get_by_id(v_owner_id) if ctx.game.registry != null else null
+			if slot != null:
+				if slot.graveyard.has(cdata):
+					slot.graveyard.erase(cdata)
+					slot.pile_changed.emit("graveyard")
+				slot.banish(cdata)
