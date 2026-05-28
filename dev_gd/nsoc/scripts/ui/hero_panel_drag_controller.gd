@@ -36,6 +36,10 @@ var _drag_prev_pos: Vector2 = Vector2.ZERO
 var _drag_w: float = 0.0
 var _drag_h: float = 0.0
 var _snap_tween: Tween = null
+# 装备面板展开动画期间阻断拖拽
+var _drag_blocked: bool = false
+# Press 是否来自 panel 本身（防止手牌拖拽的 motion 事件误触发面板拖拽）
+var _press_received: bool = false
 
 func setup(deps: Dictionary) -> void:
 	_panel              = deps.get("panel")
@@ -44,7 +48,7 @@ func setup(deps: Dictionary) -> void:
 	_hero_args_resolver = deps.get("long_press_hero_args", Callable())
 
 func _process(_delta: float) -> void:
-	if not _dragging:
+	if _drag_blocked or not _dragging:
 		return
 	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_bounce_from_boundary()
@@ -55,6 +59,8 @@ func _process(_delta: float) -> void:
 
 # ── 公开输入入口 ──────────────────────────────────────────────────────
 func on_gui_input(event: InputEvent) -> void:
+	if _drag_blocked:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_on_press(event.global_position)
@@ -62,6 +68,8 @@ func on_gui_input(event: InputEvent) -> void:
 			_on_release()
 
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		if not _press_received:
+			return   # motion 来自 panel 以外的按下（如手牌拖拽），忽略
 		if not _dragging:
 			if event.global_position.distance_to(_drag_start_pos) > DRAG_THRESHOLD:
 				_dragging = true
@@ -73,14 +81,25 @@ func on_gui_input(event: InputEvent) -> void:
 
 # 外部需要访问按压松开时机（_input 的全局松开）
 func handle_global_release() -> void:
+	_press_received = false
 	if _dragging:
 		_bounce_from_boundary()
+		_dragging = false
+
+# 动画期间阻断 / 恢复拖拽（由 HeroActionBar 发信号时调用）。
+func set_drag_blocked(blocked: bool) -> void:
+	_drag_blocked = blocked
+	if blocked and _dragging:
+		# 立即结束当前拖拽，弹回边界
+		_bounce_from_boundary()
+		_animate_release()
 		_dragging = false
 
 # ── 按下 / 松开 ───────────────────────────────────────────────────────
 func _on_press(global_pos: Vector2) -> void:
 	if not is_instance_valid(_panel):
 		return
+	_press_received = true
 	if _snap_tween and _snap_tween.is_running():
 		_snap_tween.kill()
 	_snap_tween = null
@@ -102,6 +121,7 @@ func _on_press(global_pos: Vector2) -> void:
 	_animate_press()
 
 func _on_release() -> void:
+	_press_received = false
 	if _dragging:
 		_bounce_from_boundary()
 	else:

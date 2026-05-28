@@ -39,6 +39,7 @@ Game (autoload "game_context.gd")
 
 Effects       (autoload) 扫描 scripts/effects/*.gd 自注册
 HeroAbilities (autoload) 扫描 scripts/abilities/*.gd 自注册
+Equipments    (autoload "equipment_manager.gd") 玩家装备实例集合
 QuitConfirm   (autoload) 全局退出确认弹窗
 ```
 
@@ -58,13 +59,19 @@ QuitConfirm   (autoload) 全局退出确认弹窗
 
 **Game 辅助方法**：`main_player_slot()` / `player_hero()` / `enemy_main_hero()` / `enemy_main_slot()`
 
-**bootstrap() 流程**：读 `hero.json` → 填 `hero_specs`；生成 `user://battle_cards.json`；加载 `all_cards.json` 到 `card_db`；解析关卡写 `level_data`；初始化 deck/mana/counters；消费 `pending_chapter_config` / `pending_level_path`。
+**BoardSlotFactory**（`scripts/core/board_slot_factory.gd`）：集中封装"建 BoardModel + 实例化 cell + 挂入 grid + 配 spawners + 摆初始单位"步骤：
+- `create_main(id, faction, role, grid, bg, hero_panel, cell_scene, hero_spec, level_section, on_cell_created)` — 建标准 3×3 slot，自动入 registry
+- `destroy(slot)` — 断信号 → 场上残存单位路由到主盘除外区 → 注销 registry → 释放子节点
+
+**bootstrap() 流程**：读 `hero.json` → 填 `hero_specs`；生成 `user://battle_cards.json`；加载 `all_cards.json` 到 `card_db`；解析关卡写 `level_data`；初始化 deck/mana/counters；`Equipments.clear_all()`；消费 `pending_chapter_config` / `pending_level_path`。
 
 ### 3.2 卡牌生命周期与多阵营牌堆
 
 `DeckManager` 管理玩家牌堆 3 个数组：draw_pile / graveyard / banished。`pile_changed` 信号驱动 UI 刷新。
 
 敌方阵营每个 `BoardSlot` 自持 graveyard / banished，敌方死亡牌入对应 slot 的 graveyard，`terrify` 再转入 slot.banished。`EnemySidePanelManager` / `AllySidePanelManager` 绑定具体 slot 实例展示。
+
+**装备牌生命周期**：玩家拖拽装备牌到英雄面板 → `PlayController.handle_equip` 扣费 → `Equipments.equip(card_data)` 建 `EquipmentInstance`，**装备卡本体不入墓** → 耐久归零时 `EquipmentManager._on_inst_changed` 自动调 `Game.deck.send_to_graveyard` 并 `unequip`。
 
 ### 3.3 效果注册表与多态钩子
 
@@ -74,7 +81,7 @@ QuitConfirm   (autoload) 全局退出确认弹窗
 
 ### 3.4 战斗系统
 
-`CombatSystem.attack_cells`：攻击动画 → 扣对位面血量（frail=四面同扣）→ 收集死亡 → 快照 victim → clear_card → on_kill。
+`CombatSystem.attack_cells`：攻击动画 → 扣对位面血量（frail=四面同扣，通过 `Orientation.abs_to_side` 将攻击绝对方向转为 defender 的 side 后扣血）→ 收集死亡 → 快照 victim → clear_card → on_kill。
 
 `CombatSystem.move_card`：单段 sine 缓动 + 抛物 sin(π·t) 拱起。
 
@@ -104,17 +111,21 @@ QuitConfirm   (autoload) 全局退出确认弹窗
 
 `PlayController.can_play_at` 规则唯一仲裁。`handle_drop` 流程：校验 → 扣费 → 法术结算 / 单位飞入 → on_play。
 
+装备牌不走 `can_play_at`，走独立的 `can_equip` + `handle_equip`（拖到 LeftSidePnl/英雄面板触发）。
+
 ### 3.7 UI 控制器（战斗场景）
 
 **main.gd / TestMain.tscn 共用基础控制器：**
 - `HandView` — 手牌渲染 + 抽牌动画
-- `DetailPanelController` — 长按大图
+- `DetailPanelController` — 长按大图，支持 `start_long_press_equipment(inst)` 展示装备详情
 - `SidePanelManager(center_x_offset)` — 玩家牌堆/墓地/除外，支持水平定位
 - `EnemySidePanelManager(center_x_offset)` — 绑定 BoardSlot 展示敌方墓地/除外，支持 `update_clip_center_x()` 动态跟随棋盘移动
 - `AllySidePanelManager(center_x_offset)` — 绑定 BoardSlot 展示友军墓地/除外，从底部滑入；`set_slot(slot)` 运行时切换数据源
 - `SettingsPanelController` — 选项面板，`z_index=200` 覆盖所有 UI；参数化 resume/exit/can_open
 - `ThemeFactory / EffectBadgeFactory` — 视觉工厂
 - `SideBoardUI` (`scripts/ui/side_board_ui.gd`) — 侧边棋盘视觉容器封装
+- `HeroActionBar` (`scripts/ui/hero_action_bar.gd`) — 玩家英雄行动条（挂在 LeftSidePnl 内），顶部英雄技能按钮 + 下方已装备按钮列表；装备打出/耐久归零时触发三阶段面板扩展/收缩动画（渐隐→位移→渐显）；监听 `Equipments.equipment_added/removed/changed` 信号动态增删按钮
+  - `show_equip_drag_highlight()` / `hide_equip_drag_highlight()` — 装备拖拽期间高亮英雄面板并临时提升 z_index(100)
 
 **TestMain 专属控制器（已抽出独立文件，可未来迁移到 main）：**
 - `FrontRowSelector` (`scripts/ui/front_row_selector.gd`)
@@ -124,6 +135,7 @@ QuitConfirm   (autoload) 全局退出确认弹窗
 - `HeroPanelDragController` (`scripts/ui/hero_panel_drag_controller.gd`)
   - LeftSidePnl 拖拽：阈值检测 → `_apply_drag` → 边界反弹（spring tween）
   - `on_gui_input(event)` 接入 gui_input 信号；`handle_global_release()` 接入全局 _input
+- `BoardOrchestrator` (`scripts/core/board_orchestrator.gd`) — 详见 §3.11
 
 **注意：** `PHpPnl`（玩家血量面板）在两个场景的 tscn 里均设 `mouse_filter = 2`（IGNORE），避免遮挡 LeftSidePnl 的拖拽/长按检测。
 
@@ -132,12 +144,60 @@ QuitConfirm   (autoload) 全局退出确认弹窗
 - `all_cards.json` 卡牌原型库；`review_cards.json` 备战专用；`hero.json` 英雄表；`test_level.json` 默认测试关卡
 - `campaigns.json` 战役表：当前 3 个战役（c1 测试·三国、c2、c3），c1 含长坂坡/威震华夏/街亭三章节
 - `data/chapters/changbanpo.json`、`weizhenhuaxia.json` — 章节固定牌堆/关卡配置
-- `data_loader.gd` 静态读 JSON → CardBase/CardUnit/CardSpell + 关卡字典 + 英雄字典
+- `data_loader.gd` 静态读 JSON → CardBase/CardUnit/CardSpell/**CardEquipment** + 关卡字典 + 英雄字典
+- 卡牌 JSON health 字段以**玩家视角** top/bottom/left/right 书写；`DataLoader._parse_card` 调 `Orientation.health_player_abs_to_side` 转为 side（front/back/left/right）后存入 `CardUnit.health`
+- 装备 JSON 格式：`{"type":"装备","durability":N,"once_per_turn":bool,"effects":[...]}`
 - `Game.pending_chapter_config` 非空时 bootstrap 走章节固定牌堆路径；`pending_level_path` 非空时覆盖关卡 JSON 路径
 
 ### 3.9 卡组持久化
 
 `scripts/core/deck_storage.gd`：`user://decks.json`，接口 `load_deck / save_deck`。
+
+### 3.10 装备系统
+
+**卡牌类型**：`CardEquipment extends CardBase`，额外字段 `durability: int`、`once_per_turn: bool`。
+
+**EquipmentInstance**（`scripts/core/equipment_instance.gd`）：
+- 字段：`card_data: CardEquipment`、`durability_left: int`、`used_this_turn: bool`
+- `can_activate()`：非回合运行中 + once_per_turn 未触发 + 耐久未归零
+- `activate(ctx)`：依次调 `Effects.trigger_play(eff, card_data, ctx)` → `durability_left -= 1` → 标记 used → 发 `changed` 信号
+- `reset_turn()`：清 `used_this_turn`（每回合结束由 `Equipments.reset_turn_usage()` 调用）
+
+**EquipmentManager / Equipments autoload**（`scripts/core/equipment_manager.gd`）：
+- `equip(card_data)` → 创建实例，发 `equipment_added`
+- `unequip(inst)` → 移除实例，发 `equipment_removed`
+- 耐久归零：`_on_inst_changed` 自动调 `Game.deck.send_to_graveyard` + `unequip`
+- `reset_turn_usage()` — 由 `main.gd` 在 end_turn 后调用
+- `clear_all()` — 由 `Game.bootstrap()` 调用，防上局残留
+- 信号：`equipment_added(inst)` / `equipment_removed(inst)` / `equipment_changed(inst)`
+
+**装备出牌流程**：拖拽 HandCard（type="装备"）到 LeftSidePnl → `HeroActionBar.show_equip_drag_highlight()` 高亮 → 释放 → `PlayController.handle_equip(data)` → `Equipments.equip(full)` → `hand_consumed` → `HeroActionBar._on_equipment_added` 播面板扩展动画。
+
+### 3.11 BoardOrchestrator
+
+`BoardOrchestrator`（`scripts/core/board_orchestrator.gd`）——关卡棋盘装配编排器：
+
+- `setup(deps)` / `boot()` — 按 `Game.level_data.boards` 遍历 enabled=true 的盘，主棋盘用场景树容器，附盘用 `SideBoardUI.build` 动态创建 UI 容器，调 `BoardSlotFactory.create_main` 建 slot
+- `add_board(id)` / `remove_board(id)` / `toggle(id)` — 运行时增删附盘，附带滑入/滑出动画（`SLIDE_DURATION=0.5s`）
+- **board_events** — `level_data["board_events"]` 格式 `[{"turn":N,"add":[slot_idx,...],"remove":[...]}]`，`turn_started` 信号触发 `_on_turn_started` 自动执行
+- `setup_intro_nodes(slide_distance)` — 供 TestMain 入场动画使用，返回 `{slides, fades}` 并入主场景 tween
+- 附盘 ENEMY：自动挂 `EnemySidePanelManager`；附盘 ALLY：自动挂 `AllySidePanelManager`
+- `_exit_tree` 自动调 `_cleanup_all` — 断信号、销毁全部 slot、清 `Game.turn` 残留状态
+- 信号：`board_added(slot)` / `board_removed(slot)` / `side_panel_long_press_requested(payload)` / `side_panel_long_press_canceled`
+
+### 3.12 Orientation（方向映射工具）
+
+`Orientation`（`scripts/core/orientation.gd`）——side ↔ abs 映射工具：
+
+| 概念 | 值 | 说明 |
+|---|---|---|
+| side（阵营领域） | front/back/left/right | 单位自身视角，CardUnit.health 存储格式 |
+| abs（屏幕绝对方向） | top/bottom/left/right | 棋盘/JSON 书写视角 |
+
+- 玩家朝上：front=top, back=bottom；敌方朝下：front=bottom, back=top
+- `health_player_abs_to_side(hp)` — DataLoader 读 JSON 后调用，转换 top→front / bottom→back
+- `abs_to_side(abs_dir, is_enemy)` — CombatSystem 扣血时用，保证攻击方向正确命中 defender 面
+- `side_to_abs(side, is_enemy)` — 反向转换（UI 显示用）
 
 ## 4. 主菜单与转场
 
@@ -172,6 +232,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 | `terrify` | 破胆 | on_kill：击杀目标送入除外 |
 | `battle_hardened` | 历战 | on_kill：攻击力+N |
 | `fierce_combat` | 酣战 | on_kill：四维各+N |
+| `gain_mana_1` | 增益 | on_play：获得 1 点费用（`Game.mana.gain(1)`），装备"测试刀"用 |
 
 ## 8. 英雄技能清单
 
@@ -192,6 +253,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 | 名称 | 类型 | 费用 | 攻击 | 四维 | 效果 |
 |---|---|---|---|---|---|
+| 测试刀 | 装备 | 1 | — | — | gain_mana_1（耐久2，每回合限用1次） |
 | 填线宝宝 | 单位 | 1 | 1 | 1/1/1/1 | — |
 | 灰烬填线宝宝 | 单位 | 2 | 2 | 2/2/2/2 | ash |
 | pro哥 | 单位 | 10 | 10 | 10/10/10/10 | ash, autophagy |
@@ -202,11 +264,15 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 | 强化 | 法术 | 1 | — | — | empower |
 | 占位牌#1~#20 | 单位 | N | N | N/N/N/N | — |
 
+> 四维列为玩家视角 top/bottom/left/right 顺序（JSON 书写规约），实际存储为 front/back/left/right（side 视角）。
+
 ## 11. 工作流
 
 **新效果**：`scripts/effects/<id>.gd` 继承 Effect，实现钩子，重启自动注册。
 
 **新卡牌**：`all_cards.json` 加条目，引用已注册效果 ID；备战界面同步加 `review_cards.json`。
+
+**新装备**：`all_cards.json` 加 `{"type":"装备","cost":N,"durability":N,"once_per_turn":true/false,"effects":[...]}` 条目；确保 effects 对应的 `on_play` 钩子已实现（装备激活调 `on_play`）。
 
 **新英雄技能**：`scripts/abilities/<id>.gd` 继承 HeroAbility，重启自动注册。
 
@@ -214,16 +280,20 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 **新二级面板**：继承 SecondaryPanel，加 BackBtn，在 `MainMenu.SECONDARY_PANEL_SCENES` 注册。
 
-**接入多棋盘**：`Game.turn.register_extra_board(board_model, hero_resolver)`，`FrontRowSelector.register_target(id, bg, hero)`，销毁时对应 unregister；也可直接向 `Game.registry` add/remove `BoardSlot`。
+**接入多棋盘**：`Game.turn.register_extra_board(board_model, hero_resolver)`，`FrontRowSelector.register_target(id, bg, hero)`，销毁时对应 unregister；也可直接向 `Game.registry` add/remove `BoardSlot`。或用 `BoardOrchestrator.add_board(id)` / `remove_board(id)` / `toggle(id)` 运行时增删附盘。
 
 **新战役章节**：`campaigns.json` 加 chapter 条目，新建 `scenes/chapters/<Name>.tscn` 和 `data/chapters/<name>.json`（含 initial_units / spawners / hero_deck 等），在章节场景写入 `Game.pending_chapter_config` 后切场景。
 
 ## 12. 关键设计权衡
 
 - **配置即代码**：效果/技能通过文件名=ID 自动注册，零中央注册表
-- **规则单点**：`PlayController.can_play_at` 出牌规则唯一仲裁
+- **规则单点**：`PlayController.can_play_at` 出牌规则唯一仲裁；`can_equip` 装备规则唯一仲裁
 - **BoardRegistry + BoardSlot**：取代旧 `Game.board/hero/spawners` 单例，所有棋盘上下文聚合为 BoardSlot，统一增删查；`TurnSystem` / `FrontRowSelector` 通过 registry 遍历，主棋盘与额外棋盘复用同一逻辑
+- **BoardSlotFactory**：把"建 board + cell + hero + spawners + 入 registry"封装为单一静态调用，`destroy` 保证完整清理；`BoardOrchestrator` 在工厂之上编排 UI 容器与动画
+- **BoardOrchestrator**：取代旧 SideBoardController，根据 `level_data.boards` 装配全部盘（主棋盘用场景树容器，附盘动态 `SideBoardUI.build`）；`add_board/remove_board/toggle` 带滑入/滑出动画；`board_events` 按回合编号触发增删盘；`_exit_tree` 自动 `_cleanup_all`
+- **Orientation 工具类**：side（front/back/left/right）↔ abs（top/bottom/left/right）映射；JSON 以玩家视角 abs 书写，`DataLoader` 调 `health_player_abs_to_side` 转为 side；`CombatSystem` 扣血时再做 `abs_to_side` 转换，避免阵营反向导致扣错面
 - **每盘自持牌堆**：敌方 BoardSlot 自带 graveyard/banished + pile_changed 信号，取代旧 `DeckManager.enemy_graveyard/enemy_banished` 字段；EnemySidePanelManager / AllySidePanelManager 绑定具体 slot
+- **装备系统 autoload**：`Equipments` autoload 持有 `EquipmentInstance[]`；装备卡打出时转化为实例（不入墓/除外），耐久归零时自动入墓 + unequip；`bootstrap` 调 `Equipments.clear_all()` 防上局残留；`HeroActionBar` 监听信号动态显示/隐藏装备按钮并驱动面板扩展动画
 - **前排选择挂件化**：`FrontRowSelector` 独立文件，TestMain 装配，未来 Main 可直接引入
 - **clear_card 之前快照**：on_kill 拿 victim 快照而非 cell 字段
 - **EffectContext 自动路由阵营**：效果脚本只调 ctx 接口，不感知 is_enemy

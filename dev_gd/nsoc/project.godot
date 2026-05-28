@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 
 Effects="*res://scripts/core/effect_registry.gd"
 HeroAbilities="*res://scripts/core/hero_ability_registry.gd"
+Equipments="*res://scripts/core/equipment_manager.gd"
 Game="*res://scripts/core/game_context.gd"
 QuitConfirm="*res://scripts/core/quit_confirm.gd"
 

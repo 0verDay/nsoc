@@ -43,10 +43,12 @@ func on_kill(attacker_cell, victim_cells: Array, ctx) -> void:
 		return
 	# 同列同行皆可（冲阵不限方向，沿用 combat.move_card 的弧线动画）
 	await combat.move_card(attacker_cell, dest)
+	if combat.aborted or not dest.has_card:
+		return
 
 	# 警戒反应；可能打死本单位
 	await ctx.trigger_vigilance(dest)
-	if not dest.has_card:
+	if combat.aborted or not dest.has_card:
 		return
 
 	# 仍存活：检查相邻敌方，若有则发动一次攻击

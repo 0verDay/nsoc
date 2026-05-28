@@ -6,6 +6,9 @@ extends Node
 
 signal hand_card_long_press_requested(card_data)
 signal hand_card_long_press_canceled
+# 装备拖拽状态转发
+signal equip_drag_started
+signal equip_drag_ended
 
 const MIN_HAND_SIZE: int = 5
 const DRAW_ANIM_DURATION: float = 0.35
@@ -54,6 +57,10 @@ func _play_draw_anim_append() -> void:
 		c.long_press_requested.connect(_on_card_long_press_requested)
 	if c.has_signal("long_press_canceled"):
 		c.long_press_canceled.connect(_on_card_long_press_canceled)
+	if c.has_signal("equip_drag_started"):
+		c.equip_drag_started.connect(_on_card_equip_drag_started)
+	if c.has_signal("equip_drag_ended"):
+		c.equip_drag_ended.connect(_on_card_equip_drag_ended)
 	c.modulate.a = 0.0  # 初始隐藏，飞入完成后恢复
 	# 等一帧让 Container 完成 reflow，能拿到正确 global_position
 	await get_tree().process_frame
@@ -98,6 +105,10 @@ func _spawn_card_at(slot_index: int) -> void:
 		c.long_press_requested.connect(_on_card_long_press_requested)
 	if c.has_signal("long_press_canceled"):
 		c.long_press_canceled.connect(_on_card_long_press_canceled)
+	if c.has_signal("equip_drag_started"):
+		c.equip_drag_started.connect(_on_card_equip_drag_started)
+	if c.has_signal("equip_drag_ended"):
+		c.equip_drag_ended.connect(_on_card_equip_drag_ended)
 	if slot_index >= 0 and slot_index < _container.get_child_count():
 		_container.move_child(c, slot_index)
 
@@ -134,6 +145,10 @@ func _play_draw_animation(slot_index: int, placeholder) -> void:
 		c.long_press_requested.connect(_on_card_long_press_requested)
 	if c.has_signal("long_press_canceled"):
 		c.long_press_canceled.connect(_on_card_long_press_canceled)
+	if c.has_signal("equip_drag_started"):
+		c.equip_drag_started.connect(_on_card_equip_drag_started)
+	if c.has_signal("equip_drag_ended"):
+		c.equip_drag_ended.connect(_on_card_equip_drag_ended)
 	# 移到占位卡之前，free 占位卡后位置即正确
 	if ph_idx < _container.get_child_count() - 1:
 		_container.move_child(c, ph_idx)
@@ -194,3 +209,9 @@ func _on_card_long_press_requested(data) -> void:
 
 func _on_card_long_press_canceled() -> void:
 	hand_card_long_press_canceled.emit()
+
+func _on_card_equip_drag_started() -> void:
+	equip_drag_started.emit()
+
+func _on_card_equip_drag_ended() -> void:
+	equip_drag_ended.emit()
