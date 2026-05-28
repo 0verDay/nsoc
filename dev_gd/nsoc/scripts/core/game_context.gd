@@ -44,6 +44,12 @@ var pending_chapter_config: String = ""
 # 由调用方（test_main）在 bootstrap() 前赋值；bootstrap 末尾自动清空。
 var pending_level_path: String = ""
 
+# 退出到菜单的过渡 flag：
+# 退出动画播 白→黑 后切场景；下一个场景 _ready 检测此 flag，
+# 接力播 黑→透明 渐隐，组成 白→黑→白 完整过渡。
+# 由场景消费后清零，防止下次脏读。
+var pending_fade_in_from_black: bool = false
+
 # 由 main.gd 创建后注入。cell._can_drop_data 通过 Game.play 查询规则，避免对 main 的反向耦合。
 var play: PlayController
 

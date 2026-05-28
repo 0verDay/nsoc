@@ -41,6 +41,17 @@ func _slot_of(cell) -> BoardSlot:
 		return game.registry.get_by_id(cell.slot_id)
 	return null
 
+# 取单位"原属盘"。死亡入墓 / banish 等去向相关查询应优先用此函数，
+# 跨盘冲锋后单位死亡时按归属入原属盘墓地，而非新盘。
+# 原属盘已销毁时返回 null（调用方按需静默丢弃）。
+func _owner_slot_of(cell) -> BoardSlot:
+	if cell == null or game == null or game.registry == null:
+		return null
+	var owner_id: String = cell.owner_slot_id if cell.owner_slot_id != "" else cell.slot_id
+	if owner_id == "":
+		return null
+	return game.registry.get_by_id(owner_id)
+
 # ---- 棋盘查询 ----
 # 返回 cell 四邻"有牌"的 cell 数组。phantom 不计入。
 func get_adjacent_occupied(cell) -> Array:
@@ -98,24 +109,37 @@ func trigger_vigilance(entered_cell) -> void:
 			return
 
 # ---- 卡牌去向 ----
-# 自动按 dying_is_enemy 路由：
-#   玩家阵营 → game.deck（玩家个人牌堆）
-#   敌方阵营 → target_cell 所属 slot 的 graveyard / banished
+# 按 target_cell.origin 路由：
+#   "hand"    → game.deck（玩家个人牌堆，不论阵营）
+#   其他      → target_cell 的"原属盘"（owner_slot_id）的 graveyard / banished
+# 原属盘已销毁则静默丢弃，与 PlayController.handle_unit_death 语义一致。
+# 兜底：target_cell 为空时按旧 dying_is_enemy 路由（玩家→deck，敌方→原属盘）。
 func banish_card(card_data) -> void:
-	if dying_is_enemy:
-		var slot: BoardSlot = _slot_of(target_cell)
+	if target_cell != null and target_cell.origin == "hand":
+		game.deck.banish(card_data)
+		return
+	if target_cell != null:
+		var slot: BoardSlot = _owner_slot_of(target_cell)
 		if slot != null:
 			slot.banish(card_data)
+		return
+	# 无 target_cell 兜底
+	if dying_is_enemy:
+		game.deck.banish(card_data)  # 不该走到，保留旧行为防止 KeyError
 	else:
 		game.deck.banish(card_data)
 
 func send_to_graveyard(card_data) -> void:
-	if dying_is_enemy:
-		var slot: BoardSlot = _slot_of(target_cell)
+	if target_cell != null and target_cell.origin == "hand":
+		game.deck.send_to_graveyard(card_data)
+		return
+	if target_cell != null:
+		var slot: BoardSlot = _owner_slot_of(target_cell)
 		if slot != null:
 			slot.send_to_graveyard(card_data)
-	else:
-		game.deck.send_to_graveyard(card_data)
+		return
+	# 无 target_cell 兜底（理论上 on_death 必有 target_cell）
+	game.deck.send_to_graveyard(card_data)
 
 # ---- 英雄伤害 ----
 # 多盘语义下默认作用于"主玩家盘 / 主敌盘"的 hero。需要指定其他盘时

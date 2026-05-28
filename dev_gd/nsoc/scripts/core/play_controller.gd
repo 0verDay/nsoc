@@ -135,7 +135,8 @@ func handle_drop(cell, data) -> void:
 
 	var effs := _get_effects(full_data)
 	await _animate_drop(cell, data, drop_global_pos, effs)
-	cell.set_card(data.card_name, data.attack, data.health, false, effs)
+	# origin = "hand"：玩家手牌部署，死亡入 Game.deck 而非所在盘 slot.graveyard
+	cell.set_card(data.card_name, data.attack, data.health, false, effs, "", "hand")
 	_trigger_unit_play_effects(full_data, cell)
 
 func _animate_drop(cell, data, drop_global_pos: Vector2, effs: Array) -> void:
@@ -182,8 +183,11 @@ func _trigger_unit_play_effects(unit_data, target_cell = null) -> void:
 		Effects.trigger_play(eff, unit_data, ctx)
 
 func handle_unit_death(cell) -> void:
-	# 玩家阵营单位 → Game.deck（玩家个人牌堆 graveyard / banished）
-	# 敌方阵营单位 → cell 所属 slot 的 graveyard / banished（每盘独立）
+	# 死亡去向按 cell.origin 路由：
+	#   "hand"    = 玩家手牌部署 → Game.deck.graveyard（不论部署到主盘还是 ally 盘）
+	#   "spawner" / "initial" / 其他 = 入"原属盘"slot.graveyard
+	# 跨盘冲锋后 cell.slot_id 会变，但 owner_slot_id / origin 不变，保证定向准确。
+	# 原属盘已销毁（registry 找不到）则静默丢弃，与缩盘语义一致。
 	var cdata = Game.get_card(cell.card_name)
 	if cdata == null:
 		return
@@ -197,12 +201,27 @@ func handle_unit_death(cell) -> void:
 			handled = true
 	if handled:
 		return
-	if cell.is_enemy:
-		var slot: BoardSlot = _resolve_slot(cell)
+	if cell.origin == "hand":
+		Game.deck.send_to_graveyard(cdata)
+	else:
+		var slot: BoardSlot = _resolve_owner_slot(cell)
 		if slot != null:
 			slot.send_to_graveyard(cdata)
-	else:
-		Game.deck.send_to_graveyard(cdata)
+		# slot==null：原属盘已销毁，单位连同资源一起丢弃
+
+# 取单位"原属盘"。优先用 cell.owner_slot_id，未注入时回退到 cell.slot_id（旧逻辑兜底）。
+static func _resolve_owner_slot(cell) -> BoardSlot:
+	if cell == null:
+		return null
+	if Engine.get_main_loop() == null:
+		return null
+	var root: Node = Engine.get_main_loop().root
+	if not root.has_node("/root/Game"):
+		return null
+	var owner_id: String = cell.owner_slot_id if cell.owner_slot_id != "" else cell.slot_id
+	if owner_id == "":
+		return null
+	return Game.registry.get_by_id(owner_id)
 
 # 攻击者完成一次击杀后调用。victim_cells 已 clear_card。
 # 仅在 attacker 仍存活时触发其 on_kill 效果（如"冲阵"）。

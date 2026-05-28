@@ -33,7 +33,10 @@ func advance(board: BoardModel, card_resolver: Callable) -> bool:
 				for pos in sp.positions:
 					var target_cell = board.get_cell(pos)
 					if target_cell != null and not target_cell.has_card:
-						target_cell.set_card(cdata.name, cdata.attack, cdata.health, sp.faction == 1, cdata.effects)
+						# origin = "spawner"：死亡时入该 cell 所属盘的 slot.graveyard，
+						# 而非 Game.deck（即使是玩家阵营友军 spawner）。
+						target_cell.set_card(cdata.name, cdata.attack, cdata.health,
+							sp.faction == 1, cdata.effects, "", "spawner")
 						any_spawned = true
 						spawned.emit(target_cell, cdata, sp.faction)
 			sp.timer = 0
