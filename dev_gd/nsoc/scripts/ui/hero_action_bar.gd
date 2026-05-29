@@ -22,6 +22,7 @@ signal panel_expansion_finished
 # ── 布局常量 ──────────────────────────────────────────────────────────────────
 const BTN_W:         float = 240.0
 const BTN_H:         float = 56.0
+const DUR_W:         float = 32.0   # 耐久指示器宽度
 const BOTTOM_MARGIN: float = 30.0
 const SEPARATION:    int   = 6
 
@@ -38,7 +39,8 @@ const EQUIP_DRAG_Z_INDEX: int = 100
 
 # ── 内部状态 ──────────────────────────────────────────────────────────────────
 var _ability_btn: Button
-var _equip_buttons: Dictionary = {}
+var _equip_buttons: Dictionary    = {}   # inst → HBoxContainer（整行）
+var _equip_dur_labels: Dictionary = {}   # inst → Label（耐久指示器）
 var _detail_panel                 = null
 var _hand_card_scene: PackedScene = null
 var _ability_ctx_callable: Callable
@@ -133,6 +135,8 @@ func _refresh_ability_button() -> void:
 	var ability_id: String = hero.ability_id()
 	if ability_id == "" or not HeroAbilities.has(ability_id):
 		_ability_btn.disabled = true; return
+	# 每次刷新时同步更新按钮文字，确保 setup() 时序问题不导致永久显示 fallback 文字
+	_ability_btn.text = HeroAbilities.get_display_name(ability_id)
 	_ability_btn.disabled = not HeroAbilities.can_activate(ability_id, _make_ctx())
 
 # ── 装备按钮 ──────────────────────────────────────────────────────────────────
@@ -146,10 +150,10 @@ func _on_equipment_added(inst: EquipmentInstance) -> void:
 	var pre_panel_bottom: float = _parent_panel_node.offset_bottom if upper else 0.0
 	var pre_panel_top: float    = _parent_panel_node.offset_top    if not upper else 0.0
 
-	var btn := _build_equipment_button(inst)
-	btn.modulate.a = 0.0
-	add_child(btn)
-	_equip_buttons[inst] = btn
+	var row := _build_equipment_row(inst)
+	row.modulate.a = 0.0
+	add_child(row)
+	_equip_buttons[inst] = row
 	_refresh_equipment_button(inst)
 
 	# 强制回写，抵消 VBox 可能的自动调整
@@ -163,17 +167,41 @@ func _on_equipment_added(inst: EquipmentInstance) -> void:
 
 func _on_equipment_removed(inst: EquipmentInstance) -> void:
 	if not _equip_buttons.has(inst): return
-	var btn: Button = _equip_buttons[inst]
+	var row: Control = _equip_buttons[inst]
 	_equip_buttons.erase(inst)
-	_animate_equip_shrink(btn)
+	_equip_dur_labels.erase(inst)
+	_animate_equip_shrink(row)
 
 func _on_equipment_changed(inst: EquipmentInstance) -> void:
 	_refresh_equipment_button(inst)
 
-func _build_equipment_button(inst: EquipmentInstance) -> Button:
+func _build_equipment_row(inst: EquipmentInstance) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.name = "EquipRow"
+	row.custom_minimum_size = Vector2(BTN_W, BTN_H)
+	row.add_theme_constant_override("separation", 4)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	# 耐久指示器：黄色 pill Label（与卡牌手牌样式一致）
+	var dur_lbl := Label.new()
+	dur_lbl.name = "DurLbl"
+	dur_lbl.text = str(inst.durability_left)
+	dur_lbl.add_theme_stylebox_override("normal", ThemeFactory.pill(Color("#fcc419"), 10))
+	dur_lbl.add_theme_font_size_override("font_size", 16)
+	dur_lbl.add_theme_color_override("font_color", Color("#495057"))
+	dur_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	dur_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+	dur_lbl.custom_minimum_size  = Vector2(DUR_W, BTN_H - 8)
+	dur_lbl.size_flags_vertical  = Control.SIZE_SHRINK_CENTER
+	row.add_child(dur_lbl)
+	_equip_dur_labels[inst] = dur_lbl
+
+	# 主按钮（填充剩余宽度，文字只显示装备名称）
 	var b := Button.new()
 	b.name = "EquipBtn"
-	b.custom_minimum_size = Vector2(BTN_W, BTN_H)
+	b.text = inst.display_name()
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.custom_minimum_size   = Vector2(BTN_W - DUR_W - 8, BTN_H)
 	b.add_theme_font_size_override("font_size", 20)
 	b.add_theme_color_override("font_color",         Color.WHITE)
 	b.add_theme_color_override("font_hover_color",   Color.WHITE)
@@ -183,11 +211,41 @@ func _build_equipment_button(inst: EquipmentInstance) -> Button:
 	b.button_down.connect(func(): _on_equip_btn_down(inst))
 	b.button_up.connect(_on_equip_btn_up)
 	b.mouse_exited.connect(_on_equip_btn_up)
-	return b
+	row.add_child(b)
+	return row
 
 func _on_equip_btn_pressed(inst: EquipmentInstance) -> void:
 	if inst == null or not inst.can_activate(): return
-	inst.activate(_make_ctx())
+	var ctx = _make_ctx()
+	# 需要目标：锁 UI → 进入选择模式 → 等待选择 → 解锁
+	var req_target: String = inst.required_target()
+	if req_target != "":
+		# pick_target_async 需要 ctx._target_selector 已注入
+		if typeof(ctx) == TYPE_DICTIONARY:
+			push_warning("HeroActionBar: ctx 为字典，无法调用 pick_target_async")
+			return
+		# 锁回合运行，禁用结束回合/出牌
+		if Game.turn != null:
+			Game.turn.is_running = true
+		var chosen_cell = await ctx.pick_target_async(req_target)
+		if chosen_cell == null:
+			# 取消：解锁，不激活
+			if Game.turn != null:
+				Game.turn.is_running = false
+			return
+		ctx.target_cell = chosen_cell
+		# 装备激活属于"回合外"操作；选完目标后先解锁 is_running，
+		# 否则 inst.activate 内部的 can_activate() 会因 is_running=true 而拒绝执行。
+		if Game.turn != null:
+			Game.turn.is_running = false
+		var success: bool = await inst.activate(ctx)
+		if Game.turn != null:
+			Game.turn.is_running = false
+		if success:
+			_refresh_equipment_button(inst)
+		return
+	# 无目标：直接激活
+	await inst.activate(ctx)
 
 func _on_equip_btn_down(inst: EquipmentInstance) -> void:
 	if _detail_panel != null and _detail_panel.has_method("start_long_press_equipment"):
@@ -199,10 +257,17 @@ func _on_equip_btn_up() -> void:
 
 func _refresh_equipment_button(inst: EquipmentInstance) -> void:
 	if not _equip_buttons.has(inst): return
-	var btn: Button = _equip_buttons[inst]
-	if not is_instance_valid(btn): return
-	btn.text     = "%s  [耐久:%d]" % [inst.display_name(), inst.durability_left]
-	btn.disabled = not inst.can_activate()
+	var row: Control = _equip_buttons[inst]
+	if not is_instance_valid(row): return
+	# 刷新耐久指示器数字
+	if _equip_dur_labels.has(inst):
+		var lbl: Label = _equip_dur_labels[inst]
+		if is_instance_valid(lbl):
+			lbl.text = str(inst.durability_left)
+	# 刷新按钮禁用状态
+	var inner_btn: Button = row.get_node_or_null("EquipBtn")
+	if inner_btn != null:
+		inner_btn.disabled = not inst.can_activate()
 
 # ── 全量刷新 ──────────────────────────────────────────────────────────────────
 func _refresh_all() -> void:
@@ -290,14 +355,14 @@ func _animate_equip_expand(inst: EquipmentInstance,
 		upper: bool, pre_vbox_top: float,
 		pre_panel_bottom: float, pre_panel_top: float) -> void:
 	if _parent_panel_node == null: return
-	var btn: Button = _equip_buttons.get(inst)
-	if not is_instance_valid(btn): return
+	var row: Control = _equip_buttons.get(inst)
+	if not is_instance_valid(row): return
 
 	# 动画锁：另一段动画正在运行时，直接应用终态，跳过过渡动画。
 	# 保证按钮可见、面板/VBox 尺寸正确，不产生悬空不可见按钮。
 	var expand_h: float = BTN_H + float(SEPARATION)
 	if _is_animating:
-		btn.modulate.a = 1.0
+		row.modulate.a = 1.0
 		offset_top = pre_vbox_top - expand_h
 		if upper:
 			_parent_panel_node.offset_bottom = pre_panel_bottom + expand_h
@@ -321,11 +386,12 @@ func _animate_equip_expand(inst: EquipmentInstance,
 	panel_expansion_started.emit()
 	_is_animating = true
 
-	var btns: Array = []
+	var rows: Array = []
 	for child in get_children():
-		if child is Button: btns.append(child)
+		if is_instance_valid(child) and (child is Button or child is HBoxContainer):
+			rows.append(child)
 
-	_build_3phase_tween(btns, btns, panel_prop, panel_tgt, "offset_top", vbox_tgt,
+	_build_3phase_tween(rows, rows, panel_prop, panel_tgt, "offset_top", vbox_tgt,
 		EXPAND_DURATION,
 		func():
 			_is_animating = false
@@ -335,7 +401,7 @@ func _animate_equip_expand(inst: EquipmentInstance,
 # ── 面板收缩动画 ──────────────────────────────────────────────────────────────
 # upper=false：panel.offset_top 增大（顶边下移），VBox.offset_top 增大（收缩）
 # upper=true ：panel.offset_bottom 减小（底边上移），VBox.offset_top 增大（收缩）
-func _animate_equip_shrink(btn: Button) -> void:
+func _animate_equip_shrink(row: Control) -> void:
 	if _parent_panel_node == null: return
 
 	var upper: bool = _is_panel_in_upper_half()
@@ -343,8 +409,8 @@ func _animate_equip_shrink(btn: Button) -> void:
 
 	# 动画锁：另一段动画正在运行时，直接清理，跳过过渡动画。
 	if _is_animating:
-		if is_instance_valid(btn):
-			btn.queue_free()
+		if is_instance_valid(row):
+			row.queue_free()
 		if upper:
 			_parent_panel_node.offset_bottom -= expand_h
 		else:
@@ -370,12 +436,15 @@ func _animate_equip_shrink(btn: Button) -> void:
 
 	var remaining: Array = []
 	for child in get_children():
-		if child is Button and child != btn:
+		if is_instance_valid(child) \
+				and (child is Button or child is HBoxContainer) \
+				and child != row:
 			remaining.append(child)
 
-	var all_btns: Array = []
+	var all_rows: Array = []
 	for child in get_children():
-		if child is Button: all_btns.append(child)
+		if is_instance_valid(child) and (child is Button or child is HBoxContainer):
+			all_rows.append(child)
 
 	# 与 expand 对称：lock + 发出信号，保证 drag_blocked 在动画结束后一定解除
 	panel_expansion_started.emit()
@@ -383,20 +452,20 @@ func _animate_equip_shrink(btn: Button) -> void:
 
 	var master := create_tween()
 
-	# ── ① 全部按钮渐隐 ───────────────────────────────────────────────────
-	if all_btns.size() > 0:
-		master.tween_property(all_btns[0], "modulate:a", 0.0, FADE_IN_DURATION) \
+	# ── ① 全部行渐隐 ─────────────────────────────────────────────────────
+	if all_rows.size() > 0:
+		master.tween_property(all_rows[0], "modulate:a", 0.0, FADE_IN_DURATION) \
 			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-		for i in range(1, all_btns.size()):
-			master.parallel().tween_property(all_btns[i], "modulate:a", 0.0, FADE_IN_DURATION) \
+		for i in range(1, all_rows.size()):
+			master.parallel().tween_property(all_rows[i], "modulate:a", 0.0, FADE_IN_DURATION) \
 				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	else:
 		master.tween_interval(FADE_IN_DURATION)
 
-	# free 死亡按钮，重置偏移防止 VBox 自动收缩抢跑
+	# free 死亡行，重置偏移防止 VBox 自动收缩抢跑
 	master.tween_callback(func():
-		if is_instance_valid(btn):
-			btn.queue_free()
+		if is_instance_valid(row):
+			row.queue_free()
 		offset_top = pre_vbox_top
 		if upper:
 			_parent_panel_node.offset_bottom = pre_panel_val
@@ -410,7 +479,7 @@ func _animate_equip_shrink(btn: Button) -> void:
 	master.parallel().tween_property(self, "offset_top", vbox_tgt, SHRINK_DURATION) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
-	# ── ③ 剩余按钮渐显 ───────────────────────────────────────────────────
+	# ── ③ 剩余行渐显 ─────────────────────────────────────────────────────
 	if remaining.size() > 0:
 		master.tween_property(remaining[0], "modulate:a", 1.0, FADE_IN_DURATION) \
 			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)

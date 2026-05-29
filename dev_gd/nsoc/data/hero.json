@@ -21,6 +21,13 @@
 			"max_health": 30,
 			"abilities": [],
 			"skill_text": ""
+		},
+		"liubei": {
+			"display_name": "长坂坡·刘备",
+			"battle_name": "刘备",
+			"max_health": 30,
+			"abilities": ["yi_yong_jun"],
+			"skill_text": "义勇军：消耗 2 费用，消灭我方半场的所有敌人，随后在我方半场所有空格召唤「乡勇」，并使其获得「灰烬」（死后除外）。"
 		}
 	},
 	"enemy_default": {

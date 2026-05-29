@@ -24,7 +24,7 @@ var _chapter_box: HBoxContainer
 # 两者挂在 _desc_group（DescPnl 全填 Control）下，切章节时整体平移 + 渐隐渐显。
 var _desc_group: Control
 var _desc_title: Label
-var _desc_body: Label
+var _desc_body: RichTextLabel
 
 # 切章节文本动效活跃 tween；切章节中再次切换需要 kill 上一个避免视觉错乱。
 var _desc_anim_tween: Tween
@@ -214,17 +214,18 @@ func _build_desc_container() -> void:
 	group.add_child(title)
 	_desc_title = title
 
-	var body := Label.new()
+	var body := RichTextLabel.new()
 	body.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	body.offset_left = DESC_PAD
 	body.offset_right = -DESC_PAD
 	body.offset_top = DESC_PAD * 2.0 + DESC_TITLE_HEIGHT
 	body.offset_bottom = -DESC_PAD
-	body.add_theme_font_size_override("font_size", DESC_BODY_FONT_SIZE)
-	body.add_theme_color_override("font_color", Color(0.25, 0.25, 0.25))
-	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	body.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	body.add_theme_font_size_override("normal_font_size", DESC_BODY_FONT_SIZE)
+	body.add_theme_color_override("default_color", Color(0.25, 0.25, 0.25))
+	body.bbcode_enabled = true
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.scroll_active = false
+	body.fit_content = false
 	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	group.add_child(body)
 	_desc_body = body
@@ -393,7 +394,7 @@ func _refresh_desc_text() -> void:
 	var idx: int = clampi(_current_chapter_idx, 0, _chapters.size() - 1)
 	var ch: Dictionary = _chapters[idx]
 	_desc_title.text = String(ch.get("name", ""))
-	_desc_body.text = String(ch.get("description", ""))
+	_desc_body.text = MarkupParser.parse(String(ch.get("description", "")))
 
 
 # DescPnl 水平拖动切章节 + 长按进入章节。

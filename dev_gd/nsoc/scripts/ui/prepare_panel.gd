@@ -794,4 +794,3 @@ func _set_sort_mode(mode: int) -> void:
 	for k in keys:
 		new_dict[k] = _muster_entries[k]
 	_muster_entries = new_dict
-

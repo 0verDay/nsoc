@@ -340,16 +340,19 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 							if ended_cell_x != null:
 								ended_cell_x.has_attacked = true
 								ended_cell_x.has_charged = true
+			else:
+				# 普通跨盘（非冲锋，handled=true，无 crossed_cell）：落地触发警戒。
+				# _on_target_chosen 在此路径返回 {"landed_cell", "board_model"}。
+				var landed = result.get("landed_cell")
+				var landed_board: BoardModel = result.get("board_model")
+				if is_instance_valid(landed) and landed.has_card \
+						and is_instance_valid(landed_board):
+					await _trigger_vigilance_on_board(landed, false, landed_board)
 		else:
+			# handled=false：跨盘失败（目标格被占或无效），回退本棋盘默认行动
 			cell.has_attacked = true
 			if cell.effects.has("charge"):
 				cell.has_charged = true
-			# 普通跨盘落地后触发 vigilance（landed_cell 由 _on_target_chosen 提供）
-			var landed = result.get("landed_cell")
-			var landed_board: BoardModel = result.get("board_model")
-			if is_instance_valid(landed) and landed.has_card \
-					and is_instance_valid(landed_board):
-				await _trigger_vigilance_on_board(landed, false, landed_board)
 		return
 
 	# ── 敌方阵营自动跨盘：cell 在 ENEMY 阵营盘 + cell.row == 自家 front_row +

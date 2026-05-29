@@ -14,14 +14,14 @@ func display_name() -> String:
 func description() -> String:
 	return "突围：入场时，相邻格每有一个敌方单位，获得+1攻击力和+1四维"
 
-func on_play(_card_data, ctx) -> void:
+func on_play(_card_data, ctx) -> bool:
 	var cell = ctx.target_cell
 	if cell == null or not cell.has_card:
-		return
+		return true
 	var enemies: Array = ctx.get_adjacent_enemies(cell)
 	var n: int = enemies.size()
 	if n <= 0:
-		return
+		return true
 	var buff: int = BUFF_PER_ENEMY * n
 	cell.attack += buff
 	for s in Orientation.SIDES:
@@ -30,3 +30,4 @@ func on_play(_card_data, ctx) -> void:
 		cell._update_hp_labels()
 	if cell.has_method("_update_atk_label"):
 		cell._update_atk_label()
+	return true

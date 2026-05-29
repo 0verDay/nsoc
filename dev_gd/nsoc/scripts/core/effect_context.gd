@@ -163,6 +163,17 @@ func damage_slot_hero(slot_id: String, amount: int) -> void:
 	if slot != null:
 		slot.damage_hero(amount)
 
+# 按英雄名称（name_short 或 name_full）定位并造成伤害。
+# 遍历所有已注册 slot；多盘同名时全部受到伤害。
+func damage_hero_by_name(hero_name: String, amount: int) -> void:
+	if game.registry == null:
+		return
+	for slot in game.registry.slots:
+		if slot.hero == null:
+			continue
+		if slot.hero.name_short == hero_name or slot.hero.name_full == hero_name:
+			slot.damage_hero(amount)
+
 # ---- 通用计数器（替代 main.autophagy_counter 这种零散字段） ----
 func get_counter(key: String, default_value: int = 0) -> int:
 	return game.counters.get(key, default_value)
@@ -174,3 +185,20 @@ func inc_counter(key: String, delta: int = 1) -> int:
 	var v = get_counter(key, 0) + delta
 	game.counters[key] = v
 	return v
+
+# ---- 交互式目标/手牌选择（装备效果用）----
+# 由 main / test_main 在装配时注入对应控制器节点。
+var _target_selector: Node = null   # TargetSelectorController
+var _hand_picker: Node    = null    # HandPickerController
+
+# 选择一个合法 cell 目标，返回 Cell 或 null（玩家取消）。
+func pick_target_async(filter: String):
+	if _target_selector == null:
+		return null
+	return await _target_selector.pick_async(filter)
+
+# 选择一张手牌，返回 HandCard 或 null（玩家取消）。
+func pick_hand_card_async():
+	if _hand_picker == null:
+		return null
+	return await _hand_picker.pick_async()
