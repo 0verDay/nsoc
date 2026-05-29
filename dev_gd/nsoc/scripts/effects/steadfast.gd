@@ -11,4 +11,4 @@ func display_name() -> String:
 	return "坚守"
 
 func description() -> String:
-	return "坚守：本单位不会主动移动"
+	return "坚守：本单位不会主动移动,且不会跨棋盘攻击"
