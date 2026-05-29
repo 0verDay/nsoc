@@ -3,7 +3,7 @@
 	"name": "测试刀",
 	"type": "装备",
 	"cost": 1,
-	"durability": 3,
+	"durability": 2,
 	"once_per_turn": true,
 	"effects": ["gain_mana_1"]
   },
