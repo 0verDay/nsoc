@@ -39,6 +39,29 @@ func _ready() -> void:
 	gui_input.connect(_on_gui_input)
 	mouse_exited.connect(_on_mouse_exit)
 
+# 选中等待状态高亮：叠一个透明背景 + 指定颜色描边的 Panel。
+# 与 cell.gd 的同名函数对称，供 HandPickerController 使用。
+const _HIGHLIGHT_BORDER: float = 3.0
+func set_selection_highlight(enabled: bool, color: Color = Color("#fa5252")) -> void:
+	var existing := get_node_or_null("_SelectionBorder")
+	if not enabled:
+		if existing != null:
+			existing.queue_free()
+		# 恢复正常描边
+		add_theme_stylebox_override("panel", ThemeFactory.card_panel(Color.WHITE, Color("#e1e8ed"), 1, 15, true))
+		return
+	add_theme_stylebox_override("panel", ThemeFactory.card_panel(Color.WHITE, color, int(_HIGHLIGHT_BORDER), 15, true))
+	if existing != null:
+		return
+	var frame := Panel.new()
+	frame.name = "_SelectionBorder"
+	frame.set_anchors_preset(Control.PRESET_FULL_RECT, false)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.z_index = 5
+	frame.add_theme_stylebox_override("panel",
+		ThemeFactory.card_panel(Color(0, 0, 0, 0), color, int(_HIGHLIGHT_BORDER), 15))
+	add_child(frame)
+
 func _on_gui_input(event) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.is_pressed():
@@ -110,7 +133,12 @@ func setup(data, id: int) -> void:
 			lbl.visible = false
 
 	var effs: Array = data.get("effects", []) if typeof(data) == TYPE_DICTIONARY else data.effects
-	EffectBadgeFactory.refresh(get_node_or_null("EffectBadges"), effs)
+	# 法术牌和装备牌不显示 badge（只有单位牌显示）
+	var card_type: String = data.get("type", "") if typeof(data) == TYPE_DICTIONARY else ""
+	if card_type == "" and data is CardUnit:
+		card_type = "单位"
+	var show_badges: bool = (card_type == "单位")
+	EffectBadgeFactory.refresh(get_node_or_null("EffectBadges"), effs if show_badges else [])
 
 func _get_drag_data(_pos):
 	if _is_action_running():

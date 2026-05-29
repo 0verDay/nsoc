@@ -14,13 +14,14 @@ func display_name() -> String:
 func description() -> String:
 	return "强化：对任意友方单位使用，使其获得+1/+1/+1/+1（四维各+1）"
 
-func on_play(_card_data, ctx) -> void:
+func on_play(_card_data, ctx) -> bool:
 	var cell = ctx.target_cell
 	if cell == null or not cell.has_card:
-		return
+		return true
 	if cell.is_enemy:
-		return
+		return true
 	for s in Orientation.SIDES:
 		cell.health[s] += BUFF
 	if cell.has_method("_update_hp_labels"):
 		cell._update_hp_labels()
+	return true

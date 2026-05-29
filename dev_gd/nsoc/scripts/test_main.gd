@@ -88,6 +88,7 @@ func _ready() -> void:
 	play_controller = PlayController.new(); play_controller.name = "PlayController"; add_child(play_controller)
 	play_controller.setup(self, cell_scene)
 	Game.play = play_controller
+	play_controller.hand_view = hand_view   # 供 discard_hand_card effect 使用
 
 	combat = CombatSystem.new(); combat.name = "Combat"; add_child(combat)
 	combat.setup(self, cell_scene, play_controller)
@@ -154,14 +155,26 @@ func _ready() -> void:
 
 # ── 控制器装配 ───────────────────────────────────────────────────────
 # 通过 load() 显式加载脚本资源，避免 class_name 全局表未刷新时的标识符解析错。
-const FrontRowSelectorScript     = preload("res://scripts/ui/front_row_selector.gd")
+const FrontRowSelectorScript        = preload("res://scripts/ui/front_row_selector.gd")
 const HeroPanelDragControllerScript = preload("res://scripts/ui/hero_panel_drag_controller.gd")
+const TargetSelectorScript          = preload("res://scripts/ui/target_selector_controller.gd")
+const HandPickerScript              = preload("res://scripts/ui/hand_picker_controller.gd")
 
 func _install_controllers() -> void:
 	front_row_selector = FrontRowSelectorScript.new()
 	front_row_selector.name = "FrontRowSelector"
 	add_child(front_row_selector)
 	front_row_selector.setup(self, combat)
+
+	var target_selector := TargetSelectorScript.new()
+	target_selector.name = "TargetSelector"
+	add_child(target_selector)
+	target_selector.setup(self)
+
+	var hand_picker := HandPickerScript.new()
+	hand_picker.name = "HandPicker"
+	add_child(hand_picker)
+	hand_picker.setup(self, hand_view)
 
 	hero_drag_ctrl = HeroPanelDragControllerScript.new()
 	hero_drag_ctrl.name = "HeroDragCtrl"
@@ -178,10 +191,10 @@ func _install_controllers() -> void:
 			func(): hero_drag_ctrl.set_drag_blocked(true))
 		hero_action_bar.panel_expansion_finished.connect(
 			func(): hero_drag_ctrl.set_drag_blocked(false))
-	# 不再通过 gui_input 连接：附盘 ui_nodes 覆盖在 LeftSidePnl 上会拦截 gui_input。
-	# 改为在全局 _input 中手动转发，保证附盘存在时拖拽仍可用。
-	# $LeftSidePnl.gui_input.connect(hero_drag_ctrl.on_gui_input)
 	$EnemyHpPnl.gui_input.connect(_on_enemy_hero_panel_gui_input)
+
+	# 注入选择器到 GameContext，供 EffectContext.pick_target_async/pick_hand_card_async 使用
+	Game.register_selectors(target_selector, hand_picker)
 
 # HeroPanelDragController 的 long_press_hero_args 回调。
 func _get_player_hero_long_press_args() -> Array:
@@ -204,6 +217,10 @@ func _wire_signals() -> void:
 		e_hero.health_changed.connect(_on_enemy_health_changed)
 		e_hero.died.connect(_on_enemy_hero_died)
 	Game.mana.mana_changed.connect(_on_mana_changed)
+
+	# 战役胜利目标：达成时与击杀敌方英雄同路径触发胜利
+	if has_node("/root/Objectives"):
+		Objectives.objective_completed.connect(_on_objective_completed)
 
 	end_turn_btn.pressed.connect(_on_end_turn_pressed)
 	deck_btn.pressed.connect(func(): side_panels.toggle("deck"))
@@ -253,12 +270,26 @@ func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.text = "胜利" if is_enemy else "失败"
 	_show_game_over(is_enemy)
 
+# 战役胜利目标达成（与敌方英雄死亡同语义：玩家胜利）
+func _on_objective_completed() -> void:
+	end_turn_btn.disabled = true
+	end_turn_btn.text = "胜利"
+	_show_game_over(true)
+
 func _show_game_over(victory: bool) -> void:
+	# CanvasLayer 独立渲染层，layer=100 保证覆盖所有游戏内元素（棋子/英雄面板等）。
+	# z_index 方案在多层级节点混杂时不可靠；CanvasLayer 完全隔离。
+	var canvas := CanvasLayer.new()
+	canvas.layer = 100
+	add_child(canvas)
+
 	var overlay := ColorRect.new()
-	overlay.color = Color(0, 0, 0, 0.6)
+	overlay.color = Color(0, 0, 0, 0.75)
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(overlay)
+	canvas.add_child(overlay)
+
+	# ── 主标题（胜利 / 失败）────────────────────────────────────────────
 	var lbl := Label.new()
 	lbl.text = "胜利" if victory else "失败"
 	lbl.add_theme_font_size_override("font_size", 96)
@@ -267,8 +298,28 @@ func _show_game_over(victory: bool) -> void:
 	lbl.offset_left = -200; lbl.offset_top = -80
 	lbl.offset_right = 200; lbl.offset_bottom = 80
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 	overlay.add_child(lbl)
+
+	# ── 点击提示（居中偏下）────────────────────────────────────────────
+	var hint := Label.new()
+	hint.text = "————点击离开战役————"
+	hint.add_theme_font_size_override("font_size", 28)
+	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.65))
+	hint.set_anchors_preset(Control.PRESET_CENTER, false)
+	hint.offset_left = -300; hint.offset_top = 80
+	hint.offset_right = 300; hint.offset_bottom = 130
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+	overlay.add_child(hint)
+
+	# ── 点击空白处退回主菜单 ─────────────────────────────────────────────
+	overlay.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton \
+				and event.button_index == MOUSE_BUTTON_LEFT \
+				and event.pressed:
+			_on_exit_to_menu()
+	)
 
 # ── 回合 ─────────────────────────────────────────────────────────────
 func _on_end_turn_pressed() -> void:
@@ -397,13 +448,8 @@ func _apply_styles() -> void:
 
 # ── 退出到菜单 ────────────────────────────────────────────────────────
 # 立即标记 combat.aborted = true，所有正在 await 的协程在下一个 resume 点安全退出，
-# 然后等一帧让协程有机会感知 aborted 并提前 return，再切场景。
-# 过渡动画：白覆盖渐入 → 切到黑 → 切场景。下一个场景 _ready 接力 黑→透明，
-# 形成 白→黑→白 三段过渡。
+# 过渡动画：白色渐入盖满 → 立即切场景；下一场景接力白→透明淡出。
 const EXIT_FADE_TO_WHITE: float = 0.25
-const EXIT_HOLD_WHITE: float = 0.05
-const EXIT_FADE_TO_BLACK: float = 0.25
-const EXIT_DELAY: float = 1.0   # 覆盖 attack_hit(0.45) + death(0.45) + move(0.4) + buffer
 func _on_exit_to_menu() -> void:
 	# 标记中止：所有 combat/turn await 后检查此 flag 并立即 return
 	if combat != null:
@@ -411,22 +457,22 @@ func _on_exit_to_menu() -> void:
 	if Game.turn != null:
 		Game.turn.is_running = false
 
-	# 全屏过渡遮罩：白渐入 → 转黑，下一个场景接力黑→透明
+	# CanvasLayer(200) 确保覆盖所有游戏元素及结算界面(layer=100)
+	var canvas := CanvasLayer.new()
+	canvas.layer = 200
+	add_child(canvas)
 	var overlay := ColorRect.new()
 	overlay.color = Color(1.0, 1.0, 1.0, 0.0)
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.z_index = 500
-	add_child(overlay)
-	var tw := create_tween()
-	tw.tween_property(overlay, "color:a", 1.0, EXIT_FADE_TO_WHITE)
-	tw.tween_interval(EXIT_HOLD_WHITE)
-	tw.tween_property(overlay, "color", Color(0.0, 0.0, 0.0, 1.0), EXIT_FADE_TO_BLACK)
+	canvas.add_child(overlay)
+	var tw := canvas.create_tween()
+	tw.tween_property(overlay, "color:a", 1.0, EXIT_FADE_TO_WHITE) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	await tw.finished
 
-	Game.pending_fade_in_from_black = true
-
-	# 等待足够时间让所有协程安全退出后再切场景
-	await get_tree().create_timer(EXIT_DELAY).timeout
+	# 标记下一个场景接力播放 白→透明
+	Game.pending_fade_in_from_white = true
 	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
 
 func _create_settings_button() -> void:
@@ -533,8 +579,10 @@ func _create_hero_action_bar() -> void:
 			Callable(self, "_left_side_pnl_can_drop"),
 			Callable(self, "_left_side_pnl_drop"))
 
-func _make_hero_ability_ctx() -> Dictionary:
-	return {"main": self, "hand_view": hand_view, "hero": Game.player_hero()}
+func _make_hero_ability_ctx() -> EffectContext:
+	var ctx: EffectContext = Game.make_effect_context_with_selectors()
+	ctx.target_cell = null
+	return ctx
 
 func _left_side_pnl_can_drop(_pos: Vector2, data) -> bool:
 	if play_controller == null:

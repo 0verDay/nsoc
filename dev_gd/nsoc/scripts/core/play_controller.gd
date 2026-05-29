@@ -9,6 +9,8 @@ signal hand_consumed(slot_index: int, source_card)            # 通知 HandView 
 
 var _root: Control                          # 用于挂载飞入动画 visual
 var _cell_scene: PackedScene
+# 供 discard_hand_card effect 访问，弃置动画由 HandView 执行。
+var hand_view: HandView = null
 
 func setup(root: Control, cell_scene: PackedScene) -> void:
 	_root = root
@@ -168,7 +170,7 @@ func _play_spell(spell_data, target_cell) -> void:
 		var dest := Effects.resolve_destination(eff, spell_data, ctx)
 		if dest != "":
 			destination = dest
-		Effects.trigger_play(eff, spell_data, ctx)
+		await Effects.trigger_play(eff, spell_data, ctx)
 
 	match destination:
 		"banish": Game.deck.banish(spell_data)
@@ -180,7 +182,7 @@ func _trigger_unit_play_effects(unit_data, target_cell = null) -> void:
 	var ctx := Game.make_effect_context()
 	ctx.target_cell = target_cell
 	for eff in _get_effects(unit_data):
-		Effects.trigger_play(eff, unit_data, ctx)
+		await Effects.trigger_play(eff, unit_data, ctx)
 
 func handle_unit_death(cell) -> void:
 	# 死亡去向按 cell.origin 路由：

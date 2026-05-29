@@ -11,6 +11,7 @@ func display_name() -> String:
 func description() -> String:
 	return "获得 1 点费用。"
 
-func on_play(_card_data, _ctx) -> void:
+func on_play(_card_data, _ctx) -> bool:
 	if Game != null and Game.mana != null:
 		Game.mana.gain(1)
+	return true

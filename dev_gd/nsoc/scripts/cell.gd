@@ -104,13 +104,17 @@ func set_phantom(cname, atk, hp, enemy: bool = false, effects_in: Array = []) ->
 # 四维指示器已设置绝对 z_index = 10，始终渲染在描边之上，不被遮挡。
 const _HIGHLIGHT_BORDER: float = 3.0
 
-func set_selection_highlight(enabled: bool) -> void:
+func set_selection_highlight(enabled: bool, color: Color = Color("#339af0")) -> void:
 	var existing := get_node_or_null("_SelectionBorder")
 	if not enabled:
 		if existing != null:
 			existing.queue_free()
 		return
 	if existing != null:
+		# 颜色可能变了，更新描边颜色
+		existing.add_theme_stylebox_override("panel",
+			ThemeFactory.cell_panel(Color(0, 0, 0, 0), color,
+				int(_HIGHLIGHT_BORDER), 20))
 		return
 	var frame := Panel.new()
 	frame.name = "_SelectionBorder"
@@ -119,7 +123,7 @@ func set_selection_highlight(enabled: bool) -> void:
 	# z_index=2：浮在 InnerPanel(z=1) 之上，低于 HP labels(InnerPanel z=1 + label z=2 = 3)
 	frame.z_index = 2
 	frame.add_theme_stylebox_override("panel",
-		ThemeFactory.cell_panel(Color(0, 0, 0, 0), Color("#339af0"),
+		ThemeFactory.cell_panel(Color(0, 0, 0, 0), color,
 			int(_HIGHLIGHT_BORDER), 20))
 	add_child(frame)
 
@@ -140,7 +144,6 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = [], owner
 		origin = p_origin
 	name_lbl.text = cname
 	atk_lbl.text = str(attack)
-
 	_update_hp_labels()
 
 	if is_enemy:

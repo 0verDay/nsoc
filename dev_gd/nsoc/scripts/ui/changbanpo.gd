@@ -289,18 +289,19 @@ func _build_desc(cfg: Dictionary) -> void:
 	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	desc_pnl.add_child(title)
 
-	var body := Label.new()
-	body.text = String(cfg.get("description", ""))
+	var body := RichTextLabel.new()
+	body.text = MarkupParser.parse(String(cfg.get("description", "")))
 	body.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	body.offset_left = DESC_PAD
 	body.offset_right = -DESC_PAD
 	body.offset_top = DESC_PAD * 2.0 + DESC_TITLE_HEIGHT
 	body.offset_bottom = -DESC_PAD
-	body.add_theme_font_size_override("font_size", DESC_BODY_FONT_SIZE)
-	body.add_theme_color_override("font_color", Color(0.25, 0.25, 0.25))
-	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	body.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	body.add_theme_font_size_override("normal_font_size", DESC_BODY_FONT_SIZE)
+	body.add_theme_color_override("default_color", Color(0.25, 0.25, 0.25))
+	body.bbcode_enabled = true
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.scroll_active = false
+	body.fit_content = false
 	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	desc_pnl.add_child(body)
 

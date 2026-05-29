@@ -45,10 +45,12 @@ var pending_chapter_config: String = ""
 var pending_level_path: String = ""
 
 # 退出到菜单的过渡 flag：
-# 退出动画播 白→黑 后切场景；下一个场景 _ready 检测此 flag，
-# 接力播 黑→透明 渐隐，组成 白→黑→白 完整过渡。
+# pending_fade_in_from_white：退出动画白色盖满后切场景；下一个场景 _ready 检测此 flag，
+# 播白色 overlay 渐隐，组成"渐白→切场景→白淡出"的无黑闪过渡。
 # 由场景消费后清零，防止下次脏读。
+# （旧 pending_fade_in_from_black 保留以兼容其他可能的调用方）
 var pending_fade_in_from_black: bool = false
+var pending_fade_in_from_white: bool = false
 
 # 由 main.gd 创建后注入。cell._can_drop_data 通过 Game.play 查询规则，避免对 main 的反向耦合。
 var play: PlayController
@@ -107,15 +109,32 @@ func _install_default_font() -> void:
 
 func bootstrap() -> void:
 	# 战斗启动：
-	#   1. 玩家英雄 = hero.json[BATTLE_HERO_KEY]，HP/技能/abilities 从 JSON 读
-	#   2. 敌方英雄 = hero.json.enemy_default
-	#   3. 牌池：根据玩家在备战界面保存的卡组（decks.json[BATTLE_HERO_KEY]）
+	#   1. 关卡：先解析 level（含战役章节专属字段 hero_key / initial_mana）
+	#   2. 玩家英雄 = hero.json[hero_key]，hero_key 来自章节 JSON；缺失回退 BATTLE_HERO_KEY
+	#   3. 敌方英雄 = hero.json.enemy_default
+	#   4. 牌池：战役章节用章节固定牌堆；否则走玩家备战卡组（decks.json[BATTLE_HERO_KEY]）
 	#      + all_cards.json 原型库 → 生成 user://battle_cards.json，本局战斗读它
-	var player_data: Dictionary = DataLoader.get_hero(BATTLE_HERO_KEY)
+
+	# ① 先加载关卡。战役章节的 hero_key / initial_mana 此时进入 level_data。
+	var level: Dictionary
+	if pending_chapter_config != "":
+		level = DataLoader.load_level_from_chapter(pending_chapter_config)
+	elif pending_level_path != "":
+		level = DataLoader.load_level_from_path(pending_level_path)
+	else:
+		level = DataLoader.load_level()
+	level_data = level
+
+	# ② 决定玩家英雄 key：章节 hero_key 优先，否则回退默认。
+	var hero_key: String = String(level.get("hero_key", ""))
+	if hero_key == "":
+		hero_key = BATTLE_HERO_KEY
+
+	var player_data: Dictionary = DataLoader.get_hero(hero_key)
 	var enemy_data: Dictionary = DataLoader.get_enemy_default()
 	# display_name = 备战界面/长按详情用的完整名（如"往日之王：科因"）
 	# battle_name  = 局内英雄面板用的精简名（如"科因"），未填则回落 display_name
-	var player_display: String = String(player_data.get("display_name", BATTLE_HERO_KEY))
+	var player_display: String = String(player_data.get("display_name", hero_key))
 	var player_battle: String = String(player_data.get("battle_name", player_display))
 	var enemy_display: String = String(enemy_data.get("display_name", "敌人"))
 	var enemy_battle: String = String(enemy_data.get("battle_name", enemy_display))
@@ -150,18 +169,15 @@ func bootstrap() -> void:
 		card_db[c.name] = c
 	cards_loaded.emit(deck_cards)
 
-	var level: Dictionary
-	if pending_chapter_config != "":
-		level = DataLoader.load_level_from_chapter(pending_chapter_config)
-	elif pending_level_path != "":
-		level = DataLoader.load_level_from_path(pending_level_path)
-	else:
-		level = DataLoader.load_level()
-	level_data = level
+	# ③ level 装载完成，发信号（顺序保留：listener 期望 cards_loaded 在前）
 	level_loaded.emit(level)
 
 	deck.setup(deck_cards)
-	mana.setup(1)
+	# 战役章节起始费（仅覆盖首回合 max=current=N，第二回合按正常 +1 走）
+	var start_mana: int = int(level.get("initial_mana", 0))
+	if start_mana <= 0:
+		start_mana = 1
+	mana.setup(start_mana)
 	counters.clear()
 	# 重置英雄技能回合用量（防止上局退出时 HeroAbilities.reset_turn_usage 未执行导致残留）
 	if has_node("/root/HeroAbilities"):
@@ -174,10 +190,18 @@ func bootstrap() -> void:
 		turn.is_running = false
 		turn.turn_number = 0
 
+	# 装载战役章节胜利目标（无 objective 字段时清空，按默认胜负规则走）
+	if has_node("/root/Objectives"):
+		Objectives.setup_for_battle(level.get("objective", {}))
+
 	# 一次性消费：清空 pending 字段，避免战斗结束返回主菜单后
 	# 再次进入战斗（玩家牌组）误用上一局的配置。
 	pending_chapter_config = ""
 	pending_level_path = ""
+	# 清空上一局场景注入的选择器引用，防止场景 free 后引用悬空。
+	# 新场景在 _install_controllers 末尾会重新调 register_selectors 注入。
+	_target_selector_node = null
+	_hand_picker_node     = null
 
 
 # JSON 解出的 abilities 可能是 Array of String（理想）或混入 null 等；统一为 Array[String]。
@@ -199,3 +223,21 @@ func get_card(name_str: String):
 
 func make_effect_context() -> EffectContext:
 	return EffectContext.new(self)
+
+# 注入交互式选择器到当前局内的 EffectContext 工厂。
+# 由 main / test_main 在装配完控制器后调用。
+var _target_selector_node: Node = null
+var _hand_picker_node: Node     = null
+
+func register_selectors(target_selector: Node, hand_picker: Node) -> void:
+	_target_selector_node = target_selector
+	_hand_picker_node     = hand_picker
+
+# 重写工厂：创建 ctx 时自动注入选择器（仅注入仍有效的节点）
+func make_effect_context_with_selectors() -> EffectContext:
+	var ctx := EffectContext.new(self)
+	if is_instance_valid(_target_selector_node):
+		ctx._target_selector = _target_selector_node
+	if is_instance_valid(_hand_picker_node):
+		ctx._hand_picker = _hand_picker_node
+	return ctx

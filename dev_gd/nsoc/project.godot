@@ -11,9 +11,13 @@ config_version=5
 [application]
 
 config/name="NSOC"
-run/main_scene="res://scenes/SplashScreen.tscn"
+run/main_scene="res://scenes/VideoSplash.tscn"
 config/quit_on_go_back=false
 config/features=PackedStringArray("4.6", "Forward Plus")
+boot_splash/bg_color=Color(0, 0, 0, 1)
+boot_splash/show_image=true
+boot_splash/image="res://assets/splash_black.png"
+boot_splash/fullsize=true
 config/icon="res://icon.svg"
 
 [autoload]
@@ -21,6 +25,7 @@ config/icon="res://icon.svg"
 Effects="*res://scripts/core/effect_registry.gd"
 HeroAbilities="*res://scripts/core/hero_ability_registry.gd"
 Equipments="*res://scripts/core/equipment_manager.gd"
+Objectives="*res://scripts/core/objective_registry.gd"
 Game="*res://scripts/core/game_context.gd"
 QuitConfirm="*res://scripts/core/quit_confirm.gd"
 

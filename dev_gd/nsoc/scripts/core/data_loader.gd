@@ -152,6 +152,13 @@ static func _empty_level() -> Dictionary:
 		"spawners": [],
 		# 局内棋盘事件：[{"turn":N, "add":[slot_idx,...], "remove":[slot_idx,...]}]
 		"board_events": [],
+		# 战役章节专属字段：
+		# hero_key —— 章节为玩家指定的英雄（hero.json key）。空时回退 BATTLE_HERO_KEY。
+		# initial_mana —— 章节首回合起始费（max=current=N）。0/缺失时按默认 1 走。
+		# objective —— 章节胜利目标 {"type":..., 其它参数}。无 type 时不启用目标。
+		"hero_key": "",
+		"initial_mana": 0,
+		"objective": {},
 	}
 
 # 默认 board meta：保证主棋盘永远在 boards 段中存在，且默认 enabled=true。
@@ -275,6 +282,13 @@ static func _parse_level(j: Dictionary) -> Dictionary:
 			}
 			if parsed_ev["turn"] >= 1:
 				out["board_events"].append(parsed_ev)
+	# 战役章节专属字段（顶层）
+	if j.has("hero_key") and typeof(j["hero_key"]) == TYPE_STRING:
+		out["hero_key"] = String(j["hero_key"])
+	if j.has("initial_mana"):
+		out["initial_mana"] = int(j["initial_mana"])
+	if j.has("objective") and typeof(j["objective"]) == TYPE_DICTIONARY:
+		out["objective"] = (j["objective"] as Dictionary).duplicate()
 	return out
 
 # 解析 boards.<id> 子段。新格式 row/col 不做映射，按盘内 0..ROWS-1 读取。

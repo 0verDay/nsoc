@@ -13,9 +13,18 @@ func display_name() -> String:
 func description() -> String:
 	return ""
 
+# 声明该效果激活时需要的目标类型。
+# "" = 无目标（立即生效）
+# "enemy_unit"    = 需要玩家选择一个敌方单位格
+# "friendly_unit" = 需要玩家选择一个友方单位格
+# "any_unit"      = 任意有单位的格
+func target() -> String:
+	return ""
+
 # 出牌时触发。ctx 为 EffectContext，提供受控的游戏状态访问接口。
-func on_play(card_data, ctx) -> void:
-	pass
+# 返回 true = 成功执行；返回 false = 玩家主动取消（装备不扣耐久）。
+func on_play(card_data, ctx) -> bool:
+	return true
 
 # 死亡时触发。返回 true 表示该效果已接管尸体处理（如除外），
 # false 表示走默认流程（入墓）。

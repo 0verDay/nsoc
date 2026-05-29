@@ -70,10 +70,24 @@ func get_description(eff_id: String) -> String:
 		return inst.description()
 	return eff_id
 
-func trigger_play(eff_id: String, card_data, ctx) -> void:
+# 取 effect 声明的目标类型（"" / "enemy_unit" / "friendly_unit" / "any_unit"）。
+func get_target(eff_id: String) -> String:
+	var inst = _instances.get(eff_id)
+	if inst and inst.has_method("target"):
+		return String(inst.target())
+	return ""
+
+# 返回 true = 执行成功；false = 玩家主动取消（装备不扣耐久）。
+# on_play 可能是协程（含 await），必须 await 调用，否则 Godot 4 报警告且无法拿到返回值。
+func trigger_play(eff_id: String, card_data, ctx) -> bool:
 	var inst = _instances.get(eff_id)
 	if inst and inst.has_method("on_play"):
-		inst.on_play(card_data, ctx)
+		var result = await inst.on_play(card_data, ctx)
+		# 兼容旧 on_play 返回 void（Callable 返回 null）
+		if result == null or result == true:
+			return true
+		return false
+	return true
 
 func trigger_death(eff_id: String, card_data, ctx) -> bool:
 	var inst = _instances.get(eff_id)

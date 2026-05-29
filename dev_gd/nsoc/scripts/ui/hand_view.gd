@@ -24,6 +24,10 @@ func setup(container: Container, hand_card_scene: PackedScene, animation_root: C
 	_hand_card_scene = hand_card_scene
 	_animation_root = animation_root if animation_root != null else container
 
+# 供外部（HandPickerController）访问手牌容器，遍历当前手牌。
+func get_hand_container() -> Container:
+	return _container
+
 # 启动初始填充：无动画一次补足。
 func ensure_min_hand_size() -> void:
 	while _container.get_child_count() < MIN_HAND_SIZE:
@@ -166,6 +170,32 @@ func _free_placeholder(placeholder) -> void:
 	placeholder.queue_free()
 
 const DISCARD_FADE_DURATION: float = 0.35
+
+# 弃置单张手牌进墓地，再补 1 张（与"再起"单卡版语义一致）。
+# 动画：modulate.a 1→0 → 入墓 → 飞入补位。
+# 若 hand_card 不在 container 中则静默退出。
+func discard_card(hand_card: Node) -> void:
+	if _container == null or not is_instance_valid(hand_card):
+		return
+	if hand_card.get_parent() != _container:
+		return
+	var data = hand_card.card_data if "card_data" in hand_card else null
+	var slot_index: int = hand_card.get_index()
+
+	hand_card.set_meta("consumed", true)
+	hand_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var t1: Tween = hand_card.create_tween()
+	t1.tween_property(hand_card, "modulate:a", 0.0, DISCARD_FADE_DURATION)
+	await t1.finished
+	if not is_instance_valid(hand_card):
+		return
+
+	# 入墓（虚空占位卡跳过）
+	if data != null and data is CardBase and String(data.name) != "虚空":
+		Game.deck.send_to_graveyard(data)
+
+	# 复用飞入补位动画
+	await _play_draw_animation(slot_index, hand_card)
 
 # 弃置全部手牌进墓地，再补齐至 MIN_HAND_SIZE。
 # 动画：逐张 modulate.a 1→0 + 入墓 → 飞入新卡补位 → 下一张。
