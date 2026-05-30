@@ -28,6 +28,7 @@ var slot_index: int = 0           # 屏幕水平槽位 0..N-1，用于排序与�
 var board: BoardModel = null      # 数据层
 var hero: HeroState = null        # 该盘所属英雄
 var spawners: SpawnerSystem = null # 该盘的 spawner（可为空）
+var spell_casters: SpellCasterSystem = null # 该盘的法术施放器（可为空）
 var bg_panel: Panel = null        # 视觉背景，用于跨盘选择高亮 / 排序
 var grid_node: Node = null        # cell 父容器（GridContainer / Control 等）
 

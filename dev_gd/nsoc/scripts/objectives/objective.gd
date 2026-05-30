@@ -27,3 +27,8 @@ func setup(_params: Dictionary) -> void:
 # 是否已达成胜利条件
 func is_completed(_params: Dictionary) -> bool:
 	return false
+
+# 当前进度文本（如 "5 / 15"）。无进度概念的目标类型返回 ""。
+# 由 ObjectiveDrawer 在 turn_ended 时调用以刷新显示。
+func progress_text(_params: Dictionary) -> String:
+	return ""

@@ -55,16 +55,12 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
-		var hit_side := Orientation.abs_to_side(defender_data.opp_dir, defender.is_enemy)
+		# 任意一面 <=0 即视为阵亡（通用规则，与 frail 特效无关）
 		var dead: bool = false
-		if defender.effects.has("frail"):
-			# 任一面 <=0 即视为阵亡
-			for s in Orientation.SIDES:
-				if defender.health[s] <= 0:
-					dead = true
-					break
-		else:
-			dead = defender.health[hit_side] <= 0
+		for s in Orientation.SIDES:
+			if defender.health[s] <= 0:
+				dead = true
+				break
 		if dead and not dead_cells.has(defender):
 			dead_cells.append(defender)
 

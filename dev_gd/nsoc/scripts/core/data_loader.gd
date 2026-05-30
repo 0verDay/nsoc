@@ -150,8 +150,10 @@ static func _empty_level() -> Dictionary:
 		# 旧聚合视图（向后兼容）
 		"initial_units": [],
 		"spawners": [],
-		# 局内棋盘事件：[{"turn":N, "add":[slot_idx,...], "remove":[slot_idx,...]}]
+		# 局内棋盘事件：[{"turn":N, "add":[slot_idx,...], "remove":[slot_idx,...], "actions":[...]}]
 		"board_events": [],
+		# 剧情触发器：[{"id","when","once","cooldown","actions",[...]}]
+		"triggers": [],
 		# 战役章节专属字段：
 		# hero_key —— 章节为玩家指定的英雄（hero.json key）。空时回退 BATTLE_HERO_KEY。
 		# initial_mana —— 章节首回合起始费（max=current=N）。0/缺失时按默认 1 走。
@@ -159,6 +161,8 @@ static func _empty_level() -> Dictionary:
 		"hero_key": "",
 		"initial_mana": 0,
 		"objective": {},
+		# 章节名称（用于战斗内 ObjectiveDrawer 标题显示）
+		"name": "",
 	}
 
 # 默认 board meta：保证主棋盘永远在 boards 段中存在，且默认 enabled=true。
@@ -174,6 +178,7 @@ static func _default_board_meta(id: String) -> Dictionary:
 		"hero": {},               # 由 hero.json 提供 fallback
 		"initial_units": [],
 		"spawners": [],
+		"spell_casters": [],      # SpellCasterSystem 配置
 	}
 	match id:
 		"player_main":
@@ -276,12 +281,19 @@ static func _parse_level(j: Dictionary) -> Dictionary:
 			if typeof(ev) != TYPE_DICTIONARY:
 				continue
 			var parsed_ev: Dictionary = {
-				"turn": int(ev.get("turn", -1)),
-				"add":    _parse_int_array(ev.get("add", [])),
-				"remove": _parse_int_array(ev.get("remove", [])),
+				"turn":    int(ev.get("turn", -1)),
+				"add":     _parse_int_array(ev.get("add", [])),
+				"remove":  _parse_int_array(ev.get("remove", [])),
+				# actions 数组原样保留（Events 自行解析）
+				"actions": (ev.get("actions", []) as Array).duplicate(true),
 			}
 			if parsed_ev["turn"] >= 1:
 				out["board_events"].append(parsed_ev)
+	# 解析 triggers（顶层）
+	if j.has("triggers") and typeof(j["triggers"]) == TYPE_ARRAY:
+		for trig in j["triggers"] as Array:
+			if typeof(trig) == TYPE_DICTIONARY:
+				out["triggers"].append((trig as Dictionary).duplicate(true))
 	# 战役章节专属字段（顶层）
 	if j.has("hero_key") and typeof(j["hero_key"]) == TYPE_STRING:
 		out["hero_key"] = String(j["hero_key"])
@@ -289,6 +301,9 @@ static func _parse_level(j: Dictionary) -> Dictionary:
 		out["initial_mana"] = int(j["initial_mana"])
 	if j.has("objective") and typeof(j["objective"]) == TYPE_DICTIONARY:
 		out["objective"] = (j["objective"] as Dictionary).duplicate()
+	# 章节名称（ObjectiveDrawer 顶部标题）
+	if j.has("name") and typeof(j["name"]) == TYPE_STRING:
+		out["name"] = String(j["name"])
 	return out
 
 # 解析 boards.<id> 子段。新格式 row/col 不做映射，按盘内 0..ROWS-1 读取。
@@ -318,6 +333,9 @@ static func _parse_board_section(sub: Dictionary, entry: Dictionary,
 				"positions": positions,
 				"interval": int(sp["interval"]),
 			})
+	# spell_casters：原样保留，由 SpellCasterSystem.setup 解析
+	if sub.has("spell_casters") and typeof(sub["spell_casters"]) == TYPE_ARRAY:
+		entry["spell_casters"] = (sub["spell_casters"] as Array).duplicate(true)
 
 static func _fallback_cards() -> Array:
 	var a = CardUnit.new("填线宝宝", 1, 1, {"front": 1, "back": 1, "left": 1, "right": 1}, [])

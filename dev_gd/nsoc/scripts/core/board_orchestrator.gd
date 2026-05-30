@@ -89,6 +89,9 @@ func _cleanup_all() -> void:
 	_side_panels.clear()
 	_side_ui.clear()
 	_active.clear()
+	# 清空对话队列，防止残留气泡出现在主菜单
+	if has_node("/root/Dialogue"):
+		Dialogue.clear_queue()
 	# 清 Game.turn 残留：旧 combat 节点已 free；信号连接表可能仍指向旧 FrontRowSelector
 	if Game.turn != null:
 		# 强制结束可能仍在运行的回合（退出时 run() 的协程被中断，is_running 可能残留 true）
@@ -119,6 +122,9 @@ func boot() -> void:
 	# 连接回合开始信号，实现 board_events 局内触发
 	if Game.turn != null and not Game.turn.turn_started.is_connected(_on_turn_started):
 		Game.turn.turn_started.connect(_on_turn_started)
+	# 把 Orchestrator 注入 Events，供 add_board / remove_board action 使用
+	if has_node("/root/Events"):
+		Events.set_orchestrator(self)
 	var boards: Dictionary = Game.level_data.get("boards", {})
 	var ordered_ids: Array = ["player_main", "enemy_main"]
 	for id in boards.keys():
@@ -310,8 +316,9 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 		hero_spec = _fallback_hero_spec(faction)
 
 	var level_section := {
-		"initial_units": meta.get("initial_units", []),
-		"spawners": meta.get("spawners", []),
+		"initial_units":  meta.get("initial_units", []),
+		"spawners":       meta.get("spawners", []),
+		"spell_casters":  meta.get("spell_casters", []),
 	}
 
 	var slot: BoardSlot = BoardSlotFactory.create_main(

@@ -68,5 +68,12 @@
 	"cost": 1,
 	"target": "friendly_unit",
 	"effects": ["empower"]
+  },
+  {
+	"name": "放箭",
+	"type": "法术",
+	"cost": 1,
+	"target": "any_unit",
+	"effects": ["weaken"]
   }
 ]

@@ -17,3 +17,10 @@ func is_completed(params: Dictionary) -> bool:
 	var n: int = int(params.get("turns", 1))
 	# 第 N 次 turn_ended 时 turn_number == N
 	return Game.turn.turn_number >= n
+
+func progress_text(params: Dictionary) -> String:
+	if Game == null or Game.turn == null:
+		return ""
+	var n: int = int(params.get("turns", 1))
+	var current: int = mini(Game.turn.turn_number, n)
+	return "%d / %d" % [current, n]

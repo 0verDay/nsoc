@@ -99,5 +99,12 @@
 	"durability": 5,
 	"once_per_turn": false,
 	"effects": ["discard_hand_card"]
+  },
+  {
+	"name": "放箭",
+	"type": "法术",
+	"cost": 1,
+	"target": "any_unit",
+	"effects": ["weaken"]
   }
 ]

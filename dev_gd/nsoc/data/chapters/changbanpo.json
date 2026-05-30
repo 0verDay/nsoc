@@ -1,7 +1,78 @@
 {
 	"version": 1,
-	"description": "英雄：{ally:长坂坡·刘备}  血量：30  技能：{key:义勇军}（2费）——消灭我方半场所有敌人，在我方半场所有空格召唤「乡勇」并赋予{key:灰烬}{break}{para}{enemy:曹操}的百万铁骑已追至{place:当阳}，旌旗蔽日，喊杀声震动四野，马蹄之声犹如闷雷滚滚而来。我{ally:刘备}带着妻小与这些追随了我多年的百姓，在泥泞的道路上寸步难行，心中如刀割一般——是我，是我的无能，才让他们陷于此险境之中，我无颜面对这些人，却也绝不能就此放手离去。{para}{ally:子龙}只身一人杀入{enemy:曹军}百万重围，去寻我那尚在襁褓中的孩儿阿斗，生死未卜，音讯全无。{ally:翼德}则在{place:长坂桥}头横刀立马，须发贲张，以一人之力威慑数十万大军，迟滞追兵的脚步。我知道，他们每一个人都在用命替我争取时间，这份情义深重如山，我刘备此生难以为报，唯有撑下去。{para}或许有人会说，{ally:刘备}一生颠沛，守不住土地，护不住部将，不过是个落魄皇叔，成不了大事。我不辩解，我只知道，只要这些跟着我的百姓还在，只要还有一口气，我便绝不会先他们一步离开这片土地。{place:长坂坡}的血，是我欠下的债，总有一日，我必以仁义还之，{warn:此志不渝}，至死方休。",
+	"description": "英雄：{ally:长坂坡·刘备}  血量：30  技能：{key:义勇军}（2费）——消灭我方半场所有敌人，在我方半场所有空格召唤「乡勇」并赋予{key:灰烬}\n敌方英雄：{enemy:长坂坡·曹操}  血量：100  技能：{key:箭阵}——每回合对最前方的玩家方单位释放「放箭」，使其四维各-1\n关卡目标：{warn:坚守 15 回合}{break}{para}{enemy:曹操}的百万铁骑已追至{place:当阳}，旌旗蔽日，喊杀声震动四野，马蹄之声犹如闷雷滚滚而来。我{ally:刘备}带着妻小与这些追随了我多年的百姓，在泥泞的道路上寸步难行，心中如刀割一般——是我，是我的无能，才让他们陷于此险境之中，我无颜面对这些人，却也绝不能就此放手离去。{para}{ally:子龙}只身一人杀入{enemy:曹军}百万重围，去寻我那尚在襁褓中的孩儿阿斗，生死未卜，音讯全无。{ally:翼德}则在{place:长坂桥}头横刀立马，须发贲张，以一人之力威慑数十万大军，迟滞追兵的脚步。我知道，他们每一个人都在用命替我争取时间，这份情义深重如山，我刘备此生难以为报，唯有撑下去。{para}或许有人会说，{ally:刘备}一生颠沛，守不住土地，护不住部将，不过是个落魄皇叔，成不了大事。我不辩解，我只知道，只要这些跟着我的百姓还在，只要还有一口气，我便绝不会先他们一步离开这片土地。{place:长坂坡}的血，是我欠下的债，总有一日，我必以仁义还之，{warn:此志不渝}，至死方休。",
 	"hero_key": "liubei",
+	"name": "长坂坡",
+	"boards": {
+		"enemy_main": {
+			"hero": {
+				"hp": 100,
+				"name_short": "曹操",
+				"name_full": "长坂坡·曹操",
+				"abilities": ["caocao_archery"]
+			},
+			"spell_casters": [
+				{
+					"spell": "放箭",
+					"interval": 1,
+					"target_strategy": "frontmost_player_unit"
+				}
+			]
+		}
+	},
+	"board_events": [
+		{
+			"turn": 2,
+			"actions": [
+				{
+					"type": "spawn_unit",
+					"name": "pro哥",
+					"board": "enemy_main",
+					"strategy": "any_empty",
+					"faction": 1
+				}
+			]
+		}
+	],
+	"triggers": [
+		{
+			"id": "dialogue_turn_1",
+			"when": {"type": "turn_eq", "n": 1},
+			"once": true,
+			"actions": [
+				{"type": "show_dialogue", "speaker": "曹操",
+				 "text": "{ally:刘备}竖子！你的大军已被击溃，区区数人，还想逃往何处？"}
+			]
+		},
+		{
+			"id": "dialogue_turn_2",
+			"when": {"type": "turn_eq", "n": 2},
+			"once": true,
+			"actions": [
+				{"type": "show_dialogue", "speaker": "曹操",
+				 "text": "孤的百万铁骑已将{place:当阳}团团围住，你等挣扎不过是徒增笑料！"}
+			]
+		},
+		{
+			"id": "dialogue_turn_3",
+			"when": {"type": "turn_eq", "n": 3},
+			"once": true,
+			"actions": [
+				{"type": "show_dialogue", "speaker": "曹操",
+				 "text": "休说{ally:赵云}、{ally:张飞}！区区数人，{warn:焉能抵挡孤的铁甲雄师}？"}
+			]
+		},
+		{
+			"id": "proge_death_damage_player",
+			"when": {"type": "unit_died", "name": "pro哥", "faction": 1},
+			"once": true,
+			"actions": [
+				{"type": "damage_hero", "slot": "player_main", "amount": 10},
+				{"type": "show_dialogue", "speaker": "曹操",
+				 "text": "{warn:伤我大将，以血偿之}！（对你造成10点伤害）"}
+			]
+		}
+	],
 	"initial_mana": 5,
 	"objective": {
 		"type": "survive_turns",

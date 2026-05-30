@@ -26,6 +26,9 @@ Equipments="*res://scripts/core/equipment_manager.gd"
 Objectives="*res://scripts/core/objective_registry.gd"
 Game="*res://scripts/core/game_context.gd"
 QuitConfirm="*res://scripts/core/quit_confirm.gd"
+Actions="*res://scripts/core/action_registry.gd"
+Events="*res://scripts/core/scripted_events.gd"
+Dialogue="*res://scripts/core/dialogue_manager.gd"
 
 [display]
 
