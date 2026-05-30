@@ -123,6 +123,11 @@ func run() -> void:
 
 func _run_phase(faction: int) -> void:
 	phase_started.emit(faction)
+	# 敌方阶段开始时，推进所有盘的法术施放器（在单位行动前）
+	if faction == ENEMY:
+		await _advance_spell_casters()
+		if _combat == null or _combat.aborted:
+			return
 	for entry in _iter_phase_cells(faction):
 		# 每次循环开头先检查：aborted 或节点已被 free（退出到菜单）
 		if _combat == null or _combat.aborted:
@@ -137,6 +142,20 @@ func _run_phase(faction: int) -> void:
 		if _combat == null or _combat.aborted:
 			return
 	phase_ended.emit(faction)
+
+# 推进所有已注册盘的法术施放器（异步）。
+func _advance_spell_casters() -> void:
+	var reg := _registry()
+	if reg == null:
+		return
+	for slot in reg.slots.duplicate():
+		if _combat == null or _combat.aborted:
+			return
+		if not is_instance_valid(slot) or slot.spell_casters == null:
+			continue
+		if slot.spell_casters._casters.is_empty():
+			continue
+		await slot.spell_casters.advance()
 
 # 构建本阶段的 (cell, slot) 序列。
 #

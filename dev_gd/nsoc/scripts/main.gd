@@ -258,6 +258,17 @@ func _wire_signals() -> void:
 	# 使其在视觉和 drop 检测上始终优先于棋盘格子。
 	$LeftSidePnl.move_to_front()
 
+	# ── 章节目标抽屉（仅战役章节且有 objective 时显示）──────────────────
+	if has_node("/root/Objectives") and Objectives.has_active():
+		var canvas := CanvasLayer.new()
+		canvas.layer = 85
+		canvas.name  = "ObjectiveDrawerCanvas"
+		add_child(canvas)
+		const DrawerScript = preload("res://scripts/ui/objective_drawer.gd")
+		var drawer: ObjectiveDrawer = DrawerScript.new()
+		canvas.add_child(drawer)
+		drawer.setup(Game.level_data)
+
 # ── UI 刷新槽 ────────────────────────────────────────────────────────
 func _on_mana_changed(current: int, maximum: int) -> void:
 	mana_label.text = str(current) + "/" + str(maximum)

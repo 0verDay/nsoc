@@ -110,3 +110,9 @@ func current_description() -> String:
 
 func has_active() -> bool:
 	return _active_type != ""
+
+# 当前激活目标的进度文本（如 "5 / 15"），无则返回 ""。
+func current_progress_text() -> String:
+	if _active_type == "" or not _instances.has(_active_type):
+		return ""
+	return _instances[_active_type].progress_text(_active_params)

@@ -14,7 +14,13 @@ signal cleared(cell)
 var row: int = 0
 var col: int = 0
 var has_card: bool = false
-var is_enemy: bool = false
+## 阵营标识：0 = 玩家方（FACTION_PLAYER），1 = 敌方（FACTION_ENEMY）。
+## 与 BoardSlot.FACTION_* 常量对齐，作为单位阵营的唯一可信来源。
+var faction: int = 0
+## 向后兼容别名。所有对 is_enemy 的读 / 写均自动同步到 faction，现有代码无需改动。
+var is_enemy: bool:
+	get: return faction == 1
+	set(value): faction = 1 if value else 0
 # 该 cell 所属的 BoardSlot id。由 BoardSlotFactory / setup 注入。
 # 用于 PlayController / TurnSystem 反查 slot.faction / slot.allow_player_deploy 等。
 var slot_id: String = ""
@@ -37,7 +43,7 @@ var origin: String = ""
 var card_name: String = ""
 var attack: int = 0
 # 以单位视角 side 存储：{front, back, left, right}
-# 渲染时再按 is_enemy 翻转到屏幕绝对方向标签上。
+# 渲染时再按 faction 翻转到屏幕绝对方向标签上。
 var health: Dictionary = {"front": 0, "back": 0, "left": 0, "right": 0}
 var effects: Array = []
 var has_attacked: bool = false
@@ -228,7 +234,11 @@ func receive_damage(dir_abs, dmg, dying: bool = false) -> bool:
 		play_death_effect()
 	else:
 		play_damage_effect()
-	return health[side] <= 0
+	# 任意一面 <=0 即阵亡
+	for s in Orientation.SIDES:
+		if health[s] <= 0:
+			return true
+	return false
 
 func set_drag_hover(hovered: bool) -> void:
 	if is_drag_hovered == hovered:

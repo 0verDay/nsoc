@@ -49,6 +49,13 @@ static func create_main(
 	if level_section != null and level_section.has("spawners"):
 		spawners.setup(level_section["spawners"])
 
+	# 该盘法术施放器（SpellCasterSystem）
+	var spell_casters := SpellCasterSystem.new()
+	spell_casters.name = "SpellCasters_%s" % id
+	Game.add_child(spell_casters)
+	if level_section != null and level_section.has("spell_casters"):
+		spell_casters.setup(level_section["spell_casters"] as Array)
+
 	# 该盘 HeroState
 	var hero := HeroState.new()
 	hero.name = "Hero_%s" % id
@@ -82,6 +89,7 @@ static func create_main(
 	slot.hero_panel = hero_panel
 	slot.grid_node = grid_node
 	slot.allow_player_deploy = (faction == BoardSlot.FACTION_PLAYER)
+	slot.spell_casters = spell_casters
 	Game.registry.add(slot)
 
 	# 摆放初始单位（盘内 row/col 已是 0..2 视角）
@@ -135,6 +143,8 @@ static func destroy(slot: BoardSlot) -> void:
 		slot.board.queue_free()
 	if is_instance_valid(slot.spawners):
 		slot.spawners.queue_free()
+	if is_instance_valid(slot.spell_casters):
+		slot.spell_casters.queue_free()
 	if is_instance_valid(slot.hero):
 		slot.hero.queue_free()
 	if is_instance_valid(slot):

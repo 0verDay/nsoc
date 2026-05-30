@@ -190,8 +190,18 @@ func handle_unit_death(cell) -> void:
 	#   "spawner" / "initial" / 其他 = 入"原属盘"slot.graveyard
 	# 跨盘冲锋后 cell.slot_id 会变，但 owner_slot_id / origin 不变，保证定向准确。
 	# 原属盘已销毁（registry 找不到）则静默丢弃，与缩盘语义一致。
+
+	# 提前捕获死亡快照（cell 数据在死亡处理后可能被清空）
+	var snap := {
+		"card_name":    cell.card_name,
+		"is_enemy":     cell.is_enemy,
+		"owner_slot_id": cell.owner_slot_id,
+		"slot_id":      cell.slot_id,
+	}
+
 	var cdata = Game.get_card(cell.card_name)
 	if cdata == null:
+		_notify_events_unit_died(snap)
 		return
 	var ctx := Game.make_effect_context()
 	ctx.dying_is_enemy = cell.is_enemy
@@ -202,6 +212,7 @@ func handle_unit_death(cell) -> void:
 		if Effects.trigger_death(eff, cdata, ctx):
 			handled = true
 	if handled:
+		_notify_events_unit_died(snap)
 		return
 	if cell.origin == "hand":
 		Game.deck.send_to_graveyard(cdata)
@@ -210,6 +221,12 @@ func handle_unit_death(cell) -> void:
 		if slot != null:
 			slot.send_to_graveyard(cdata)
 		# slot==null：原属盘已销毁，单位连同资源一起丢弃
+	_notify_events_unit_died(snap)
+
+# 通知 Events 系统单位已死亡（Events 存在时才调用，否则静默）。
+func _notify_events_unit_died(snap: Dictionary) -> void:
+	if has_node("/root/Events"):
+		Events.notify_unit_died(snap)
 
 # 取单位"原属盘"。优先用 cell.owner_slot_id，未注入时回退到 cell.slot_id（旧逻辑兜底）。
 static func _resolve_owner_slot(cell) -> BoardSlot:

@@ -194,6 +194,10 @@ func bootstrap() -> void:
 	if has_node("/root/Objectives"):
 		Objectives.setup_for_battle(level.get("objective", {}))
 
+	# 初始化脚本化事件系统（解析 triggers / board_events.actions，接 turn_started 信号）
+	if has_node("/root/Events"):
+		Events.setup_for_battle(level_data)
+
 	# 一次性消费：清空 pending 字段，避免战斗结束返回主菜单后
 	# 再次进入战斗（玩家牌组）误用上一局的配置。
 	pending_chapter_config = ""
