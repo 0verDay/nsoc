@@ -147,12 +147,22 @@ func start_long_press(target_data) -> void:
 	if _long_press_timer:
 		_long_press_timer.start()
 
-# 英雄长按。target 为字典 {name, ability_id, hp}。
-func start_long_press_hero(hero_name: String, ability_id: String = "", display_hp: int = -1) -> void:
-	_long_press_target = {"name": hero_name, "ability_id": ability_id, "hp": display_hp}
+# 英雄长按。ability_ids 支持传字符串（单个）或数组（多个）。
+func start_long_press_hero(hero_name: String, ability_ids = "", display_hp: int = -1) -> void:
+	_long_press_target = {"name": hero_name, "ability_ids": _normalize_ability_ids(ability_ids), "hp": display_hp}
 	_long_press_kind = "hero"
 	if _long_press_timer:
 		_long_press_timer.start()
+
+# 兼容旧 String 传入与新 Array 传入。
+static func _normalize_ability_ids(raw) -> Array:
+	if typeof(raw) == TYPE_ARRAY:
+		var out: Array = []
+		for v in raw:
+			out.append(String(v))
+		return out
+	var s: String = String(raw)
+	return [s] if s != "" else []
 
 # 装备按钮长按。target 为 EquipmentInstance。
 func start_long_press_equipment(inst) -> void:
@@ -166,13 +176,36 @@ func cancel_long_press() -> void:
 		_long_press_timer.stop()
 	_long_press_target = null
 
+# 仅在面板已开 + 正在展示同名卡时刷新内容，不触发开启动画。
+# 供 cell.effects_changed 信号调用（浸水/冲锋等运行时效果追加）。
+func refresh_if_showing(payload) -> void:
+	if not _is_open or _long_press_kind != "card":
+		return
+	var showing_name: String = ""
+	if typeof(_long_press_target) == TYPE_DICTIONARY:
+		showing_name = String(_long_press_target.get("name", ""))
+	var incoming_name: String = ""
+	if typeof(payload) == TYPE_DICTIONARY:
+		incoming_name = String(payload.get("name", ""))
+	if incoming_name == "" or incoming_name != showing_name:
+		return
+	# 同名卡：更新 _long_press_target 并刷新内容（show_for 在已开时只改文字不播动画）
+	_long_press_target = payload
+	show_for(payload)
+
 func _on_long_press_timeout() -> void:
 	if _long_press_kind == "hero":
 		var t = _long_press_target
 		if typeof(t) == TYPE_DICTIONARY:
-			show_hero(String(t.get("name", "")), String(t.get("ability_id", "")), int(t.get("hp", -1)))
+			# 兼容旧 ability_id（String）与新 ability_ids（Array）两种 key
+			var ids: Array = []
+			if t.has("ability_ids"):
+				ids = t["ability_ids"] as Array
+			elif t.has("ability_id") and String(t.get("ability_id", "")) != "":
+				ids = [String(t["ability_id"])]
+			show_hero(String(t.get("name", "")), ids, int(t.get("hp", -1)))
 		else:
-			show_hero(String(t))
+			show_hero(String(t), [], -1)
 	elif _long_press_kind == "equipment":
 		show_equipment(_long_press_target)
 	else:
@@ -199,8 +232,12 @@ func show_for(data) -> void:
 		c.queue_free()
 
 	var cname: String = ""
+	# 运行时效果列表（优先 payload 里的 cell.effects，退回原型 effects）
+	var runtime_effects: Array = []
 	if typeof(data) == TYPE_DICTIONARY:
 		cname = String(data.get("name", ""))
+		if data.has("effects") and typeof(data["effects"]) == TYPE_ARRAY:
+			runtime_effects = data["effects"] as Array
 	else:
 		cname = data.name
 
@@ -221,13 +258,18 @@ func show_for(data) -> void:
 		else:
 			cost_lbl.text = "费用: " + str(cdata.cost)
 
+		# 优先显示运行时 effects（含动态追加的浸水等），退回原型 effects
+		var display_effects: Array = runtime_effects if runtime_effects.size() > 0 else cdata.effects
 		var effect_texts: Array = []
-		for eff in cdata.effects:
-			effect_texts.append(Effects.get_description(eff))
+		for eff in display_effects:
+			var desc: String = Effects.get_description(eff)
+			if desc != "":
+				effect_texts.append(desc)
 		if cdata is CardEquipment and cdata.once_per_turn:
 			effect_texts.append("（每回合最多触发一次）")
 		effect_lbl.text = "\n".join(effect_texts) if effect_texts.size() > 0 else "无附加效果"
 
+	# 已开着时只刷新内容，不重播开启动画
 	if _is_open:
 		return
 	_is_open = true
@@ -241,12 +283,12 @@ func show_for(data) -> void:
 	tween.parallel().tween_property(_panel, "offset_right", w, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_callback(func(): _animating = false)
 
-# 英雄详情：显示名字 + 血量 + 技能名/描述，复用同一弹出动画。
-# 不显示费用括号；CardCenter 隐藏让文字整体上移。display_hp 由调用方传入，
-# 通常为 hero.max_health（不随战斗扣减的初始值）。
-func show_hero(hero_name: String, ability_id: String = "", display_hp: int = -1) -> void:
+# 英雄详情：显示名字 + 血量 + 所有技能描述，复用同一弹出动画。
+# ability_ids 为技能 ID 字符串数组（兼容旧单 String 传入）。
+func show_hero(hero_name: String, ability_ids = [], display_hp: int = -1) -> void:
 	if hero_name == "":
 		return
+	var ids: Array = _normalize_ability_ids(ability_ids)
 	var vbox := _panel.get_node_or_null("DetailVBox")
 	if vbox == null:
 		return
@@ -266,9 +308,24 @@ func show_hero(hero_name: String, ability_id: String = "", display_hp: int = -1)
 	hp_lbl.visible = true
 	hp_lbl.text = "血量：%d" % display_hp
 
-	if ability_id != "" and HeroAbilities.has(ability_id):
-		cost_lbl.text = "技能：%s" % HeroAbilities.get_display_name(ability_id)
-		effect_lbl.text = HeroAbilities.get_description(ability_id)
+	# 拼接所有技能的名称和描述
+	if ids.size() > 0:
+		var skill_lines: Array = []
+		for aid in ids:
+			if HeroAbilities.has(aid):
+				var skill_name: String = HeroAbilities.get_display_name(aid)
+				var skill_desc: String = HeroAbilities.get_description(aid)
+				# 若描述以"技能名："开头则去掉，避免"【援樊】援樊：..."重复
+				var prefix: String = skill_name + "："
+				if skill_desc.begins_with(prefix):
+					skill_desc = skill_desc.substr(prefix.length())
+				skill_lines.append("【%s】%s" % [skill_name, skill_desc])
+		if skill_lines.size() > 0:
+			cost_lbl.text = "技能："
+			effect_lbl.text = "\n\n".join(skill_lines)
+		else:
+			cost_lbl.text = ""
+			effect_lbl.text = ""
 	else:
 		cost_lbl.text = ""
 		effect_lbl.text = ""

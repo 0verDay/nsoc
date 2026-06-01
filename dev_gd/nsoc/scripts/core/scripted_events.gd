@@ -72,7 +72,14 @@ func setup_for_battle(level_data: Dictionary) -> void:
 func set_orchestrator(orch: Node) -> void:
 	_orchestrator = orch
 
-# PlayController.handle_unit_death 调用：通知单位死亡，检查 unit_died 类 trigger。
+# main.gd intro 动画完成后调用：触发 game_started 类 trigger。
+func notify_game_started() -> void:
+	for trig in _triggers:
+		if trig["fired"] and trig["once"]:
+			continue
+		var when: Dictionary = trig["when"]
+		if String(when.get("type", "")) == "game_started":
+			_fire_trigger(trig)
 func notify_unit_died(snap: Dictionary) -> void:
 	for trig in _triggers:
 		if trig["fired"] and trig["once"]:
@@ -84,19 +91,43 @@ func notify_unit_died(snap: Dictionary) -> void:
 			continue
 		_fire_trigger(trig)
 
+# BoardSlot.hero died 信号调用：通知英雄死亡，检查 hero_died 类 trigger。
+# snap 结构：{"slot_id": String, "hero_name": String}
+func notify_hero_died(snap: Dictionary) -> void:
+	for trig in _triggers:
+		if trig["fired"] and trig["once"]:
+			continue
+		var when: Dictionary = trig["when"]
+		if String(when.get("type", "")) != "hero_died":
+			continue
+		# "slot" 条件：slot_id 匹配
+		if when.has("slot"):
+			if String(when["slot"]) != String(snap.get("slot_id", "")):
+				continue
+		# "name" 条件：hero_name 匹配
+		if when.has("name"):
+			if String(when["name"]) != String(snap.get("hero_name", "")):
+				continue
+		_fire_trigger(trig)
+
 # ── 回合信号处理 ──────────────────────────────────────────────────────────
 
 func _on_turn_started() -> void:
 	if not has_node("/root/Game") or Game.turn == null:
 		return
-	var current_turn: int = Game.turn.turn_number
+	# board_events 和 triggers 现在由 TurnSystem 在 run() 里 await 执行，
+	# 此处不再重复执行，防止双跑。
+	pass
 
-	# 1. 回合型 board_events.actions
+# TurnSystem 在 turn_started.emit() 后、_run_phase 前调用并 await。
+# 顺序执行当前回合的 board_events.actions 和所有符合条件的 triggers。
+func run_turn_events_and_wait(current_turn: int) -> void:
+	# 1. 回合型 board_events.actions（顺序 await，确保 add_board 动画完成后再继续）
 	for ev in _board_event_actions:
 		if int(ev["turn"]) == current_turn:
-			_run_actions_async(ev["actions"])
+			await _run_actions(ev["actions"])
 
-	# 2. 回合型 trigger：turn_eq / turn_gte
+	# 2. 回合型 trigger：turn_eq / turn_gte / counters 等
 	for trig in _triggers:
 		if trig["fired"] and trig["once"]:
 			continue
@@ -104,12 +135,14 @@ func _on_turn_started() -> void:
 		match String(when.get("type", "")):
 			"turn_eq":
 				if current_turn == int(when.get("n", -1)):
-					_fire_trigger(trig)
+					await _fire_trigger_and_wait(trig)
 			"turn_gte":
 				if current_turn >= int(when.get("n", -1)):
-					_fire_trigger(trig)
+					await _fire_trigger_and_wait(trig)
 			"hero_hp_below":
 				_check_hero_hp_trigger(trig, when, current_turn)
+			"counters_all_set":
+				_check_counters_all_set_trigger(trig, when, current_turn)
 
 # ── 内部工具 ──────────────────────────────────────────────────────────────
 
@@ -144,17 +177,37 @@ func _check_hero_hp_trigger(trig: Dictionary, cond: Dictionary, current_turn: in
 	if slot.hero.health <= threshold:
 		_fire_trigger(trig)
 
+# counters_all_set：检查 Game.counters 中指定 keys 是否全部 >= 1
+func _check_counters_all_set_trigger(trig: Dictionary, cond: Dictionary, _current_turn: int) -> void:
+	if not has_node("/root/Game"):
+		return
+	var keys = cond.get("keys", [])
+	if typeof(keys) != TYPE_ARRAY:
+		return
+	for k in keys:
+		if int(Game.counters.get(String(k), 0)) < 1:
+			return
+	_fire_trigger(trig)
+
 func _fire_trigger(trig: Dictionary) -> void:
 	trig["fired"] = true
 	if has_node("/root/Game") and Game.turn != null:
 		trig["last_fired_turn"] = Game.turn.turn_number
 	_run_actions_async(trig["actions"])
 
+# 可 await 版本：执行完所有 actions 后才返回。
+func _fire_trigger_and_wait(trig: Dictionary) -> void:
+	trig["fired"] = true
+	if has_node("/root/Game") and Game.turn != null:
+		trig["last_fired_turn"] = Game.turn.turn_number
+	await _run_actions(trig["actions"])
+
 # 启动 actions 协程（fire-and-forget）：_run_actions 是协程，
 # 不 await 即以"后台"方式运行，不阻塞当前信号处理路径。
 func _run_actions_async(actions: Array) -> void:
 	if actions.is_empty():
 		return
+	# fire-and-forget：不 await，后台运行
 	_run_actions(actions)
 
 # 顺序执行 actions 数组（协程，含 await）。

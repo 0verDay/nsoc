@@ -136,12 +136,9 @@ func boot() -> void:
 			continue
 		var meta: Dictionary = boards[id]
 		var is_main: bool = (id == "player_main" or id == "enemy_main")
-		# 附盘：有初始单位或生成器才在游戏开始时放好
-		if not is_main:
-			var has_units: bool = (meta.get("initial_units", []) as Array).size() > 0
-			var has_spawners: bool = (meta.get("spawners", []) as Array).size() > 0
-			if not has_units and not has_spawners:
-				continue
+		# 附盘：只看 enabled 标志。initial_units/spawners 决定内容，不决定何时创建。
+		if not is_main and not bool(meta.get("enabled", false)):
+			continue
 		_create_slot(id, meta, false)
 		# boot 期不播动画，由 setup_intro_nodes() 统一交给场景入场 tween 处理
 
@@ -406,7 +403,7 @@ func _setup_side_ally_panel(id: String, slot: BoardSlot, ui: Dictionary) -> void
 
 func _side_center_x_for(id: String) -> float:
 	match id:
-		"ally_left", "enemy_left":
+		"ally_left", "enemy_left", "enemy_xuhuang":
 			return _main_center_x - _side_gap_x
 		"ally_right", "enemy_right":
 			return _main_center_x + _side_gap_x
@@ -436,7 +433,7 @@ func _make_hero_panel_input_handler(hp_pnl: Panel, slot: BoardSlot) -> Callable:
 				and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			if slot.hero != null and _detail_panel != null:
 				_detail_panel.start_long_press_hero(
-					slot.hero.name_full, slot.hero.ability_id(), slot.hero.max_health)
+					slot.hero.name_full, slot.hero.all_ability_ids(), slot.hero.max_health)
 			hp_pnl.pivot_offset = hp_pnl.size / 2.0
 			var tw_p := hp_pnl.create_tween()
 			tw_p.tween_property(hp_pnl, "scale", Vector2(1.08, 1.08), 0.1)

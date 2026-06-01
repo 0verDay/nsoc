@@ -28,6 +28,49 @@
 			"max_health": 30,
 			"abilities": ["yi_yong_jun"],
 			"skill_text": "义勇军：消耗 2 费用，消灭我方半场的所有敌人，随后在我方半场所有空格召唤「乡勇」，并使其获得「灰烬」（死后除外）。"
+		},
+		"guanyu_wei": {
+			"display_name": "威震华夏·关羽",
+			"battle_name": "关羽",
+			"max_health": 30,
+			"abilities": ["flood_strategy_hero"],
+			"skill_text": "水攻：消耗 2 费，选择任意敌方单位，使其获得「浸水」（受伤即灭，一次性）"
+		},
+		"dam": {
+			"display_name": "水坝",
+			"battle_name": "水坝",
+			"max_health": 5,
+			"abilities": ["flood_dam_ability"],
+			"skill_text": "水淹七军：每回合积累一层「蓄水」；使用「决堤」时剥夺曹仁「死守」；退场时每1层蓄水对「曹仁」造成1伤害，每5层封锁敌方出兵1回合"
+		},
+		"caoren_fan": {
+			"display_name": "樊城·曹仁",
+			"battle_name": "曹仁",
+			"max_health": 30,
+			"abilities": ["die_hard_display"],
+			"skill_text": "死守：免疫单位直接伤害与法术直接伤害（援樊、蓄水等触发型效果可穿透）",
+			"flags": ["die_hard"]
+		},
+		"pangde_fan": {
+			"display_name": "樊城·庞德",
+			"battle_name": "庞德",
+			"max_health": 15,
+			"abilities": ["aid_fancheng_ability", "first_arrow_ability"],
+			"skill_text": "援樊：被击败后对曹仁造成10伤害。先射：回合开始若关羽在场，对其造成4点伤害。"
+		},
+		"yujin_fan": {
+			"display_name": "樊城·于禁",
+			"battle_name": "于禁",
+			"max_health": 10,
+			"abilities": ["aid_fancheng_ability", "surrender_ability", "reinforce_camp_ability"],
+			"skill_text": "援樊：被击败后对曹仁造成10伤害。受降：被击败后关羽满血且友军四维恢复。屯扎：回合开始所有敌方单位四维+1。"
+		},
+		"xuhuang_fan": {
+			"display_name": "樊城·徐晃",
+			"battle_name": "徐晃",
+			"max_health": 20,
+			"abilities": ["aid_fancheng_ability", "straight_in_ability"],
+			"skill_text": "援樊：被击败后对曹仁造成10伤害。直入：回合开始友方单位获冲锋；回合结束移除冲锋。"
 		}
 	},
 	"enemy_default": {

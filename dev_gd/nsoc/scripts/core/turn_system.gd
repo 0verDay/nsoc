@@ -99,6 +99,10 @@ func run() -> void:
 	is_running = true
 	turn_number += 1
 	turn_started.emit()
+	# 等待本回合 board_events / turn_gte 触发器执行完毕（含 add_board 滑入动画），
+	# 确保所有棋盘就位后再处理单位行动。
+	if has_node("/root/Events") and Events.is_inside_tree():
+		await Events.run_turn_events_and_wait(turn_number)
 	await _run_phase(PLAYER)
 	if _combat == null or _combat.aborted:
 		is_running = false
@@ -132,10 +136,15 @@ func _run_phase(faction: int) -> void:
 		# 每次循环开头先检查：aborted 或节点已被 free（退出到菜单）
 		if _combat == null or _combat.aborted:
 			return
-		var c = entry["cell"]
-		var s: BoardSlot = entry["slot"]
-		# 棋盘可能在上一次 await 后被动态移除，跳过已释放的 cell/slot
-		if not is_instance_valid(c) or not is_instance_valid(s) or not is_instance_valid(s.board):
+		# 先校验 entry 内的引用有效性，再赋值局部变量
+		var raw_slot = entry.get("slot")
+		var raw_cell = entry.get("cell")
+		if not is_instance_valid(raw_cell) or not is_instance_valid(raw_slot):
+			continue
+		var c = raw_cell
+		var s: BoardSlot = raw_slot
+		# 棋盘可能在上一次 await 后被动态移除，跳过已释放的 cell/slot/board
+		if not is_instance_valid(s.board):
 			continue
 		await _process_cell(faction, c, s)
 		# await 后再次检查，防止 process_cell 内部触发退出
@@ -338,7 +347,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 							if _combat == null or _combat.aborted:
 								return
 						elif probe_hit_hero and target_hero.is_valid():
-							target_hero.call(probe_dest.attack)
+							target_hero.call(probe_dest.attack, "unit_direct")
 							await get_tree().create_timer(STEP_INTERVAL).timeout
 						if is_instance_valid(probe_dest) and probe_dest.has_card:
 							probe_dest.has_attacked = true
@@ -386,8 +395,8 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 			return
 
 	# ── 冲锋 ────────────────────────────────────────────────────────
-	# 推进到 goal_row：自家盘 → front_row（停下不打英雄）；敌方盘 → back_row（打英雄）
-	if cell.effects.has("charge") and not cell.has_charged:
+	# steadfast 单位即使有 charge 也不移动
+	if cell.effects.has("charge") and not cell.has_charged and not cell.effects.has("steadfast"):
 		var ended_cell = await _run_charge_on_board(cell, step, for_enemy,
 			goal_row, board, hero_resolver)
 		if ended_cell != null:
@@ -397,10 +406,10 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 
 	# 已到 goal_row：
 	#   自家盘上 = 自家 front_row → idle（跨盘已处理）
-	#   敌方盘上 = 该盘 back_row → 打英雄
+	#   敌方盘上 = 该盘 back_row → 打英雄（"unit_direct" 来源）
 	if cell.row == goal_row:
 		if not on_home_board and hero_resolver.is_valid():
-			hero_resolver.call(cell.attack)
+			hero_resolver.call(cell.attack, "unit_direct")
 		cell.has_attacked = true
 		await get_tree().create_timer(STEP_INTERVAL).timeout
 		return
@@ -487,8 +496,8 @@ func _enemy_auto_cross(cell, slot: BoardSlot, player_slots: Array) -> bool:
 		var tgt2 = pick2["cell"]
 		var pb2: BoardModel = ply_slot2.board
 
-		# 冲锋单位：探查玩家盘上的终点，一次性冲到位（无中间停顿）
-		if cell.effects.has("charge") and not cell.has_charged:
+		# 冲锋单位（steadfast 不触发）：探查玩家盘上的终点，一次性冲到位（无中间停顿）
+		if cell.effects.has("charge") and not cell.has_charged and not cell.effects.has("steadfast"):
 			var probe_dest = tgt2
 			var probe_enemy = null
 			var probe_hit_hero: bool = false
@@ -526,7 +535,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, player_slots: Array) -> bool:
 				if _combat == null or _combat.aborted:
 					return true
 			elif probe_hit_hero and ply_slot2.hero_resolver.is_valid():
-				ply_slot2.hero_resolver.call(probe_dest.attack)
+				ply_slot2.hero_resolver.call(probe_dest.attack, "unit_direct")
 				await get_tree().create_timer(STEP_INTERVAL).timeout
 			if is_instance_valid(probe_dest) and probe_dest.has_card:
 				probe_dest.has_attacked = true
@@ -597,7 +606,7 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 		board: BoardModel, hero_resolver: Callable):
 	if cell.row == goal_row:
 		if hero_resolver.is_valid():
-			hero_resolver.call(cell.attack)
+			hero_resolver.call(cell.attack, "unit_direct")
 		await get_tree().create_timer(STEP_INTERVAL).timeout
 		if _combat == null or _combat.aborted:
 			return null
@@ -645,7 +654,7 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 		if _combat == null or _combat.aborted:
 			return null
 	elif hit_hero and hero_resolver.is_valid():
-		hero_resolver.call(dest.attack)
+		hero_resolver.call(dest.attack, "unit_direct")
 		await get_tree().create_timer(STEP_INTERVAL).timeout
 		if _combat == null or _combat.aborted:
 			return null

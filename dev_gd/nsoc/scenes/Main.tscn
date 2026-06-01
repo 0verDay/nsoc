@@ -106,7 +106,7 @@ theme_override_constants/h_separation = 25
 theme_override_constants/v_separation = 25
 columns = 3
 
-[node name="LeftSidePnl" type="Panel" parent="." unique_id=4711000001]
+[node name="LeftSidePnl" type="Panel" parent="." unique_id=416032705]
 layout_mode = 1
 anchors_preset = 3
 anchor_left = 1.0
@@ -121,7 +121,7 @@ grow_horizontal = 0
 grow_vertical = 0
 pivot_offset = Vector2(150, 90)
 
-[node name="HeroNameLbl" type="Label" parent="LeftSidePnl" unique_id=4711000002]
+[node name="HeroNameLbl" type="Label" parent="LeftSidePnl" unique_id=416032706]
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
@@ -138,6 +138,7 @@ vertical_alignment = 1
 
 [node name="PHpPnl" type="Panel" parent="LeftSidePnl" unique_id=2043617128]
 layout_mode = 1
+anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -125.0
@@ -175,6 +176,7 @@ grow_vertical = 2
 
 [node name="ManaPnl" type="Panel" parent="BottomBar" unique_id=613423958]
 layout_mode = 1
+anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 30.0

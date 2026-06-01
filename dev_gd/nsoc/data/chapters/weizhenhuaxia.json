@@ -1,48 +1,290 @@
 {
 	"version": 1,
 	"name": "威震华夏",
-	"description": "水淹七军，威震华夏！关云长乘大水之势，擒于禁、斩庞德，天下震动！",
+	"description": "英雄：{ally:威震华夏·关羽}  血量：30  技能：{key:水攻}（2费）——选择任意敌方单位，使其获得{key:浸水}（受伤即灭，一次性）\n友方英雄：{ally:水坝}  血量：5  每回合积累一层{key:蓄水}，使用「决堤」后退场并结算伤害\n敌方英雄：{enemy:樊城·曹仁}  血量：30  技能：{key:死守}——免疫单位与法术的直接伤害，只能被触发型效果击破\n关卡目标：{warn:击败樊城·曹仁}{break}{para}此番北伐，非我一人之战。将士们追随我自{place:荆州}一路向北，跋山涉水，九死一生，我岂能令他们白流鲜血？{place:樊城}城高墙厚，{enemy:曹仁}此人确是悍将，然我关某守的是汉室正统，是兄长三顾茅庐时许下的誓言，这座城，今日必克。{para}老天终究站在了汉室这边。秋雨一连数十日未歇，{place:汉水}涨得我险些认不出原来的河道。那一日我登高望去，只见{enemy:于禁}七军营寨已半没于水中，兵士哀号，无处遁逃——我知道，时机到了。引水决堤，浊浪滚滚，七军尽没，{enemy:于禁}降了，{enemy:庞德}死了，死得倒也硬气，算是个好汉。{para}胜券在握之时，探报传来：{enemy:曹操}又遣猛将{enemy:徐晃}领援兵赶来，虎视眈眈，来势不小。我不慌。我还有兵马，有{place:汉水}的滔滔洪势，更有这个汉寿亭侯的名号要守护。此战，{warn:威震华夏}，不是我关某的妄语——是天下人亲眼见证的定论，无人可夺。",
+	"hero_key": "guanyu_wei",
+	"initial_mana": 1,
 	"cards": [
-		{"name": "填线宝宝", "count": 8}
+		{"name": "鸣金",       "count": 3},
+		{"name": "刮骨疗毒",   "count": 1},
+		{"name": "决堤",       "count": 1},
+		{"name": "樊城·关羽",  "count": 1},
+		{"name": "填线宝宝",   "count": 10}
 	],
-	"initial_units": [
-		{
-			"name": "看门狗",
-			"faction": 1,
-			"positions": [
-				{ "row": 1, "col": 0 },
-				{ "row": 1, "col": 1 },
-				{ "row": 1, "col": 2 }
-			]
-		},
-		{
-			"name": "填线宝宝",
+	"boards": {
+		"player_main": {
 			"faction": 0,
-			"positions": [
-				{ "row": 3, "col": 1 }
+			"role": "main_player",
+			"slot_index": 4,
+			"hero": {
+				"hp": 30,
+				"name_short": "关羽",
+				"name_full": "威震华夏·关羽",
+				"abilities": ["flood_strategy_hero"]
+			}
+		},
+		"ally_left": {
+			"faction": 0,
+			"role": "ally",
+			"slot_index": 3,
+			"enabled": true,
+			"hero": {
+				"hp": 20,
+				"name_short": "水坝",
+				"name_full": "水坝",
+				"abilities": ["flood_dam_ability"]
+			},
+			"initial_units": [],
+			"spawners": []
+		},
+		"enemy_main": {
+			"faction": 1,
+			"role": "main_enemy",
+			"slot_index": 1,
+			"hero": {
+				"hp": 30,
+				"name_short": "曹仁",
+				"name_full": "樊城·曹仁",
+				"abilities": ["die_hard_display"],
+				"flags": ["die_hard"]
+			},
+			"initial_units": [
+				{
+					"name": "樊城·满宠",
+					"faction": 1,
+					"positions": [{"row": 0, "col": 1}]
+				}
+			],
+			"spawners": [
+				{
+					"name": "填线宝宝",
+					"faction": 1,
+					"positions": [
+						{"row": 1, "col": 0},
+						{"row": 1, "col": 1},
+						{"row": 1, "col": 2}
+					],
+					"interval": 3
+				}
+			]
+		},
+		"enemy_left": {
+			"faction": 1,
+			"role": "enemy",
+			"slot_index": 0,
+			"hero": {
+				"hp": 1,
+				"name_short": "庞德",
+				"name_full": "樊城·庞德",
+				"abilities": ["aid_fancheng_ability", "first_arrow_ability"]
+			},
+			"initial_units": [
+				{
+					"name": "填线宝宝",
+					"faction": 1,
+					"positions": [
+						{"row": 0, "col": 1}
+					]
+				}
+			],
+			"spawners": [
+				{
+					"name": "填线宝宝",
+					"faction": 1,
+					"positions": [
+						{"row": 0, "col": 0},
+						{"row": 0, "col": 1},
+						{"row": 0, "col": 2}
+					],
+					"interval": 3
+				}
+			]
+		},
+		"enemy_xuhuang": {
+			"faction": 1,
+			"role": "enemy",
+			"slot_index": 0,
+			"enabled": false,
+			"hero": {
+				"hp": 20,
+				"name_short": "徐晃",
+				"name_full": "樊城·徐晃",
+				"abilities": ["aid_fancheng_ability", "straight_in_ability"]
+			},
+			"initial_units": [],
+			"spawners": []
+		},
+		"enemy_right": {
+			"faction": 1,
+			"role": "enemy",
+			"slot_index": 2,
+			"hero": {
+				"hp": 1,
+				"name_short": "于禁",
+				"name_full": "樊城·于禁",
+				"abilities": ["aid_fancheng_ability", "surrender_ability", "reinforce_camp_ability"]
+			},
+			"initial_units": [
+				{
+					"name": "填线宝宝",
+					"faction": 1,
+					"positions": [
+						{"row": 0, "col": 1}
+					]
+				}
+			],
+			"spawners": [
+				{
+					"name": "填线宝宝",
+					"faction": 1,
+					"positions": [
+						{"row": 0, "col": 0},
+						{"row": 0, "col": 1},
+						{"row": 0, "col": 2}
+					],
+					"interval": 3
+				}
+			]
+		}
+	},
+	"board_events": [
+		{
+			"turn": 1,
+			"actions": [
+				{"type": "trigger_ability", "ability": "flood_dam_ability", "method": "add_charge"}
+			]
+		},
+		{
+			"turn": 5,
+			"actions": [
+				{"type": "add_board", "slot": "enemy_left"},
+				{"type": "add_board", "slot": "enemy_right"},
+				{"type": "show_dialogue", "speaker": "于禁",
+				 "text": "奉{enemy:魏王}之命，{enemy:某}率七军驰援！{ally:关羽}，此处便是你的葬身之地！",
+				 "board": "enemy_right"},
+				{"type": "show_dialogue", "speaker": "庞德",
+				 "text": "吾已备棺木——或为{ally:关某}，或为吾。{warn:不斩关羽，誓不生还}！",
+				 "board": "enemy_left"}
 			]
 		}
 	],
-	"spawners": [
+	"triggers": [
 		{
-			"name": "填线宝宝",
-			"faction": 1,
-			"positions": [
-				{ "row": 1, "col": 0 },
-				{ "row": 1, "col": 1 },
-				{ "row": 1, "col": 2 }
-			],
-			"interval": 3
+			"id": "dialogue_game_start",
+			"when": {"type": "game_started"},
+			"once": true,
+			"actions": [
+				{"type": "show_dialogue", "speaker": "曹仁",
+				 "text": "{ally:关羽}！{place:樊城}城高粮足，你纵有万军，休想令{enemy:某}退却半步！"},
+				{"type": "show_dialogue", "speaker": "关羽",
+				 "text": "{enemy:曹仁}，{place:汉水}将为你掘墓，且静候{warn:水到渠成}。",
+				 "side": "player"}
+			]
 		},
 		{
-			"name": "灰烬填线宝宝",
-			"faction": 1,
-			"positions": [
-				{ "row": 0, "col": 0 },
-				{ "row": 0, "col": 1 },
-				{ "row": 0, "col": 2 }
-			],
-			"interval": 3
+			"id": "flood_charge_per_turn",
+			"when": {"type": "turn_gte", "n": 2},
+			"once": false,
+			"cooldown": 1,
+			"actions": [
+				{"type": "trigger_ability", "ability": "flood_dam_ability", "method": "add_charge"}
+			]
+		},
+		{
+			"id": "fancheng_guanyu_water_attack",
+			"when": {"type": "turn_gte", "n": 1},
+			"once": false,
+			"cooldown": 1,
+			"actions": [
+				{
+					"type": "apply_soaked_to_all",
+					"faction": 1,
+					"require_effect": "flood_strategy_unit"
+				}
+			]
+		},
+		{
+			"id": "first_arrow_per_turn",
+			"when": {"type": "turn_gte", "n": 5},
+			"once": false,
+			"cooldown": 1,
+			"actions": [
+				{"type": "trigger_ability", "ability": "first_arrow_ability", "method": "trigger"}
+			]
+		},
+		{
+			"id": "reinforce_camp_per_turn",
+			"when": {"type": "turn_gte", "n": 5},
+			"once": false,
+			"cooldown": 1,
+			"actions": [
+				{"type": "trigger_ability", "ability": "reinforce_camp_ability", "method": "trigger"}
+			]
+		},
+		{
+			"id": "straight_in_start_per_turn",
+			"when": {"type": "turn_gte", "n": 5},
+			"once": false,
+			"cooldown": 1,
+			"actions": [
+				{"type": "trigger_ability", "ability": "straight_in_ability", "method": "trigger_start"}
+			]
+		},
+		{
+			"id": "pangde_died_trigger",
+			"when": {"type": "hero_died", "slot": "enemy_left"},
+			"once": true,
+			"actions": [
+				{"type": "trigger_ability", "ability": "aid_fancheng_ability", "method": "trigger"},
+				{"type": "remove_board", "slot": "enemy_left"},
+				{"type": "set_counter", "key": "pangde_dead", "value": 1}
+			]
+		},
+		{
+			"id": "yujin_died_trigger",
+			"when": {"type": "hero_died", "slot": "enemy_right"},
+			"once": true,
+			"actions": [
+				{"type": "trigger_ability", "ability": "aid_fancheng_ability", "method": "trigger"},
+				{"type": "trigger_ability", "ability": "surrender_ability", "method": "trigger"},
+				{"type": "remove_board", "slot": "enemy_right"},
+				{"type": "set_counter", "key": "yujin_dead", "value": 1}
+			]
+		},
+		{
+			"id": "xuhuang_spawn_check",
+			"when": {"type": "counters_all_set", "keys": ["pangde_dead", "yujin_dead"]},
+			"once": true,
+			"actions": [
+				{"type": "add_board", "slot": "enemy_xuhuang"}
+			]
+		},
+		{
+			"id": "xuhuang_aid_trigger",
+			"when": {"type": "hero_died", "slot": "enemy_xuhuang"},
+			"once": true,
+			"actions": [
+				{"type": "trigger_ability", "ability": "aid_fancheng_ability", "method": "trigger"},
+				{"type": "remove_board", "slot": "enemy_xuhuang"}
+			]
+		},
+		{
+			"id": "water_dam_died_release",
+			"when": {"type": "hero_died", "slot": "ally_left"},
+			"once": true,
+			"actions": [
+				{"type": "trigger_ability", "ability": "flood_dam_ability", "method": "release"},
+				{"type": "remove_board", "slot": "ally_left"},
+				{"type": "show_dialogue", "speaker": "关羽",
+				 "text": "{warn:决堤}！{place:汉水}滔天，尽灭尔等——{enemy:曹仁}，你的死守，今日到头了！",
+				 "side": "player"},
+				{"type": "show_dialogue", "speaker": "曹仁",
+				 "text": "……洪水？！这……{warn:天意如此}，{place:樊城}……难道真的守不住了！？"}
+			]
 		}
-	]
+	],
+	"objective": {
+		"type": "kill_enemy_hero",
+		"slot": "enemy_main"
+	}
 }

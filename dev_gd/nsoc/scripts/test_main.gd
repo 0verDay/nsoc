@@ -200,8 +200,8 @@ func _install_controllers() -> void:
 func _get_player_hero_long_press_args() -> Array:
 	var hero: HeroState = Game.player_hero()
 	if hero == null:
-		return ["", "", -1]
-	return [hero.name_full, hero.ability_id(), hero.max_health]
+		return ["", [], -1]
+	return [hero.name_full, hero.all_ability_ids(), hero.max_health]
 
 # ── 信号连接 ─────────────────────────────────────────────────────────
 func _wire_signals() -> void:
@@ -612,7 +612,7 @@ func _on_enemy_hero_panel_gui_input(event: InputEvent) -> void:
 		var hero: HeroState = Game.enemy_main_hero()
 		if hero != null:
 			detail_panel.start_long_press_hero(
-				hero.name_full, hero.ability_id(), hero.max_health)
+				hero.name_full, hero.all_ability_ids(), hero.max_health)
 		var pnl: Panel = $EnemyHpPnl
 		pnl.pivot_offset = pnl.size / 2.0
 		var tween := pnl.create_tween()

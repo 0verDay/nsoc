@@ -7,9 +7,12 @@ extends Node
 signal spawned(cell, card_data, faction)
 
 var spawners: Array = []
+# 封锁剩余回合数：>0 时 advance() 不生成并递减。
+var pause_turns: int = 0
 
 func setup(configs: Array) -> void:
 	spawners.clear()
+	pause_turns = 0
 	for sp in configs:
 		spawners.append({
 			"name": sp["name"],
@@ -24,6 +27,10 @@ func setup(configs: Array) -> void:
 # 同一 spawner 配置的多个 positions 共享 timer / interval；
 # 触发时对每个位置独立尝试生成（被占位则该位置本回合跳过，但 timer 仍重置）。
 func advance(board: BoardModel, card_resolver: Callable) -> bool:
+	# 封锁中：跳过本回合生成，递减封锁计数
+	if pause_turns > 0:
+		pause_turns -= 1
+		return false
 	var any_spawned: bool = false
 	for sp in spawners:
 		sp.timer += 1
@@ -41,6 +48,10 @@ func advance(board: BoardModel, card_resolver: Callable) -> bool:
 						spawned.emit(target_cell, cdata, sp.faction)
 			sp.timer = 0
 	return any_spawned
+
+# 封锁 spawner N 回合（蓄水结算时调用）。可叠加累计。
+func pause_for_turns(turns: int) -> void:
+	pause_turns += turns
 
 # 在 spawner 即将触发时显示半透明 phantom 预告。
 # 调用前先清理所有 phantom cell（用 clear_phantom 而非 clear_card，后者会触发 cleared 信号造成回调循环）。

@@ -10,6 +10,8 @@ signal long_press_requested(payload)
 signal long_press_canceled
 signal card_dropped(cell, drag_data)
 signal cleared(cell)
+# 效果列表变化（浸水/冲锋等运行时追加）：只刷新已开详情面板，不触发弹出。
+signal effects_changed(payload)
 
 var row: int = 0
 var col: int = 0
@@ -49,6 +51,8 @@ var effects: Array = []
 var has_attacked: bool = false
 var has_charged: bool = false
 var is_phantom: bool = false
+# 单位初始四维：set_card 时记录，受降等全恢复效果用。
+var max_health: Dictionary = {"front": 0, "back": 0, "left": 0, "right": 0}
 
 @onready var inner_panel = $InnerPanel
 @onready var name_lbl = $InnerPanel/NameLbl
@@ -85,18 +89,23 @@ func _on_gui_input(event) -> void:
 		if event.is_pressed():
 			_on_mouse_enter()
 			if has_card:
-				long_press_requested.emit({"name": card_name, "attack": attack, "health": health})
+				long_press_requested.emit({
+					"name": card_name,
+					"attack": attack,
+					"health": health,
+					"effects": effects,
+				})
 		else:
 			_on_mouse_exit()
 
 func _on_mouse_enter() -> void:
-	if has_card and get_tree():
+	if has_card and is_inside_tree():
 		var tween := create_tween()
 		tween.tween_property(inner_panel, "scale", Vector2(1.08, 1.08), 0.1)
 
 func _on_mouse_exit() -> void:
 	long_press_canceled.emit()
-	if (has_card or is_phantom) and get_tree():
+	if (has_card or is_phantom) and is_inside_tree():
 		var tween := create_tween()
 		tween.tween_property(inner_panel, "scale", Vector2.ONE, 0.1)
 
@@ -141,6 +150,8 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = [], owner
 	attack = atk
 	# hp 入参是单位视角 side dict（front/back/left/right），整盘统一 side 存储
 	health = Orientation.clone_side_health(hp)
+	# 记录初始四维，供受降等全恢复效果使用
+	max_health = Orientation.clone_side_health(hp)
 	effects = effects_in.duplicate()
 	is_enemy = enemy
 	# 归属盘：显式传入则用之（跨盘 move 透传），否则取格子当前所在盘 = 单位起源盘
@@ -205,7 +216,7 @@ func play_damage_effect() -> void:
 	if active_tween:
 		active_tween.kill()
 	inner_panel.self_modulate = Color("#ffc9c9") if is_enemy else Color("#ffe3e3")
-	if get_tree():
+	if is_inside_tree():
 		active_tween = get_tree().create_tween()
 		active_tween.tween_property(inner_panel, "self_modulate", Color.WHITE, 0.4)
 
@@ -213,7 +224,7 @@ func play_attack_effect() -> void:
 	if active_tween:
 		active_tween.kill()
 	inner_panel.self_modulate = Color("#ffe066")
-	if get_tree():
+	if is_inside_tree():
 		active_tween = get_tree().create_tween()
 		active_tween.tween_property(inner_panel, "self_modulate", Color.WHITE, 0.4)
 
@@ -221,7 +232,7 @@ func play_death_effect() -> void:
 	if active_tween:
 		active_tween.kill()
 	inner_panel.self_modulate = Color.WHITE
-	if get_tree():
+	if is_inside_tree():
 		active_tween = get_tree().create_tween()
 		active_tween.tween_property(inner_panel, "self_modulate", Color(0.5, 0.5, 0.5), 0.4)
 

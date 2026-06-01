@@ -16,6 +16,12 @@ var name_full: String = "Hero"    # 长按详情用的完整名
 var abilities: Array = []         # String[]，HeroAbility ID 列表
 var is_dead: bool = false
 
+# 通用 per-hero 计数器（如蓄水层数）。key=String, value=int。
+var stacks: Dictionary = {}
+
+# 英雄附加 effects 标志（如 die_hard 死守）。key=String, value=bool。
+var flags: Dictionary = {}
+
 func setup(p_hp: int, p_name_short: String = "Hero",
 		p_name_full: String = "",
 		p_abilities: Array = []) -> void:
@@ -25,11 +31,17 @@ func setup(p_hp: int, p_name_short: String = "Hero",
 	name_full = p_name_full if p_name_full != "" else p_name_short
 	abilities = p_abilities.duplicate()
 	is_dead = false
+	stacks.clear()
+	flags.clear()
 	health_changed.emit(health)
 
-# 取首个技能 ID（当前每英雄至多一个）。
+# 取首个技能 ID（保留向后兼容，HeroActionBar 仍用此）。
 func ability_id() -> String:
 	return String(abilities[0]) if abilities.size() > 0 else ""
+
+# 取全部技能 ID 数组。
+func all_ability_ids() -> Array:
+	return abilities.duplicate()
 
 func apply_damage(amount: int) -> void:
 	health -= amount
@@ -38,3 +50,34 @@ func apply_damage(amount: int) -> void:
 	if not is_dead and health <= 0:
 		is_dead = true
 		died.emit()
+
+# 治疗：恢复 amount 点，不超过 max_health。amount<=0 时无效。
+func heal(amount: int) -> void:
+	if amount <= 0:
+		return
+	health = min(health + amount, max_health)
+	health_changed.emit(health)
+
+# 回满血量。
+func heal_full() -> void:
+	health = max_health
+	health_changed.emit(health)
+
+# stacks 操作
+func get_stack(key: String) -> int:
+	return stacks.get(key, 0)
+
+func add_stack(key: String, delta: int = 1) -> int:
+	var v: int = stacks.get(key, 0) + delta
+	stacks[key] = v
+	return v
+
+func set_stack(key: String, value: int) -> void:
+	stacks[key] = value
+
+# flags 操作
+func has_flag(key: String) -> bool:
+	return flags.get(key, false)
+
+func set_flag(key: String, value: bool) -> void:
+	flags[key] = value

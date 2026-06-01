@@ -106,5 +106,42 @@
 	"cost": 1,
 	"target": "any_unit",
 	"effects": ["weaken"]
+  },
+  {
+	"name": "樊城·关羽",
+	"type": "单位",
+	"cost": 5,
+	"health": {"top": 5, "bottom": 5, "left": 5, "right": 5},
+	"attack": 1,
+	"effects": ["flood_strategy_unit", "awe", "ash"]
+  },
+  {
+	"name": "樊城·满宠",
+	"type": "单位",
+	"cost": 0,
+	"health": {"top": 10, "bottom": 10, "left": 10, "right": 10},
+	"attack": 2,
+	"effects": ["steadfast", "vigilance"]
+  },
+  {
+	"name": "鸣金",
+	"type": "法术",
+	"cost": 1,
+	"target": "friendly_unit",
+	"effects": ["ming_jin"]
+  },
+  {
+	"name": "决堤",
+	"type": "法术",
+	"cost": 1,
+	"target": "",
+	"effects": ["jue_di"]
+  },
+  {
+	"name": "刮骨疗毒",
+	"type": "法术",
+	"cost": 1,
+	"target": "",
+	"effects": ["gua_gu_liao_du"]
   }
 ]

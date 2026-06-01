@@ -144,35 +144,36 @@ func send_to_graveyard(card_data) -> void:
 # ---- 英雄伤害 ----
 # 多盘语义下默认作用于"主玩家盘 / 主敌盘"的 hero。需要指定其他盘时
 # 使用 damage_slot_hero(slot_id, amount)。
-func damage_player_hero(amount: int) -> void:
+# source 标签同 BoardSlot.damage_hero：""/"unit_direct"/"spell_direct"/"triggered"
+func damage_player_hero(amount: int, source: String = "") -> void:
 	var slot: BoardSlot = game.main_player_slot()
 	if slot != null:
-		slot.damage_hero(amount)
+		slot.damage_hero(amount, source)
 
-func damage_enemy_hero(amount: int) -> void:
+func damage_enemy_hero(amount: int, source: String = "") -> void:
 	if game.registry == null:
 		return
 	for slot in game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY):
-		slot.damage_hero(amount)
+		slot.damage_hero(amount, source)
 		return
 
-func damage_slot_hero(slot_id: String, amount: int) -> void:
+func damage_slot_hero(slot_id: String, amount: int, source: String = "") -> void:
 	if game.registry == null:
 		return
 	var slot: BoardSlot = game.registry.get_by_id(slot_id)
 	if slot != null:
-		slot.damage_hero(amount)
+		slot.damage_hero(amount, source)
 
 # 按英雄名称（name_short 或 name_full）定位并造成伤害。
 # 遍历所有已注册 slot；多盘同名时全部受到伤害。
-func damage_hero_by_name(hero_name: String, amount: int) -> void:
+func damage_hero_by_name(hero_name: String, amount: int, source: String = "") -> void:
 	if game.registry == null:
 		return
 	for slot in game.registry.slots:
 		if slot.hero == null:
 			continue
 		if slot.hero.name_short == hero_name or slot.hero.name_full == hero_name:
-			slot.damage_hero(amount)
+			slot.damage_hero(amount, source)
 
 # ---- 通用计数器（替代 main.autophagy_counter 这种零散字段） ----
 func get_counter(key: String, default_value: int = 0) -> int:
