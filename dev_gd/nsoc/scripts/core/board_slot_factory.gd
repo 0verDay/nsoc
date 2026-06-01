@@ -67,6 +67,11 @@ static func create_main(
 			String(hero_spec.get("name_full", "")),
 			hero_spec.get("abilities", []),
 		)
+		# 初始 flags（如 die_hard）：来自 hero.json flags 数组或 hero_spec.flags
+		var flags_arr = hero_spec.get("flags", [])
+		if typeof(flags_arr) == TYPE_ARRAY:
+			for flag_id in flags_arr:
+				hero.set_flag(String(flag_id), true)
 
 	# 生成 3×3 cell 节点
 	for r in range(BoardModel.ROWS):
@@ -109,34 +114,76 @@ static func has_game() -> bool:
 
 # 销毁一个 slot：完整清理并释放。
 # 清理顺序：
-#   1. 断开 pile_changed 信号，防止后续操作触发已销毁面板的 UI 更新
-#   2. 棋盘上残存的单位 → 路由到对应主盘除外区（数据持久保留）
-#   3. 清空插槽自身的墓地和除外区（该盘已移除，本地记录归零）
-#   4. 注销 registry + 释放子节点
+#   1. 场上残存单位 → 直接除外（不走死亡流程）
+#   2. 把该 slot 的除外数据转移到对应阵营主盘（enemy→enemy_main，player→Game.deck）
+#   3. 清空 slot 自身数据
+#   4. 断开信号
+#   5. 注销 registry + 释放子节点
 static func destroy(slot: BoardSlot) -> void:
 	if slot == null:
 		return
 
-	# 1. 断开 pile_changed 所有外部连接
+	# 1. 场上残存单位 → 直接除外到对应阵营目标
+	# 路由规则按**单位阵营**而非盘阵营决定（盘上可能有跨盘的异阵营单位）：
+	#   玩家单位 + origin="hand"  → Game.deck.banished
+	#   玩家单位 + 其他 origin   → player_main.banished
+	#   敌方单位 (is_enemy=true)  → enemy_main.banished
+	if is_instance_valid(slot.board) and has_game():
+		var cells_snapshot: Array = slot.board.grid_cells.values().duplicate()
+		for cell in cells_snapshot:
+			if not is_instance_valid(cell) or not cell.has_card or cell.is_phantom:
+				continue
+			var cname: String = cell.card_name
+			var orig: String  = cell.origin
+			var is_enemy_unit: bool = cell.is_enemy
+			cell.clear_card()
+			var cdata = Game.get_card(cname)
+			if is_enemy_unit:
+				# 敌方单位 → enemy_main.banished
+				var enemy_main = _main_slot_for_faction(BoardSlot.FACTION_ENEMY)
+				if enemy_main != null and is_instance_valid(enemy_main):
+					if cdata != null:
+						enemy_main.banished.append(cdata)
+					else:
+						enemy_main.banished.append({"name": cname})
+			elif orig == "hand":
+				# 玩家手牌 → 玩家牌库除外
+				if cdata != null and Game.deck != null:
+					Game.deck.banished.append(cdata)
+				elif Game.deck != null:
+					Game.deck.banished.append({"name": cname})
+			else:
+				# 玩家 spawner/initial/ability 单位 → player_main.banished
+				var player_main = _main_slot_for_faction(BoardSlot.FACTION_PLAYER)
+				if player_main != null and is_instance_valid(player_main):
+					if cdata != null:
+						player_main.banished.append(cdata)
+					else:
+						player_main.banished.append({"name": cname})
+
+	# 2. 发信号刷新 UI（统一在数据写入后发）
+	if has_game():
+		var enemy_main = _main_slot_for_faction(BoardSlot.FACTION_ENEMY)
+		if enemy_main != null and is_instance_valid(enemy_main):
+			enemy_main.pile_changed.emit("banished")
+		var player_main = _main_slot_for_faction(BoardSlot.FACTION_PLAYER)
+		if player_main != null and is_instance_valid(player_main):
+			player_main.pile_changed.emit("banished")
+		if Game.deck != null:
+			Game.deck.pile_changed.emit("banish")
+
+	# 3. 清空 slot 自身数据
+	if is_instance_valid(slot):
+		slot.graveyard.clear()
+		slot.banished.clear()
+
+	# 4. 断开 pile_changed 所有外部连接
 	if is_instance_valid(slot):
 		var connections: Array = slot.pile_changed.get_connections()
 		for conn in connections:
 			slot.pile_changed.disconnect(conn["callable"])
 
-	# 2. 场上残存单位 → 路由到主盘除外区（持久化）
-	if is_instance_valid(slot.board) and has_game() and Game.registry != null:
-		var main_slot: BoardSlot = _main_slot_for_faction(slot.faction)
-		for cell in slot.board.grid_cells.values():
-			if is_instance_valid(cell) and cell.has_card and not cell.is_phantom:
-				if main_slot != null and is_instance_valid(main_slot):
-					main_slot.banished.append({"name": cell.card_name})
-
-	# 3. 清空该插槽自身的墓地和除外区
-	if is_instance_valid(slot):
-		slot.graveyard.clear()
-		slot.banished.clear()
-
-	# 4. 注销 + 释放
+	# 5. 注销 + 释放
 	if has_game() and Game.registry != null:
 		Game.registry.remove(slot.id)
 	if is_instance_valid(slot.board):

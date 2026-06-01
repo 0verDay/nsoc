@@ -69,7 +69,10 @@
 			"actions": [
 				{"type": "damage_hero", "slot": "player_main", "amount": 10},
 				{"type": "show_dialogue", "speaker": "曹操",
-				 "text": "{warn:伤我大将，以血偿之}！（对你造成10点伤害）"}
+				 "text": "{warn:伤我大将，以血偿之}！（对你造成10点伤害）"},
+				{"type": "show_dialogue", "speaker": "刘备",
+				 "text": "血……{warn:无妨}。只要还有一口气，{ally:备}便绝不先百姓而退！",
+				 "side": "player"}
 			]
 		}
 	],

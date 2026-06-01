@@ -207,8 +207,8 @@ func _install_controllers() -> void:
 func _get_player_hero_long_press_args() -> Array:
 	var hero: HeroState = Game.player_hero()
 	if hero == null:
-		return ["", "", -1]
-	return [hero.name_full, hero.ability_id(), hero.max_health]
+		return ["", [], -1]
+	return [hero.name_full, hero.all_ability_ids(), hero.max_health]
 
 # ── 信号连接 ─────────────────────────────────────────────────────────
 func _wire_signals() -> void:
@@ -286,12 +286,33 @@ func _on_enemy_hero_died() -> void:
 func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利" if is_enemy else "失败"
+	# 威震华夏章节：曹仁死亡时先播结尾对话，再弹胜利面板
+	var chapter_name: String = String(Game.level_data.get("name", ""))
+	if is_enemy and chapter_name == "威震华夏":
+		_play_weizhen_ending_dialogue(true)
+		return
 	_show_game_over(is_enemy)
+
+# 威震华夏结尾：播完对话后再弹胜利面板。
+func _play_weizhen_ending_dialogue(victory: bool) -> void:
+	Dialogue.push("关羽",
+		"{place:樊城}已破，{warn:威震华夏}！{enemy:曹仁}，你的死守，终究挡不住天命。",
+		"player")
+	Dialogue.push("曹仁",
+		"……吾尽力矣。{place:樊城}……终究……")
+	# 等对话播完后弹胜利面板（估算两条对话约 7 秒，保守等 8 秒）
+	await get_tree().create_timer(8.0).timeout
+	if is_instance_valid(self):
+		_show_game_over(victory)
 
 # 战役胜利目标达成（与敌方英雄死亡同语义：玩家胜利）
 func _on_objective_completed() -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利"
+	var chapter_name: String = String(Game.level_data.get("name", ""))
+	if chapter_name == "威震华夏":
+		_play_weizhen_ending_dialogue(true)
+		return
 	_show_game_over(true)
 
 # ── 退出到菜单 ────────────────────────────────────────────────────────
@@ -387,6 +408,8 @@ func _on_end_turn_pressed() -> void:
 func _wire_cell(cell: Node) -> void:
 	cell.long_press_requested.connect(_on_cell_long_press_requested)
 	cell.long_press_canceled.connect(detail_panel.cancel_long_press)
+	# effects_changed：只在面板已开时刷新内容，不触发弹出
+	cell.effects_changed.connect(detail_panel.refresh_if_showing)
 	cell.card_dropped.connect(_on_cell_card_dropped)
 	cell.cleared.connect(_on_cell_cleared)
 
@@ -424,6 +447,12 @@ func _input(event) -> void:
 			KEY_2: orch.toggle("enemy_right")
 			KEY_3: orch.toggle("ally_left")
 			KEY_5: orch.toggle("ally_right")
+		# ── 开发者快捷键：Ctrl+Q = 对庞德/于禁各造成 100 伤害（威震华夏章节）──
+		if event.keycode == KEY_Q and event.ctrl_pressed:
+			_dev_damage_fancheng_generals(100)
+		# ── 开发者快捷键：Ctrl+W = 对 enemy_main（曹仁）造成 100 伤害 ──
+		if event.keycode == KEY_W and event.ctrl_pressed:
+			_dev_damage_enemy_main(100)
 		return
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -475,7 +504,7 @@ func _on_enemy_hero_panel_gui_input(event: InputEvent) -> void:
 		var hero: HeroState = Game.enemy_main_hero()
 		if hero != null:
 			detail_panel.start_long_press_hero(
-				hero.name_full, hero.ability_id(), hero.max_health)
+				hero.name_full, hero.all_ability_ids(), hero.max_health)
 		var pnl: Panel = $EnemyHpPnl
 		pnl.pivot_offset = pnl.size / 2.0
 		var tween := pnl.create_tween()
@@ -745,3 +774,31 @@ func _play_intro_animation() -> void:
 	if is_instance_valid(blocker):
 		blocker.queue_free()
 	set_process_input(true)
+
+	# intro 动画完成：触发 game_started 类 trigger（对话等开场事件在此时执行）
+	if has_node("/root/Events"):
+		Events.notify_game_started()
+
+# ── 开发者工具 ───────────────────────────────────────────────────────────────
+# Ctrl+Q：对庞德（enemy_left）和于禁（enemy_right）各造成指定伤害。
+# 仅在威震华夏章节有效（通过 level_data["name"] 判断）。
+func _dev_damage_fancheng_generals(amount: int) -> void:
+	if not has_node("/root/Game"):
+		return
+	var chapter_name: String = String(Game.level_data.get("name", ""))
+	if chapter_name != "威震华夏":
+		return
+	var targets: Array = ["enemy_left", "enemy_right"]
+	for slot_id in targets:
+		var slot: BoardSlot = Game.registry.get_by_id(slot_id)
+		if slot != null and slot.hero != null and not slot.hero.is_dead:
+			slot.damage_hero(amount, "triggered")
+			push_warning("[DEV] Ctrl+Q: dealt %d dmg to %s" % [amount, slot.hero.name_short])
+
+func _dev_damage_enemy_main(amount: int) -> void:
+	if not has_node("/root/Game"):
+		return
+	var slot: BoardSlot = Game.registry.get_by_id("enemy_main") if Game.registry != null else null
+	if slot != null and slot.hero != null and not slot.hero.is_dead:
+		slot.damage_hero(amount, "triggered")
+		push_warning("[DEV] Ctrl+W: dealt %d dmg to %s" % [amount, slot.hero.name_short])

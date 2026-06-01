@@ -1,11 +1,11 @@
 extends RefCounted
 
-# damage_hero action：对指定盘英雄造成固定伤害（走标准 BoardSlot.damage_hero 路径，
-# 触发英雄面板闪红动画 + 扣血 + 死亡信号）。
+# damage_hero action：对指定 slot 的英雄造成伤害。
 #
-# params 字段：
-#   "slot"   : String  目标盘 id（如 "player_main"）
-#   "amount" : int     伤害量（>0 生效）
+# params:
+#   "slot"   : String  目标 slot_id（如 "enemy_main"）
+#   "amount" : int     伤害量
+#   "source" : String  伤害来源（默认 "triggered"，穿透死守）
 
 func id() -> String:
 	return "damage_hero"
@@ -13,19 +13,14 @@ func id() -> String:
 func run(params: Dictionary, _ctx: Dictionary) -> void:
 	if not _has_game():
 		return
-
-	var slot_id: String = String(params.get("slot", "player_main"))
-	var amount: int     = int(params.get("amount", 0))
-
-	if amount <= 0:
+	var slot_id: String = String(params.get("slot", ""))
+	var amount: int = int(params.get("amount", 0))
+	var source: String = String(params.get("source", "triggered"))
+	if slot_id == "" or amount == 0:
 		return
-
 	var slot: BoardSlot = Game.registry.get_by_id(slot_id)
-	if slot == null:
-		push_warning("damage_hero: slot not found: " + slot_id)
-		return
-
-	slot.damage_hero(amount)
+	if slot != null:
+		slot.damage_hero(amount, source)
 
 static func _has_game() -> bool:
 	var loop = Engine.get_main_loop()

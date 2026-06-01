@@ -174,7 +174,7 @@ static func _default_board_meta(id: String) -> Dictionary:
 		"faction": 1,             # 默认 ENEMY，下方按 id 修正
 		"role": "enemy",
 		"slot_index": -1,
-		"enabled": true,
+		"enabled": false,         # 未知盘默认不自动创建，须 JSON 显式 enabled:true 或有内容
 		"hero": {},               # 由 hero.json 提供 fallback
 		"initial_units": [],
 		"spawners": [],
@@ -185,30 +185,28 @@ static func _default_board_meta(id: String) -> Dictionary:
 			meta["faction"] = 0
 			meta["role"] = "main_player"
 			meta["slot_index"] = 4
+			meta["enabled"] = true   # 主棋盘始终创建
 		"enemy_main":
 			meta["faction"] = 1
 			meta["role"] = "main_enemy"
 			meta["slot_index"] = 1
+			meta["enabled"] = true   # 主棋盘始终创建
 		"ally_left":
 			meta["faction"] = 0
 			meta["role"] = "ally"
 			meta["slot_index"] = 3
-			meta["enabled"] = false
 		"ally_right":
 			meta["faction"] = 0
 			meta["role"] = "ally"
 			meta["slot_index"] = 5
-			meta["enabled"] = false
 		"enemy_left":
 			meta["faction"] = 1
 			meta["role"] = "enemy"
 			meta["slot_index"] = 0
-			meta["enabled"] = false
 		"enemy_right":
 			meta["faction"] = 1
 			meta["role"] = "enemy"
 			meta["slot_index"] = 2
-			meta["enabled"] = false
 	return meta
 
 const _OLD_ROWS: int = 6  # 旧 6×3 主棋盘行数，仅用于兼容映射

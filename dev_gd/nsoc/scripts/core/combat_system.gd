@@ -45,6 +45,11 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 				defender.health[s] -= a_atk
 		else:
 			defender.health[hit_side] -= a_atk
+		# "浸水"：受到任何伤害后立即视为全面归零（一次性），随后从 effects 中移除
+		if defender.effects.has("soaked"):
+			for s in Orientation.SIDES:
+				defender.health[s] = 0
+			defender.effects.erase("soaked")
 		defender._update_hp_labels()
 		defender.play_damage_effect()
 
@@ -55,6 +60,8 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
+		if not is_instance_valid(defender):
+			continue
 		# 任意一面 <=0 即视为阵亡（通用规则，与 frail 特效无关）
 		var dead: bool = false
 		for s in Orientation.SIDES:
@@ -142,8 +149,10 @@ func move_card(start, end) -> void:
 	await tween.finished
 	if is_instance_valid(visual):
 		visual.queue_free()
-	# 退出到菜单时 aborted=true，不再操作可能已 free 的 end 节点
+	# 退出到菜单时 aborted=true，或目标格已被 free（棋盘被动态移除时）
 	if aborted or not is_instance_valid(self):
+		return
+	if not is_instance_valid(end):
 		return
 
 	end.set_card(cname, atk, hp, is_e, effs, owner_id, origin_str)

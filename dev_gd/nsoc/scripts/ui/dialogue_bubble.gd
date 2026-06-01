@@ -27,10 +27,14 @@ var _portrait:    TextureRect    = null
 var _text_label:  RichTextLabel  = null
 var _timer:       Timer          = null
 var _tween:       Tween          = null
-var _closing:     bool           = false
-var _rest_pos:    Vector2        = Vector2.ZERO  # 静止目标位置（由 manager 在外部设定）
+var _closing:          bool      = false
+var _rest_pos:         Vector2   = Vector2.ZERO  # 静止目标位置（由 manager 在外部设定）
+var _slide_from_below: bool      = false         # true = 从下向上滑入（玩家侧气泡）
 
 func _ready() -> void:
+	# CanvasLayer 内 PanelContainer 默认会尝试填满 Canvas，显式收缩为内容尺寸。
+	size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	size_flags_vertical   = Control.SIZE_SHRINK_BEGIN
 	mouse_filter = Control.MOUSE_FILTER_STOP  # 整个气泡区域捕捉点击
 
 	# ── 底板样式：白底 + 主蓝描边（与游戏整体风格一致）────────────────────
@@ -92,10 +96,12 @@ func _ready() -> void:
 	# 对话文本（RichTextLabel）：深色字体，白底清晰可读
 	_text_label = RichTextLabel.new()
 	_text_label.bbcode_enabled = true
-	_text_label.fit_content    = true
+	_text_label.fit_content    = false   # 不用 fit_content：节点加入树时 size.x=0，
+	                                     # fit_content 会算出每字单行的巨大高度。
+	                                     # 气泡高度由头像(60px)决定，文本在其中自动换行。
 	_text_label.scroll_active  = false
 	_text_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_text_label.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+	_text_label.size_flags_vertical   = Control.SIZE_EXPAND_FILL  # 填满头像高度
 	_text_label.add_theme_font_size_override("normal_font_size", FONT_SIZE_TEXT)
 	_text_label.add_theme_color_override("default_color", Color("#1f2937"))   # 深墨色
 	hbox.add_child(_text_label)
@@ -111,16 +117,21 @@ func _ready() -> void:
 
 # ── 公开 API ──────────────────────────────────────────────────────────────
 
-# 设置内容并开始显示（从上方滑入 + 淡入 + 开始计时）。
+# 设置内容并开始显示（淡入 + 计时）。
 # 调用前 manager 已设置好 position；此处读取并作为静止目标位置。
-func setup(speaker: String, text: String) -> void:
+# slide_from_below = true：从下方滑入（玩家侧气泡）；false：从上方滑入（敌方侧气泡）。
+func setup(speaker: String, text: String, slide_from_below: bool = false) -> void:
 	_name_label.text = speaker
 	_text_label.text = MarkupParser.parse(text)
 
-	# 静止目标位置（manager 已在外部赋值 bubble.position）
+	_slide_from_below = slide_from_below
 	_rest_pos = position
-	# 初始偏移到上方 SLIDE_OFFSET 像素处，之后向下滑入
-	position.y = _rest_pos.y - SLIDE_OFFSET
+
+	# 根据滑入方向设置初始偏移
+	if _slide_from_below:
+		position.y = _rest_pos.y + SLIDE_OFFSET   # 从下方（+Y）滑入到 _rest_pos
+	else:
+		position.y = _rest_pos.y - SLIDE_OFFSET   # 从上方（-Y）滑入到 _rest_pos
 
 	var duration: float = clamp(1.5 + text.length() * TIME_PER_CHAR,
 		TIME_MIN, TIME_MAX)
@@ -145,7 +156,7 @@ func _close() -> void:
 	_timer.stop()
 	_animate_out()
 
-# 滑入动画：从上方（_rest_pos - SLIDE_OFFSET）向下滑到 _rest_pos，同步淡入。
+# 滑入动画：从偏移位置滑到 _rest_pos，同步淡入。
 # EASE_OUT：越靠近目标越减速，产生"柔和落定"感。
 func _animate_in() -> void:
 	if _tween and _tween.is_valid():
@@ -155,15 +166,19 @@ func _animate_in() -> void:
 	_tween.tween_property(self, "position:y", _rest_pos.y, FADE_IN_SEC)
 	_tween.tween_property(self, "modulate:a", 1.0,         FADE_IN_SEC).from(0.0)
 
-# 滑出动画：从 _rest_pos 继续向下滑 SLIDE_OFFSET，同步淡出，结束后释放。
-# EASE_IN：越离越快，产生"自然跌落"感。
+# 滑出动画：沿与入场相反的方向飘出 SLIDE_OFFSET，同步淡出，结束后释放。
+# EASE_IN：越离越快，产生"自然离场"感。
+# slide_from_below=false（敌方）：从上滑入 → 向下飘出
+# slide_from_below=true （玩家）：从下滑入 → 向上飘出（与敌方对称）
 func _animate_out() -> void:
 	if _tween and _tween.is_valid():
 		_tween.kill()
+	var exit_y: float = _rest_pos.y + SLIDE_OFFSET if not _slide_from_below \
+	                    else _rest_pos.y - SLIDE_OFFSET
 	_tween = create_tween().set_parallel(true) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	_tween.tween_property(self, "position:y", _rest_pos.y + SLIDE_OFFSET, FADE_OUT_SEC)
-	_tween.tween_property(self, "modulate:a", 0.0,                          FADE_OUT_SEC)
+	_tween.tween_property(self, "position:y", exit_y,  FADE_OUT_SEC)
+	_tween.tween_property(self, "modulate:a", 0.0,     FADE_OUT_SEC)
 	# 等两个属性都播完后释放节点（set_parallel 并行，取最长的那条）
 	_tween.chain().tween_callback(func() -> void:
 		dismissed.emit()

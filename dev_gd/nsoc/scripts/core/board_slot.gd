@@ -75,12 +75,33 @@ func setup(p_id: String, p_faction: int, p_role: int,
 	if p_hero_resolver.is_valid():
 		hero_resolver = p_hero_resolver
 	else:
+		# Callable(self, "damage_hero") 支持 (amount, source="") 两参数签名
 		hero_resolver = Callable(self, "damage_hero")
 	allow_player_deploy = (faction == FACTION_PLAYER)
+	# 连接英雄死亡信号 → 通知 Events 系统
+	if hero != null and not hero.died.is_connected(_on_hero_died):
+		hero.died.connect(_on_hero_died)
+
+# 英雄死亡时回调：通知 ScriptedEvents，触发 hero_died trigger。
+func _on_hero_died() -> void:
+	# 主玩家英雄死亡不走 trigger（由 main/test_main 的 _on_hero_died 处理胜负）
+	if role == ROLE_MAIN_PLAYER:
+		return
+	var snap := {"slot_id": id, "hero_name": hero.name_short if hero != null else ""}
+	if Engine.get_main_loop() != null and Engine.get_main_loop().root.has_node("/root/Events"):
+		Events.notify_hero_died(snap)
 
 # 受到伤害：扣本盘 hero 血量并触发面板闪红。
-func damage_hero(amount: int) -> void:
+# source: 伤害来源标签。
+#   ""            = 默认（不拦截任何免疫）
+#   "unit_direct" = 单位直伤（战斗结算）→ 死守免疫
+#   "spell_direct"= 法术直伤（法术 on_play）→ 死守免疫
+#   "triggered"   = 触发型效果（援樊、蓄水、英雄技能等）→ 穿透死守
+func damage_hero(amount: int, source: String = "") -> void:
 	if hero != null:
+		# die_hard（死守）：拦截单位/法术直伤
+		if hero.has_flag("die_hard") and (source == "unit_direct" or source == "spell_direct"):
+			return
 		hero.apply_damage(amount)
 	_flash_hero_panel()
 
@@ -90,6 +111,9 @@ func _flash_hero_panel() -> void:
 	hero_panel.self_modulate = Color("#ffc9c9")
 	var tree = Engine.get_main_loop()
 	if tree == null or not (tree is SceneTree):
+		return
+	# 防止面板节点已不在树中时调用 create_tween
+	if not hero_panel.is_inside_tree():
 		return
 	var tw := (tree as SceneTree).create_tween()
 	tw.tween_property(hero_panel, "self_modulate", Color.WHITE,
