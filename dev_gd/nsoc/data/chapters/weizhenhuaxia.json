@@ -29,7 +29,7 @@
 			"slot_index": 3,
 			"enabled": true,
 			"hero": {
-				"hp": 20,
+				"hp": 5,
 				"name_short": "水坝",
 				"name_full": "水坝",
 				"abilities": ["flood_dam_ability"]
@@ -73,7 +73,7 @@
 			"role": "enemy",
 			"slot_index": 0,
 			"hero": {
-				"hp": 1,
+				"hp": 15,
 				"name_short": "庞德",
 				"name_full": "樊城·庞德",
 				"abilities": ["aid_fancheng_ability", "first_arrow_ability"]
@@ -119,7 +119,7 @@
 			"role": "enemy",
 			"slot_index": 2,
 			"hero": {
-				"hp": 1,
+				"hp": 10,
 				"name_short": "于禁",
 				"name_full": "樊城·于禁",
 				"abilities": ["aid_fancheng_ability", "surrender_ability", "reinforce_camp_ability"]
