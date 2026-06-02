@@ -291,3 +291,82 @@ func _can_drop_data(_pos, data) -> bool:
 func _drop_data(_pos, data) -> void:
 	# 不在此处结算，统一发到 PlayController。
 	card_dropped.emit(self, data)
+
+# ── 序列化（PVP 联机用）────────────────────────────────────────────
+# Cell 是场景节点，序列化只导出业务数据（不含视觉/动画/UI 层）。
+# from_dict 在已存在的空 Cell 上原地还原；不创建新节点。
+# health / max_health 以 side 视角存储，序列化保留 side 键。
+# row/col 不序列化（由 BoardModel 的 grid_cells 键决定，反序时已正确）。
+func to_dict() -> Dictionary:
+	return {
+		"row":            row,
+		"col":            col,
+		"has_card":       has_card,
+		"is_phantom":     is_phantom,
+		"faction":        faction,
+		"slot_id":        slot_id,
+		"owner_slot_id":  owner_slot_id,
+		"origin":         origin,
+		"card_name":      card_name,
+		"attack":         attack,
+		"health":         health.duplicate(),
+		"max_health":     max_health.duplicate(),
+		"effects":        effects.duplicate(),
+		"has_attacked":   has_attacked,
+		"has_charged":    has_charged,
+	}
+
+# 在已存在的 Cell 节点上原地还原。
+# 调用前 Cell._ready 必须已跑完（hp_labels_abs 已构建）。
+func from_dict(d: Dictionary) -> void:
+	# row/col 假定已由 BoardSlotFactory 设好，不覆盖（避免与 grid_cells 键不一致）。
+	var p_has_card:   bool   = bool(d.get("has_card", false))
+	var p_is_phantom: bool   = bool(d.get("is_phantom", false))
+	var p_faction:    int    = int(d.get("faction", 0))
+	slot_id        = String(d.get("slot_id", ""))
+	owner_slot_id  = String(d.get("owner_slot_id", ""))
+	origin         = String(d.get("origin", ""))
+	has_attacked   = bool(d.get("has_attacked", false))
+	has_charged    = bool(d.get("has_charged", false))
+
+	if not p_has_card and not p_is_phantom:
+		_do_clear()
+		return
+
+	var p_card_name:  String = String(d.get("card_name", ""))
+	var p_attack:     int    = int(d.get("attack", 0))
+	var raw_hp                = d.get("health", {})
+	var p_health:     Dictionary = raw_hp if typeof(raw_hp) == TYPE_DICTIONARY \
+		else {"front": 0, "back": 0, "left": 0, "right": 0}
+	var raw_mh                = d.get("max_health", p_health)
+	var p_max_health: Dictionary = raw_mh if typeof(raw_mh) == TYPE_DICTIONARY else p_health
+	var raw_eff               = d.get("effects", [])
+	var p_effects: Array      = raw_eff.duplicate() if typeof(raw_eff) == TYPE_ARRAY else []
+
+	# set_card 会按"玩家视角 abs"格式处理 hp，但我们存的是 side 视角；
+	# 直接用底层赋值再调样式，避免再走 Orientation 转换。
+	has_card     = true
+	is_phantom   = p_is_phantom
+	inner_panel.modulate.a = 0.4 if p_is_phantom else 1.0
+	card_name    = p_card_name
+	attack       = p_attack
+	health       = Orientation.clone_side_health(p_health)
+	max_health   = Orientation.clone_side_health(p_max_health)
+	effects      = p_effects
+	is_enemy     = (p_faction == 1)
+	name_lbl.text = p_card_name
+	atk_lbl.text  = str(p_attack)
+	_update_hp_labels()
+	if is_enemy:
+		inner_panel.add_theme_stylebox_override("panel",
+			ThemeFactory.cell_panel(Color("#fff5f5"), Color("#ffc9c9"), 1, 20, true))
+		name_lbl.add_theme_color_override("font_color", Color("#fa5252"))
+	else:
+		inner_panel.add_theme_stylebox_override("panel",
+			ThemeFactory.cell_panel(Color.WHITE, Color("#e1e8ed"), 1, 20, true))
+		name_lbl.add_theme_color_override("font_color", Color("#495057"))
+	EffectBadgeFactory.refresh(inner_panel.get_node_or_null("EffectBadges"), effects)
+	inner_panel.visible = true
+	if p_is_phantom:
+		# phantom 不算"真有牌"
+		has_card = false

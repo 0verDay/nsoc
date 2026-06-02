@@ -67,3 +67,31 @@ func clear_all() -> void:
 	for inst in _equipments.duplicate():
 		equipment_removed.emit(inst)
 	_equipments.clear()
+
+# ── 序列化（PVP 联机用）────────────────────────────────────────────
+# 1v1 阶段：先做单玩家集合的序列化。多人扩展时 snapshot_io 按 player_id 分组。
+func to_dict() -> Dictionary:
+	var arr: Array = []
+	for inst in _equipments:
+		if inst == null:
+			continue
+		arr.append(inst.to_dict())
+	return {"equipments": arr}
+
+func from_dict(d: Dictionary) -> void:
+	# 清空旧实例（发 removed 让 HeroActionBar 等 UI 同步）
+	for old in _equipments.duplicate():
+		equipment_removed.emit(old)
+	_equipments.clear()
+	var arr = d.get("equipments", [])
+	if typeof(arr) != TYPE_ARRAY:
+		arr = []
+	for entry in arr:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var inst := EquipmentInstance.from_dict(entry)
+		if inst == null:
+			continue
+		_equipments.append(inst)
+		inst.changed.connect(func(): _on_inst_changed(inst))
+		equipment_added.emit(inst)

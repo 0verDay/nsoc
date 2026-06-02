@@ -437,6 +437,17 @@ func _collect_main_enemy_nodes() -> void:
 
 # ── 输入路由 ─────────────────────────────────────────────────────────
 func _input(event) -> void:
+	# F5 / F9 = 战斗状态快照存读档（PVP 序列化原型期开发键，无 Ctrl 修饰）
+	if event is InputEventKey and event.is_pressed() and not event.ctrl_pressed:
+		if event.keycode == KEY_F5:
+			var ok := SnapshotIO.save_to_file()
+			print("SnapshotIO.save_to_file -> ", ok, " (", SnapshotIO.SAVE_PATH, ")")
+			return
+		if event.keycode == KEY_F9:
+			var ok2 := SnapshotIO.load_from_file()
+			print("SnapshotIO.load_from_file -> ", ok2)
+			return
+
 	# Ctrl+数字 快捷键控制附盘开关
 	if event is InputEventKey and event.is_pressed() and event.ctrl_pressed:
 		var orch: BoardOrchestrator = board_orchestrator
