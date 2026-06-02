@@ -420,7 +420,12 @@ func _trigger_transition(origin_panel: Control, _clicked_btn: Control) -> void:
 	await _current_tween.finished
 	_is_transitioning = false
 	_is_expanded = true
-	# 转场完成：按按钮名路由到对应二级面板场景；该场景自带返回按钮。
+	# 转场完成：冻结的原始子按钮透明悬浮，需屏蔽其鼠标输入，
+	# 防止它们在 top_level=true 状态下拦截二级面板的点击事件。
+	for c in _frozen_children:
+		if is_instance_valid(c) and c is Control:
+			(c as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 按按钮名路由到对应二级面板场景；该场景自带返回按钮。
 	_spawn_secondary_panel(origin_panel)
 
 # 路由：按 _origin_btn.name 取 PackedScene → 实例化 → attach 到扩展面板。
@@ -450,9 +455,12 @@ func _trigger_reverse() -> void:
 	_is_reversed = true
 	_is_expanded = false
 	# 解冻 top_level 让子控件重新回到父布局，反向期间面板收缩它们随之归位。
+	# 同时恢复 mouse_filter（正向转场完成时设为了 IGNORE）。
 	for c in _frozen_children:
 		if is_instance_valid(c):
 			c.top_level = false
+			if c is Control:
+				(c as Control).mouse_filter = Control.MOUSE_FILTER_STOP
 	_frozen_children.clear()
 	_frozen_state.clear()
 	_current_tween = create_tween()

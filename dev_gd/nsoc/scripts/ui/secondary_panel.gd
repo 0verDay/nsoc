@@ -32,7 +32,11 @@ func _ready() -> void:
 		back_btn.add_theme_color_override("font_hover_color", Color.WHITE)
 		back_btn.add_theme_color_override("font_pressed_color", Color.WHITE)
 		back_btn.pressed.connect(func(): back_pressed.emit())
-	_apply_styles()
+	# _apply_styles 推迟到下一帧：
+	# attach() 在 add_child 后立即同步 size，但子节点的 anchor 布局
+	# 需等 Godot 完成当前帧的 layout pass 才生效。
+	# 用 call_deferred 确保 _apply_styles 在 layout 稳定后执行。
+	call_deferred("_apply_styles")
 
 
 # 子类覆盖以应用各自子面板的样式。
@@ -41,9 +45,19 @@ func _apply_styles() -> void:
 
 
 # 把场景挂到已扩展为全屏的 origin_panel 内部并淡入。
+# origin_panel 由 MainMenu 以绝对 size/position 控制（anchor 已被拍平为 TOP_LEFT），
+# 不是 Container，不会自动管理子节点尺寸。
+# 因此 add_child 后需手动同步 size，并监听 resized 保持跟随。
 func attach(origin_panel: Control) -> void:
 	modulate.a = 0.0
+	# 填满父节点：anchor 0,0→1,1 + offset 全 0。
+	set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	origin_panel.add_child(self)
+	# 父节点由 Tween 直接写 size，不走 Container 路径，
+	# 子节点 size 不会自动刷新，需手动同步。
+	size = origin_panel.size
+	# 父节点 size 变化时继续跟随（窗口 resize 等场景）。
+	origin_panel.resized.connect(func(): size = origin_panel.size)
 	var tw := create_tween()
 	tw.tween_property(self, "modulate:a", 1.0, FADE_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
