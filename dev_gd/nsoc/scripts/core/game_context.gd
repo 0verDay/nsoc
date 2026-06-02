@@ -16,6 +16,20 @@ var turn: TurnSystem
 # 多棋盘注册表。所有 BoardSlot 通过它统一管理。
 var registry: BoardRegistry
 
+# ── 多实例（PVP 联机扩展）────────────────────────────────────────
+# 字典存所有玩家的牌库 / 费用实例。PVE 模式下也填一份本地玩家。
+# deck / mana 是 local_player_id 对应实例的别名，PVE 旧代码无需改动。
+# 多人扩展时由 PlayController / TurnSystem 通过 get_deck(pid) / get_mana(pid) 取。
+var decks: Dictionary = {}        # player_id -> DeckManager
+var manas: Dictionary = {}        # player_id -> ManaSystem
+
+# 当前本地玩家身份。PVE 固定 "player_main"；PVP 由 NetworkManager 在握手时注入 uuid。
+var local_player_id: String = "player_main"
+
+# PVP 模式开关。bootstrap() 末尾置 false；bootstrap_pvp() 置 true。
+# 业务模块据此跳过 spawner / spell_caster / scripted_events / dialogue 等 PVE 专属流程。
+var is_pvp: bool = false
+
 # 关卡数据：DataLoader.load_level 解析后的多棋盘结构。
 # {"boards": {<id>: {initial_units, spawners}}, "initial_units":[...], "spawners":[...]}
 # 由 bootstrap 填充，main / test_main 读取后建立各 slot 的 spawner / 初始单位。
@@ -64,6 +78,79 @@ func _ready() -> void:
 	mana = ManaSystem.new(); mana.name = "Mana"; add_child(mana)
 	turn = TurnSystem.new(); turn.name = "Turn"; add_child(turn)
 	registry = BoardRegistry.new(); registry.name = "BoardRegistry"; add_child(registry)
+	# 把本地玩家的 deck / mana 挂到字典，多人扩展时其他玩家通过 add_deck/add_mana 加。
+	decks[local_player_id] = deck
+	manas[local_player_id] = mana
+
+# ── 多实例 deck / mana 访问 ──────────────────────────────────────
+# 取指定玩家的 deck。pid 为空时取本地玩家。无对应实例返回 null。
+func get_deck(pid: String = "") -> DeckManager:
+	var key: String = pid if pid != "" else local_player_id
+	return decks.get(key)
+
+func get_mana(pid: String = "") -> ManaSystem:
+	var key: String = pid if pid != "" else local_player_id
+	return manas.get(key)
+
+# 按 BoardSlot 反查 deck / mana。
+# slot.owner_player_id 为空时（PVE）回退到本地玩家 deck/mana。
+# 多人模式下 PlayController / HandView 通过此 API 决定从哪个玩家牌库抽牌、扣谁的费。
+func deck_of_slot(slot: BoardSlot) -> DeckManager:
+	if slot == null:
+		return deck
+	var pid: String = slot.owner_player_id if slot.owner_player_id != "" else local_player_id
+	return decks.get(pid, deck)
+
+func mana_of_slot(slot: BoardSlot) -> ManaSystem:
+	if slot == null:
+		return mana
+	var pid: String = slot.owner_player_id if slot.owner_player_id != "" else local_player_id
+	return manas.get(pid, mana)
+
+# 为玩家创建 deck（若已存在直接返回旧实例）。本地玩家命中时同步更新 deck 别名。
+func add_deck(pid: String) -> DeckManager:
+	if decks.has(pid):
+		return decks[pid]
+	var d := DeckManager.new()
+	d.name = "Deck_" + pid
+	add_child(d)
+	decks[pid] = d
+	if pid == local_player_id:
+		deck = d
+	return d
+
+func add_mana(pid: String) -> ManaSystem:
+	if manas.has(pid):
+		return manas[pid]
+	var m := ManaSystem.new()
+	m.name = "Mana_" + pid
+	add_child(m)
+	manas[pid] = m
+	if pid == local_player_id:
+		mana = m
+	return m
+
+# 清掉所有非本地玩家的 deck / mana（PVE 重新 bootstrap 或 PVP 战斗结束时调）。
+# 本地玩家实例保留并复位指针，避免悬空。
+func clear_extra_decks_and_manas() -> void:
+	for pid in decks.keys():
+		if pid == local_player_id:
+			continue
+		var d = decks[pid]
+		if is_instance_valid(d):
+			d.queue_free()
+	decks.clear()
+	if is_instance_valid(deck):
+		decks[local_player_id] = deck
+	for pid in manas.keys():
+		if pid == local_player_id:
+			continue
+		var m = manas[pid]
+		if is_instance_valid(m):
+			m.queue_free()
+	manas.clear()
+	if is_instance_valid(mana):
+		manas[local_player_id] = mana
 
 # 取主玩家盘（手牌锚点）
 func main_player_slot() -> BoardSlot:
@@ -204,6 +291,87 @@ func bootstrap() -> void:
 	pending_level_path = ""
 	# 清空上一局场景注入的选择器引用，防止场景 free 后引用悬空。
 	# 新场景在 _install_controllers 末尾会重新调 register_selectors 注入。
+	_target_selector_node = null
+	_hand_picker_node     = null
+
+	# PVE 模式：清掉上局 PVP 残留的额外 deck/mana 实例；本地玩家保留为别名。
+	is_pvp = false
+	local_player_id = "player_main"
+	clear_extra_decks_and_manas()
+
+
+# ── PVP 战斗装配（联机入口）──────────────────────────────────────────
+# 由 NetworkManager 在收到服务器 game/start 时调用。
+# - p_local_pid：本地玩家 uuid（NetworkManager 持有）
+# - all_player_ids：房间内全部玩家 uuid（含本地），按服务器分配的行动顺序排列
+# - deck_cards：服务器下发的预设牌组（CardBase 数组，已通过 card_db 解析）
+# - all_cards_db：可选，PVP 阶段若客户端未预加载 all_cards.json 时用于补 card_db
+#
+# 与 PVE bootstrap 的区别：
+#   - 跳过章节加载、Objectives.setup_for_battle、Events.setup_for_battle
+#   - 双方独立 DeckManager + ManaSystem
+#   - 全员同英雄 A「再起」（按决策 1.3）
+#   - SpawnerSystem / SpellCasterSystem 不挂载（由场景装配方按 is_pvp 跳过）
+#   - 不消费 pending_chapter_config / pending_level_path
+func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
+		deck_cards: Array, all_cards_db: Array = []) -> void:
+	is_pvp = true
+	local_player_id = p_local_pid
+
+	# card_db 装载：PVP 模式服务器只下发牌组，客户端仍需 all_cards.json 解卡牌静态属性。
+	if all_cards_db.size() > 0:
+		card_db.clear()
+		for c in all_cards_db:
+			card_db[c.name] = c
+	elif card_db.size() == 0:
+		# 客户端本地仍有 all_cards.json，自行加载兜底
+		var loaded := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
+		card_db.clear()
+		for c in loaded:
+			card_db[c.name] = c
+
+	cards_loaded.emit(deck_cards)
+
+	# 清旧
+	clear_extra_decks_and_manas()
+	counters.clear()
+	if has_node("/root/HeroAbilities"):
+		HeroAbilities.reset_turn_usage()
+	if has_node("/root/Equipments"):
+		Equipments.clear_all()
+	if turn != null:
+		turn.is_running = false
+		turn.turn_number = 0
+
+	# 逐玩家建 deck + mana（同一套预设牌组 → 各自独立洗牌）
+	for pid_raw in all_player_ids:
+		var pid: String = String(pid_raw)
+		# 牌组按引用复制即可（CardBase 是不可变模板）；DeckManager.setup 内部会按 count 展开。
+		var d: DeckManager = add_deck(pid)
+		d.setup(deck_cards.duplicate())
+		var m: ManaSystem = add_mana(pid)
+		m.setup(1)
+
+	# hero_specs：PVP 全员 A「再起」（决策 1.3）
+	hero_specs.clear()
+	var a_data: Dictionary = DataLoader.get_hero("A")
+	var a_full: String  = String(a_data.get("display_name", "再起"))
+	var a_short: String = String(a_data.get("battle_name", a_full))
+	var a_abilities: Array = _to_string_array(a_data.get("abilities", []))
+	var a_hp: int = int(a_data.get("max_health", 30))
+	for pid_raw in all_player_ids:
+		var pid: String = String(pid_raw)
+		hero_specs[pid] = {
+			"hp": a_hp,
+			"name_short": a_short,
+			"name_full": a_full,
+			"abilities": a_abilities,
+		}
+
+	# level_data：PVP 不走章节关卡，留空让装配方按 is_pvp 走 PVP 专属布局。
+	level_data = {}
+	pending_chapter_config = ""
+	pending_level_path = ""
 	_target_selector_node = null
 	_hand_picker_node     = null
 

@@ -358,6 +358,15 @@ func _on_cell_cleared(cell) -> void:
 
 # ── 输入路由 ─────────────────────────────────────────────────────────
 func _input(event) -> void:
+	# F5 / F9 = 战斗状态快照存读档（PVP 序列化原型期开发键）
+	if event is InputEventKey and event.is_pressed() and not event.ctrl_pressed:
+		if event.keycode == KEY_F5:
+			print("SnapshotIO.save_to_file -> ", SnapshotIO.save_to_file(), " (", SnapshotIO.SAVE_PATH, ")")
+			return
+		if event.keycode == KEY_F9:
+			print("SnapshotIO.load_from_file -> ", SnapshotIO.load_from_file())
+			return
+
 	# Ctrl+数字 快捷键控制附盘开关
 	if event is InputEventKey and event.is_pressed() and event.ctrl_pressed:
 		var orch: BoardOrchestrator = board_orchestrator
