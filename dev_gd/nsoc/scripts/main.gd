@@ -40,6 +40,7 @@ var enemy_side_panels: EnemySidePanelManager
 var settings_panel: SettingsPanelController
 var play_controller: PlayController
 var combat: CombatSystem
+var _game_over_shown: bool = false
 var board_orchestrator: BoardOrchestrator
 var front_row_selector: Node
 var hero_drag_ctrl: Node
@@ -90,6 +91,8 @@ func _ready() -> void:
 	settings_panel.setup(self, {
 		"create_trigger_button": false,
 		"exit_action": Callable(self, "_on_exit_to_menu"),
+		# PVE 战役也提供投降（面板自动高度适配）
+		"surrender_action": Callable(self, "_on_surrender"),
 	})
 	_create_settings_button()
 
@@ -293,6 +296,18 @@ func _on_hero_died(is_enemy: bool) -> void:
 		return
 	_show_game_over(is_enemy)
 
+# PVE 投降：直接对自家英雄 damage_hero(100, "triggered") → 走标准阵亡流程 → 显示失败画面。
+func _on_surrender() -> void:
+	if _game_over_shown:
+		return
+	if Game.registry == null:
+		return
+	var slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_PLAYER)
+	if slots.is_empty():
+		return
+	var p_slot: BoardSlot = slots[0]
+	p_slot.damage_hero(100, "triggered")
+
 # 威震华夏结尾：播完对话后再弹胜利面板。
 func _play_weizhen_ending_dialogue(victory: bool) -> void:
 	Dialogue.push("关羽",
@@ -347,6 +362,7 @@ func _on_exit_to_menu() -> void:
 	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
 
 func _show_game_over(victory: bool) -> void:
+	_game_over_shown = true
 	# CanvasLayer 独立渲染层，layer=100 保证覆盖所有游戏内元素（棋子/英雄面板等）。
 	# z_index 方案在多层级节点混杂时不可靠；CanvasLayer 完全隔离。
 	var canvas := CanvasLayer.new()
@@ -669,6 +685,8 @@ func _create_hero_action_bar() -> void:
 func _make_hero_ability_ctx() -> EffectContext:
 	var ctx: EffectContext = Game.make_effect_context_with_selectors()
 	ctx.target_cell = null
+	ctx.hand_view   = hand_view
+	ctx.hero        = Game.player_hero()
 	return ctx
 
 func _left_side_pnl_can_drop(_pos: Vector2, data) -> bool:

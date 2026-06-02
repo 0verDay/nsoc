@@ -180,7 +180,7 @@ func _build_connecting_page() -> void:
 # ── 大厅页 ───────────────────────────────────────────────────────────
 func _build_lobby_page() -> void:
 	_title_lbl.text = "联机大厅"
-	_status_lbl.text = "昵称：%s   UUID: …%s" % [Net.get_nickname(), Net.get_uuid().right(8)]
+	_status_lbl.text = "昵称：%s   ID: …%s" % [Net.get_nickname(), Net.get_session_id().right(8)]
 	var vbox := _make_vbox(12)
 	_page_container.add_child(vbox)
 
@@ -239,7 +239,7 @@ func _refresh_room_list_ui() -> void:
 # ── 房间内页 ─────────────────────────────────────────────────────────
 func _build_room_page() -> void:
 	_title_lbl.text = "房间 " + _room_id
-	var is_host: bool = (_host_uuid == Net.get_uuid())
+	var is_host: bool = (_host_uuid == Net.get_session_id())
 	_status_lbl.text = "身份：%s" % ("房主" if is_host else "玩家")
 	var vbox := _make_vbox(16)
 	_page_container.add_child(vbox)
@@ -347,12 +347,49 @@ func _on_message(msg: Dictionary) -> void:
 				_players = _players.filter(func(p): return p.uuid != uuid_gone)
 				_rebuild_room_player_list()
 		"game/start":
-			# 服务器转发房主发出的 game/start，其他玩家切到战斗场景
+			# 收到 game/start → bootstrap_pvp → 切战斗场景
+			var order: Array = []
+			var raw_order = payload.get("action_order", [])
+			if typeof(raw_order) == TYPE_ARRAY:
+				for v in raw_order:
+					order.append(String(v))
+			if order.is_empty():
+				# 兜底：按房间玩家顺序
+				for p in _players:
+					order.append(p.uuid)
+
+			var deck_names: Array = []
+			var raw_names = payload.get("deck_names", [])
+			if typeof(raw_names) == TYPE_ARRAY:
+				for v in raw_names:
+					deck_names.append(String(v))
+
+			# 解析随机种子（房主生成，双方必须相同）
+			var rng_seed: int = int(payload.get("rng_seed", 0))
+
+			# 解析 deck_names → CardBase 数组
+			var deck_cards: Array = []
+			for n in deck_names:
+				var c = Game.get_card(n)
+				if c != null:
+					deck_cards.append(c)
+			# 若 card_db 未加载（首次进入 PVP），先触发加载
+			if deck_cards.is_empty() and not deck_names.is_empty():
+				var all := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
+				for c in all:
+					Game.card_db[c.name] = c
+				for n in deck_names:
+					var c = Game.get_card(n)
+					if c != null:
+						deck_cards.append(c)
+
 			_disconnect_net_signals()
-			_on_close()
-			# game_context.bootstrap_pvp 留待 Step 5 补全
-			# 目前打印提示，后续接战斗场景
-			print("PvpLobby: received game/start, TODO: load PvpMain scene")
+			Net.set_current_room_id(msg.get("room_id", _room_id))
+			# 用 session_id 作本地玩家标识，确保同机两实例 ID 不同
+			Game.bootstrap_pvp(Net.get_session_id(), order, deck_cards, [], rng_seed)
+			queue_free()
+			closed.emit()
+			get_tree().change_scene_to_file("res://scenes/TestMain.tscn")
 
 func _disconnect_net_signals() -> void:
 	if Net.connected.is_connected(_on_net_connected):
@@ -381,8 +418,25 @@ func _on_leave_room() -> void:
 	_go_page(Page.LOBBY)
 
 func _on_start_game() -> void:
-	Net.send_to_room("game/start", _room_id)
-	# 房主端：TODO Step 5 调用 bootstrap_pvp 后切战斗场景
+	# 房主负责：生成行动顺序（用 session_id 区分同 UUID 的不同实例）
+	# _players 里的 uuid 字段在用 session_id 注册时实际存的是 session_id
+	var order: Array = []
+	for p in _players:
+		order.append(p.uuid)   # 服务器 player.uuid = 连接时传的 uuid 参数 = session_id
+	order.shuffle()
+
+	# 生成随机种子并随 game/start 广播，保证双方 DeckManager 洗牌顺序一致
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var seed_value: int = rng.randi()
+
+	var deck_names: Array = _collect_deck_names()
+
+	Net.send_to_room("game/start", _room_id, {
+		"action_order": order,
+		"deck_names":   deck_names,
+		"rng_seed":     seed_value,
+	})
 
 func _on_close() -> void:
 	_disconnect_net_signals()
@@ -409,6 +463,36 @@ func _rebuild_room_player_list() -> void:
 	if _page != Page.ROOM:
 		return
 	_go_page(Page.ROOM)
+
+# 读取本局牌组 card 名列表。
+# 优先读 res://data/test_multiplayer_deck.json（PVP 专属测试牌组）；
+# 否则读 user://battle_cards.json（备战页生成的 PVE 牌组）；
+# 都不存在则从英雄 A 即时生成。
+const TEST_MP_DECK_PATH: String = "res://data/test_multiplayer_deck.json"
+
+func _collect_deck_names() -> Array:
+	var path: String
+	if FileAccess.file_exists(TEST_MP_DECK_PATH):
+		path = TEST_MP_DECK_PATH
+	else:
+		path = DataLoader.BATTLE_CARDS_JSON
+		if not FileAccess.file_exists(path):
+			DataLoader.generate_battle_cards("A")
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return []
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(parsed) != TYPE_ARRAY:
+		return []
+	var out: Array = []
+	for entry in parsed:
+		if typeof(entry) == TYPE_DICTIONARY:
+			var n: String  = String(entry.get("name", ""))
+			var cnt: int   = int(entry.get("count", 1))
+			for _i in range(cnt):
+				out.append(n)
+	return out
 
 # ── UI 工厂辅助 ───────────────────────────────────────────────────────
 func _make_vbox(sep: int) -> VBoxContainer:

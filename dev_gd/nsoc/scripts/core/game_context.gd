@@ -30,6 +30,30 @@ var local_player_id: String = "player_main"
 # 业务模块据此跳过 spawner / spell_caster / scripted_events / dialogue 等 PVE 专属流程。
 var is_pvp: bool = false
 
+# ── PVP 回合状态 ────────────────────────────────────────────────────────
+# action_order：游戏开始时服务器分配的行动顺序（uuid 数组）。
+# active_player_idx：当前行动玩家在 action_order 中的下标；结束回合后 +1 取模。
+# 供 test_main / PlayController 判断本端是否当前轮到自己行动。
+var pvp_action_order: Array  = []     # [uuid1, uuid2, ...]
+var pvp_active_idx:   int    = 0
+var pvp_room_id:      String = ""
+# PVP 共同随机种子：由房主生成并在 game/start 中下发，
+# 双方用相同种子初始化各自的 DeckManager，保证洗牌顺序一致。
+var pvp_rng_seed:     int    = 0
+
+func pvp_active_player_id() -> String:
+	if pvp_action_order.is_empty():
+		return local_player_id
+	return String(pvp_action_order[pvp_active_idx % pvp_action_order.size()])
+
+func pvp_is_my_turn() -> bool:
+	return pvp_active_player_id() == local_player_id
+
+func pvp_advance_turn() -> void:
+	if pvp_action_order.is_empty():
+		return
+	pvp_active_idx = (pvp_active_idx + 1) % pvp_action_order.size()
+
 # 关卡数据：DataLoader.load_level 解析后的多棋盘结构。
 # {"boards": {<id>: {initial_units, spawners}}, "initial_units":[...], "spawners":[...]}
 # 由 bootstrap 填充，main / test_main 读取后建立各 slot 的 spawner / 初始单位。
@@ -130,22 +154,24 @@ func add_mana(pid: String) -> ManaSystem:
 		mana = m
 	return m
 
-# 清掉所有非本地玩家的 deck / mana（PVE 重新 bootstrap 或 PVP 战斗结束时调）。
-# 本地玩家实例保留并复位指针，避免悬空。
+# 清掉所有非当前 deck/mana 实例的额外副本（PVE 重新 bootstrap 或 PVP 战斗结束时调）。
+# 判断标准：实例指针 == deck / mana → 保留；否则 queue_free。
+# 注意：不依赖 local_player_id key，避免 bootstrap_pvp 先改 local_player_id 后调此
+# 函数导致原始 deck/mana 被错误 free 的问题。
 func clear_extra_decks_and_manas() -> void:
 	for pid in decks.keys():
-		if pid == local_player_id:
-			continue
 		var d = decks[pid]
+		if d == deck:          # 保留原始实例
+			continue
 		if is_instance_valid(d):
 			d.queue_free()
 	decks.clear()
 	if is_instance_valid(deck):
 		decks[local_player_id] = deck
 	for pid in manas.keys():
-		if pid == local_player_id:
-			continue
 		var m = manas[pid]
+		if m == mana:          # 保留原始实例
+			continue
 		if is_instance_valid(m):
 			m.queue_free()
 	manas.clear()
@@ -314,7 +340,7 @@ func bootstrap() -> void:
 #   - SpawnerSystem / SpellCasterSystem 不挂载（由场景装配方按 is_pvp 跳过）
 #   - 不消费 pending_chapter_config / pending_level_path
 func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
-		deck_cards: Array, all_cards_db: Array = []) -> void:
+		deck_cards: Array, all_cards_db: Array = [], rng_seed: int = 0) -> void:
 	is_pvp = true
 	local_player_id = p_local_pid
 
@@ -344,11 +370,20 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 		turn.turn_number = 0
 
 	# 逐玩家建 deck + mana（同一套预设牌组 → 各自独立洗牌）
+	# PVP 模式下每位玩家用 (rng_seed + slot_index) 作为确定性种子，
+	# 保证不同玩家牌堆顺序不同（避免双方手牌完全一致）但均可复现。
+	pvp_rng_seed = rng_seed
+	var pid_index: int = 0
 	for pid_raw in all_player_ids:
 		var pid: String = String(pid_raw)
 		# 牌组按引用复制即可（CardBase 是不可变模板）；DeckManager.setup 内部会按 count 展开。
 		var d: DeckManager = add_deck(pid)
-		d.setup(deck_cards.duplicate())
+		if rng_seed != 0:
+			# 每位玩家的种子 = base_seed + 玩家序号，保证各玩家洗牌结果不同
+			d.setup_seeded(deck_cards.duplicate(), rng_seed + pid_index)
+		else:
+			d.setup(deck_cards.duplicate())
+		pid_index += 1
 		var m: ManaSystem = add_mana(pid)
 		m.setup(1)
 
@@ -374,6 +409,13 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 	pending_level_path = ""
 	_target_selector_node = null
 	_hand_picker_node     = null
+	# PVP 回合状态初始化
+	pvp_action_order = []
+	for pid_raw in all_player_ids:
+		pvp_action_order.append(String(pid_raw))
+	pvp_active_idx = 0
+	# pvp_room_id 由 pvp_lobby 在切场景前单独注入 Net，这里取回做镜像
+	pvp_room_id = Net.get_current_room_id()
 
 
 # JSON 解出的 abilities 可能是 Array of String（理想）或混入 null 等；统一为 Array[String]。

@@ -125,6 +125,23 @@ func run() -> void:
 	is_running = false
 	turn_ended.emit()
 
+# PVP 专用：只跑指定阵营一侧的行动阶段。
+#   faction = PLAYER(0)：本端 player_main 的单位行动（主动结束回合时调用）
+#   faction = ENEMY(1) ：本端 enemy_main 的单位行动（收到对方 end_turn 时调用）
+# 不跑 spawn / spell_caster / Events，不递增 turn_number，不发 turn_started/ended。
+# 攻击 flag 在调用方按需重置（或等双方都完成后一次性重置）。
+func run_pvp_phase(faction: int) -> void:
+	if is_running:
+		return
+	is_running = true
+	await _run_phase(faction)
+	var reg := _registry()
+	if reg != null:
+		for slot in reg.slots:
+			if is_instance_valid(slot.board) and slot.faction == faction:
+				slot.board.reset_attack_flags()
+	is_running = false
+
 func _run_phase(faction: int) -> void:
 	phase_started.emit(faction)
 	# 敌方阶段开始时，推进所有盘的法术施放器（在单位行动前）

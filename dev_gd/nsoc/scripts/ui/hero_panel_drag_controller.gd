@@ -121,7 +121,8 @@ func _on_press(global_pos: Vector2) -> void:
 	if is_instance_valid(_detail_panel) and _hero_args_resolver.is_valid():
 		var args: Array = _hero_args_resolver.call()
 		if args.size() >= 3:
-			_detail_panel.start_long_press_hero(args[0], args[1], args[2])
+			var equip_descs: Array = args[3] if args.size() >= 4 else []
+			_detail_panel.start_long_press_hero(args[0], args[1], args[2], equip_descs)
 	_animate_press()
 
 func _on_release() -> void:

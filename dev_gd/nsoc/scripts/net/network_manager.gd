@@ -31,11 +31,18 @@ var _peer: WebSocketPeer = null
 var _state: int = STATE_DISCONNECTED
 
 var _uuid: String = ""
+# session_id = uuid + 随机 4 位后缀，每次启动重新生成。
+# 同一台机跑两个实例时两端 uuid 相同，但 session_id 不同，
+# 保证服务器 / 消息路由能区分两个玩家。
+var _session_id: String = ""
 var _nickname: String = ""
 
 func _ready() -> void:
 	_uuid     = ProfileManager.get_or_create_uuid()
 	_nickname = ProfileManager.get_nickname()
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	_session_id = _uuid + "_" + str(rng.randi_range(1000, 9999))
 
 # ── 连接 / 断开 ──────────────────────────────────────────────────────
 func connect_to_server(host: String = "", port: int = 0) -> void:
@@ -45,8 +52,9 @@ func connect_to_server(host: String = "", port: int = 0) -> void:
 		var cfg := ProfileManager.get_server_config()
 		host = cfg.host
 		port = int(cfg.port)
+	# 用 session_id 作为 uuid 参数，保证同机两实例被服务器视为不同玩家
 	var url: String = "ws://%s:%d/ws?uuid=%s&nickname=%s" % [
-		host, port, _uuid, _nickname.uri_encode(),
+		host, port, _session_id, _nickname.uri_encode(),
 	]
 	_peer = WebSocketPeer.new()
 	var err := _peer.connect_to_url(url)
@@ -124,8 +132,22 @@ func send_to(type: String, room_id: String, target_uuid: String,
 func is_connected_to_server() -> bool:
 	return _state == STATE_CONNECTED
 
+# 当前所在房间号（由 pvp_lobby 在切场景前注入）。
+# 战斗场景通过此字段发 action/* 消息。
+var _current_room_id: String = ""
+
+func set_current_room_id(rid: String) -> void:
+	_current_room_id = rid
+
+func get_current_room_id() -> String:
+	return _current_room_id
+
 func get_uuid() -> String:
 	return _uuid
+
+# 本次会话唯一标识（含随机后缀），用于玩家身份识别。
+func get_session_id() -> String:
+	return _session_id
 
 func get_nickname() -> String:
 	return _nickname

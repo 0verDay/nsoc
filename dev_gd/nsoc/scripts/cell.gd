@@ -292,6 +292,13 @@ func _drop_data(_pos, data) -> void:
 	# 不在此处结算，统一发到 PlayController。
 	card_dropped.emit(self, data)
 
+# JSON 往返后整数变浮点的工具函数：把 dict 所有 value 转为 int。
+static func _int_dict(d: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	for k in d.keys():
+		out[k] = int(d[k])
+	return out
+
 # ── 序列化（PVP 联机用）────────────────────────────────────────────
 # Cell 是场景节点，序列化只导出业务数据（不含视觉/动画/UI 层）。
 # from_dict 在已存在的空 Cell 上原地还原；不创建新节点。
@@ -336,10 +343,11 @@ func from_dict(d: Dictionary) -> void:
 	var p_card_name:  String = String(d.get("card_name", ""))
 	var p_attack:     int    = int(d.get("attack", 0))
 	var raw_hp                = d.get("health", {})
-	var p_health:     Dictionary = raw_hp if typeof(raw_hp) == TYPE_DICTIONARY \
+	# JSON 往返后数值变浮点，显式转 int 避免显示 "2.0"
+	var p_health:     Dictionary = _int_dict(raw_hp) if typeof(raw_hp) == TYPE_DICTIONARY \
 		else {"front": 0, "back": 0, "left": 0, "right": 0}
 	var raw_mh                = d.get("max_health", p_health)
-	var p_max_health: Dictionary = raw_mh if typeof(raw_mh) == TYPE_DICTIONARY else p_health
+	var p_max_health: Dictionary = _int_dict(raw_mh) if typeof(raw_mh) == TYPE_DICTIONARY else p_health
 	var raw_eff               = d.get("effects", [])
 	var p_effects: Array      = raw_eff.duplicate() if typeof(raw_eff) == TYPE_ARRAY else []
 
