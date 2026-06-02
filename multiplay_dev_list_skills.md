@@ -1,7 +1,7 @@
 # NSOC 多人联机开发规划文档
 
 > 本文件记录 PVP 模式的全部决策与开发难点，后续开发以此为准。
-> 最后更新：包含完整决策清单 + 14 项确认问题。
+> 最后更新：2026-06，包含完整决策清单 + 本轮全部实施记录。
 
 ---
 
@@ -61,8 +61,8 @@
 | UI 布局 | **同 PVE**，本地玩家定位下方，对方定位上方 |
 | 对方手牌可见 | **不可见**（手牌隐私，与 PVE 中敌方手牌不可见一致） |
 | 对方费用可见 | **不可见**（原型期 UI 不展示） |
-| 主动投降 | **不提供**（原型期），玩家需关闭客户端或断网（走自残 100 流程） |
-| 中途退出 | **未阵亡玩家不能在战斗中退出**（原型期），只能"物理退出"（关客户端 / 断网） |
+| 主动投降 | **已实现**：选项面板"投降"按钮 → damage_hero(100, triggered) → 走标准阵亡流程 |
+| 中途退出 | **退出即投降**：退出战斗走"投降"同样逻辑，对手收 game/end 显示胜利画面 |
 
 ### 1.4 玩家身份
 
@@ -589,3 +589,361 @@ Step 7：扩展到 2v2 / 3v3（后续）
 | 第二轮 | 房间加入方式、行动顺序、英雄/卡组、断线、超时、协议、协议格式、阵亡处理 | 14 项细化决策，原型期改为 1v1 |
 | 第三轮 | 玩家身份、房号格式、服务器地址、房间生命周期、棋盘布局、Spawner、手牌上限、牌库耗尽、战前阶段、持久化、房间数限制、动画同步策略、单位详情、UI 布局、装备系统、英雄技能、心跳检测 | 17 项进一步细化，明确所有原型期实现选项 |
 | 第四轮 | 服务器语言（Go）、昵称重复、房号生成、战斗结算后流程、投降功能、战斗启动后加入、中途退出、版本检查、房主权限、服务器日志、卡组下发时机、牌组数量、双方手牌处理 | 13 项实施层面细化，所有原型期内待决策点已基本闭环 |
+
+---
+
+## 11. 实施进度（2026-06）
+
+### 11.1 已完成（按 step 推进）
+
+#### Step 1: 状态序列化（无网络依赖）
+
+| 文件 | 改动 |
+|---|---|
+| `cell.gd` | `to_dict / from_dict`（原地恢复 Panel 节点，不创建新节点） |
+| `core/board_model.gd` | `to_dict / from_dict`（按 `"r,c"` 键分发到 cell） |
+| `core/hero_state.gd` | `to_dict / from_dict` |
+| `core/deck_manager.gd` | `to_dict / to_dict_public / from_dict`（卡牌按 name 序列化） |
+| `core/mana_system.gd` | `to_dict / from_dict` |
+| `core/equipment_instance.gd` | `to_dict` + 静态 `from_dict` |
+| `core/equipment_manager.gd` | `to_dict / from_dict`（重建时发 added/removed） |
+| `core/board_slot.gd` | `to_dict / from_dict`（视觉容器不序列化） |
+| `core/snapshot_io.gd` | **新建**：顶层 `serialize_battle / restore_battle / save/load_to_file` |
+| `main.gd` / `test_main.gd` | F5 存档、F9 读档热键 |
+
+#### Step 3: 多实例 DeckManager / ManaSystem
+
+| 文件 | 改动 |
+|---|---|
+| `core/game_context.gd` | 加 `decks: Dict / manas: Dict / local_player_id / is_pvp / pvp_action_order / pvp_active_idx / pvp_room_id`，加 `get_deck/get_mana/add_deck/add_mana/clear_extra_decks_and_manas/deck_of_slot/mana_of_slot/pvp_active_player_id/pvp_is_my_turn/pvp_advance_turn/bootstrap_pvp` |
+| `core/board_slot.gd` | 加 `owner_player_id` 字段（PVP 槽位归属） |
+
+#### Step 4: Go 中继服务器
+
+| 文件 | 说明 |
+|---|---|
+| `server/main.go` | HTTP 入口，`PORT` env 配置 |
+| `server/hub.go` | 中央调度循环（rooms/clients 字典）+ 房间管理 + 路由 + 60min 过期清理 |
+| `server/room.go` | Room 结构 + 5 位房号生成 + 冲突重试 |
+| `server/client.go` | Client 封装 + WebSocket upgrader + read/writeLoop |
+| `server/message.go` | Message 结构（`type / from / to / room_id / payload`） |
+| `server/README.md` | 启动说明 + 协议参考 |
+
+**关键修复**：
+- `handleDisconnect` 用**指针比对**（`stored == c`）而非 UUID 比对，支持同 UUID 多连接（同机测试必需）
+- `_safeSendClose` + `deliver` 加 `recover` 防 double-close panic
+- `handleJoin` 也按指针去重，允许同 UUID 视为不同玩家
+
+#### 客户端网络层（新增 `scripts/net/`）
+
+| 文件 | 说明 |
+|---|---|
+| `scripts/net/profile_manager.gd` | 静态工具：`user://profile.json` uuid/昵称 + `user://server.json` 服务器配置 |
+| `scripts/net/network_manager.gd` | autoload `Net`：WebSocket 连接 + 消息收发 + 信号 + **`session_id = uuid + 4位随机后缀`**（解决同机两实例同 UUID） |
+
+`session_id` 是关键：原本同一台机两个 Godot 实例共享 `user://profile.json` 拿到相同 UUID，服务器无法区分。每次启动给 UUID 加随机后缀作 session 身份，解决了这个问题。
+
+#### 大厅 UI（不接演武切磋）
+
+| 文件 | 说明 |
+|---|---|
+| `scripts/ui/pvp_lobby.gd` | **新建**：纯代码构建 UI，无 .tscn。CONNECT/CONNECTING/LOBBY/ROOM 四个页面 |
+| `scripts/main_menu.gd` | 加屏幕中央"联机对战"按钮（无样式，待迁入演武切磋面板） |
+| `data/test_multiplayer_deck.json` | **新建**：填线宝宝×3 + 鼓舞×1 + 测试刀×1 测试牌组 |
+
+#### Step 5-A/B/C: 战斗场景 PVP 化
+
+`test_main.gd` 加 PVP 分支：
+- `_inject_pvp_level_data()`：注入合成 level_data（player_main + enemy_main，无 spawner / spell_caster / events）
+- `_setup_pvp_slots()`：boot 后注入 `owner_player_id`
+- `_pvp_default_hero_spec()`：从 `hero.json` 读"往日之王·科因 / 再起 / HP 30"
+- `_on_end_turn_pressed()` PVP 分支：跑 `run_pvp_phase(PLAYER)` → 发 `action/end_turn` 给对手 → 推进回合
+- `_on_remote_end_turn()`：跑 `run_pvp_phase(ENEMY)` → 推进回合（带 `pvp_is_my_turn()` 守卫防双 advance）
+- `_pvp_msg_queue` + `_drain_pvp_queue` + `_handle_pvp_message`：**消息队列顺序处理**，避免 await 并发导致单位/法术处理竞态
+- `_update_pvp_turn_ui()`：刷新结束回合按钮 + 同步刷新英雄技能按钮（解决 `pvp_advance_turn()` 时序问题）
+
+`play_controller.gd`：
+- `can_play_at` / `can_equip` 加 `pvp_is_my_turn()` 检查
+- `_pvp_broadcast_play_card()` 出牌后广播（带 `card_type / slot_id / row / col`，法术额外带 `result_atk / result_health`）
+- `_pvp_broadcast_play_equip()` 装备出牌广播
+- `handle_remote_play_card()` 远端镜像执行（坐标 + slot_id 双重翻转，见 §12.3）
+- `handle_remote_end_turn()` 远端结算
+- 改用 `_pvp_opponent_id()` 定向发送，**不发 `to=all`** 避免 echo 干扰队列
+- `handle_unit_death` 路由：PVP `is_enemy=true` 单位入 `ROLE_MAIN_ENEMY` slot.graveyard（不再走 `Game.deck`）
+
+`turn_system.gd`：
+- 新增 `run_pvp_phase(faction)`：只跑指定阵营单侧，不递增 `turn_number`，不发 turn_started/ended、不跑 events / spawn
+
+`hero_action_bar.gd`：
+- 加 PVP 回合检查（按钮禁用 + 点击拦截）
+- `_make_ctx()` 注入 `hand_view` 和 `hero`（修复"再起"技能 ctx 缺字段）
+
+`effect_context.gd`：
+- 加 `hand_view / hero` 字段
+- `banish_card / send_to_graveyard` 也按 `is_enemy + is_pvp` 路由对手单位入 enemy_main slot
+
+#### Step 5-D 部分: 胜负 + 退出
+
+- 英雄死亡发 `game/end` 给服务器（销毁房间）
+- `_game_over_shown` flag 防对手 `game/end` 立即退出盖掉胜负画面
+- 退出战斗自动 `Net.disconnect_from_server()` + 清 PVP 状态
+
+### 11.2 关键 bug 修复记录
+
+| Bug | 根因 | 修复 |
+|---|---|---|
+| 两实例 UUID 相同导致服务器混淆 | `user://profile.json` 共享 | `session_id = uuid + 4位随机后缀` |
+| 服务器 `panic: send on closed channel` | `handleDisconnect` 用 UUID 删 map 错删另一连接 | 指针比对 + `_safeSendClose` + `deliver` recover |
+| 二次打开大厅显示"连接中"卡死 | Net 已连接但 `connected` 信号不会再触发 | `_ready` 检查 `Net.is_connected_to_server()` 跳到对应页 |
+| `bootstrap_pvp` 把 `Game.deck` 节点 free 掉 | `clear_extra_decks_and_manas` 用 `local_player_id` 比对，bootstrap 先改 `local_player_id` 再调此函数 | 改用**实例指针**比对（`d == deck`）保留 |
+| 鼓舞对端不生效 | inspire 检查 `cell.is_enemy` 跳过 enemy 单元格 | 广播带 `result_atk / result_health`，对端**直接写数值**绕过效果 |
+| 鼓舞数值显示带小数点 | JSON 往返后 int 变 float | 接收时显式 `int(rh[k])` |
+| 单位坐标对端镜像错 | A 放右下角 → B 应看到左上角（两人面对面） | `row_b = (ROWS-1)-row_a, col_b = (COLS-1)-col_a` |
+| 鼓舞跨回合失效 | 单位移动后 spell 在 enemy_main 找不到（如已跨入 player_main） | 广播带 `slot_id`，**接收端按 `player_main↔enemy_main` 翻转**定位单元格 |
+| 对手单位死亡墓地为空 | `cell.origin == "hand"` 一律入 `Game.deck` | PVP 模式下 `is_enemy` 单位入 `ROLE_MAIN_ENEMY` slot.graveyard |
+| 装备双方都装上 | `Equipments` 是全局 autoload | 远端 `action/play_equip` 不调 `Equipments.equip` |
+| TurnSystem 跑双侧导致单位走两次 | `run()` 跑 PLAYER+ENEMY 两阶段 | 新增 `run_pvp_phase(faction)` 只跑一侧 |
+| 双方都显示"等待对方" | echo 进入消息队列被处理两次 advance turn | 改用 `Net.send_to(opp_id)` 不发 `to=all` + `_on_remote_end_turn` 加 `pvp_is_my_turn()` 守卫 |
+| 同回合鼓舞 OK 但跨回合 NG | 消息队列 await 并发：单位 play_card 还没落格，鼓舞 play_card 已检查 cell.has_card | `_pvp_msg_queue` 顺序处理，每条 await 完才处理下条 |
+| 行动方按钮置灰 / 等待方按钮亮 | `_refresh_ability_button` 在 `pvp_advance_turn` 之前触发 | `_update_pvp_turn_ui` 末尾强制再调一次 `_refresh_ability_button` |
+| `_on_remote_end_turn` 无 `[MSG]` 前缀被二次调用 | Godot signal 协程机制 + `await` 重入 | 加 `if pvp_is_my_turn(): return` 守卫 |
+| 再起报错 `hand_view` 不存在 | `EffectContext` 没有 `hand_view` 字段 | EffectContext 加 `hand_view / hero` 字段，`_make_hero_ability_ctx` 注入 |
+| `settings_panel_controller.gd` 解析失败 | `_apply_danger_button_style` 调用 `ThemeFactory.has_method()`（static 不可用）且引用不存在的 `danger_button_styles` | 删除 `has_method` 检查，直接手搓红色 StyleBoxFlat |
+| 鸣金对端污染牌库 / counter | 对端 else 分支自跑 ming_jin effect → `deck.add_to_draw_pile` + `set_counter("ming_jin_used")` 误操作对端状态 | 广播加 `result_cleared: true` 标志；对端直接 `cell.clear_card()`，不跑 effect |
+| game/end winner_id 错误（投降场景） | `_on_hero_died` 用 `pvp_active_player_id()` 作 winner，玩家死亡时 winner 可能是自己 | 改用 `_pvp_opponent_id()` 确保 winner 是对手 |
+
+---
+
+### 11.3 本轮新增（2026-06 本次会话）
+
+#### Step 6-A：RNG 随机种子同步
+
+| 文件 | 改动 |
+|---|---|
+| `core/deck_manager.gd` | 加 `_rng / _rng_base_seed / _reshuffle_count`；加 `setup_seeded(cards, seed)`；`reshuffle` 改调 `_shuffle_draw_pile()`；加确定性 Fisher-Yates 洗牌；`_rng==null` 时退回 `Array.shuffle()`（PVE 不变） |
+| `core/game_context.gd` | 加 `pvp_rng_seed: int`；`bootstrap_pvp` 加 `rng_seed: int = 0` 参数；逐玩家 `setup_seeded(deck_cards, rng_seed + pid_index)` |
+| `scripts/ui/pvp_lobby.gd` | `_on_start_game` 生成 `rng_seed = rng.randi()`，写入 `game/start` payload；`game/start` handler 解析 `rng_seed`，传入 `bootstrap_pvp` |
+
+**关键设计**：
+- 房主在 `game/start` 时生成种子，一次广播双方同时收到
+- 每位玩家种子 = `base_seed + pid_index`，避免双方洗出完全一样的顺序
+- 后续 reshuffle（墓地重洗）用 `_rng_base_seed + _reshuffle_count` 推导，双端确定性一致
+
+#### Step 6-B：装备激活同步
+
+| 文件 | 改动 |
+|---|---|
+| `core/play_controller.gd` | 加 `_PVP_BROADCAST_EQUIP_EFFECTS = ["destroy_unit"]` 白名单；加 `_pvp_broadcast_activate_equip(equip_name, target_cell)`（检查白名单后才发）；加 `handle_remote_activate_equip(payload)`（坐标翻转 + `Effects.trigger_play` 镜像执行） |
+| `scripts/ui/hero_action_bar.gd` | `_on_equip_btn_pressed` 加 PVP 回合检查；激活成功后调 `_pvp_broadcast_equip_activation`；`_refresh_equipment_button` 加 PVP 非自己回合时禁用 |
+| `scripts/test_main.gd` | `_handle_pvp_message` 加 `action/activate_equip` 分支；顺手清理重复的 `match` 块（历史 bug） |
+
+**白名单说明**：
+- `destroy_unit`（仁之剑）影响对手单位状态 → 广播 + 对端镜像执行
+- `gain_mana_1`（测试刀）只影响自家 mana → 不广播
+- `discard_hand_card`（义之剑）只影响自家手牌 → 不广播
+
+#### Step 6-C：断线自残 100
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/test_main.gd` | `disconnect/notify` 分支：找 `ROLE_MAIN_ENEMY` slot，调 `e_slot.damage_hero(100, "triggered")` → 走标准阵亡 → `_on_enemy_hero_died` → 发 `game/end` + 显示胜利画面 |
+
+**链路**：TCP 断 → 服务器广播 `disconnect/notify` → 存活方 `damage_hero(100)` → 阵亡流程 → 服务器销毁房间
+
+#### Step 6-D：投降功能
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/ui/settings_panel_controller.gd` | 加 `_surrender_action: Callable`；`setup` 接受 `surrender_action` 配置；面板高度按是否含投降按钮动态切换（3 按钮=400px / 4 按钮=490px，vbox 同比适配）；加 `_on_surrender_pressed`、`_apply_danger_button_style`（红色样式） |
+| `scripts/test_main.gd` | `setup` 无条件注入 `surrender_action`（PVE + PVP 均有）；加 `_on_pvp_surrender`（`ROLE_MAIN_PLAYER` slot `damage_hero(100)`）；`game/end` 分支按 `winner_id` 判断本端胜负（投降方对端显示胜利画面而非直接退出）；修 `_on_hero_died` winner_id 用 `_pvp_opponent_id()` |
+| `scripts/main.gd` | `setup` 注入 `surrender_action`；加 `_on_surrender`；`_show_game_over` 加 `_game_over_shown = true` 防重复触发 |
+
+**两类面板**：主菜单（无 surrender_action）→ 400px，3 按钮；游戏内（有 surrender_action）→ 490px，4 按钮
+
+#### Step 6-E：含 await effect 同步审查
+
+审查结果：
+
+| Effect | 状态 | 说明 |
+|---|---|---|
+| `inspire` | ✅ 正确 | 无 await，broadcast 后 attack 已更新，result_atk 直写 |
+| `empower` | ✅ 正确 | 无 await，result_health 直写 |
+| `weaken`（存活） | ✅ 正确 | 无 await，result_health 直写 |
+| `weaken`（打死） | ✅ 正确 | await 后 cell 清空，对端走 else 自跑 weaken 完整流程 |
+| `discard_hand_card` | ✅ 正确 | 不广播，只影响自家手牌 |
+| **`ming_jin`** | ✅ 已修复 | 对端 else 分支会污染牌库 / counter，加 `result_cleared: true` 标志 |
+
+| 文件 | 改动 |
+|---|---|
+| `core/play_controller.gd` | `_pvp_broadcast_play_card` 对法术格子清空时检查 `_RETURN_TO_HAND_EFFECTS = ["ming_jin"]`；含返手效果则加 `result_cleared: true`；`handle_remote_play_card` 法术 else 加 `result_cleared` 分支直接 `cell.clear_card()` |
+| `data/test_multiplayer_deck.json` | 加入鸣金×1，方便测试 |
+
+#### Step 6-F：英雄技能同步（再起）
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/ui/hero_action_bar.gd` | `_on_ability_pressed` activate **之前**拍手牌快照（`_pvp_snapshot_for_ability`）；await 后发 `action/activate_hero`；加 `_pvp_snapshot_for_ability`（restart 拍 discarded 名单）；加 `_pvp_broadcast_activate_hero` |
+| `scripts/test_main.gd` | `action/activate_hero` 分支调 `_handle_remote_activate_hero`；加函数：restart → 把 discarded 卡名追加入 `ROLE_MAIN_ENEMY` slot.graveyard，触发 `pile_changed` → enemy_side_panels 自动刷新 |
+
+**设计决策**：
+- 对端不调 `HeroAbilities.activate`（会操作对端自家 hand_view）
+- 对端只做"视觉状态镜像"：追加弃牌进 enemy_main 墓地
+- mana / deck 抽牌不同步（锁步模型下下回合 `start_new_turn` 自动修正 mana；抽牌由 RNG seed 保证一致）
+- `_pvp_snapshot_for_ability` 预留扩展点，未来加其他 ability 时按 id 添加快照逻辑
+
+#### Step 6-G：对手装备详情面板展示
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/ui/detail_panel_controller.gd` | `_build_panel` 末尾追加三节点 `EquipSep`/`EquipTitleLbl`/`EquipDescLbl`，默认隐藏；`start_long_press_hero` / `_on_long_press_timeout` / `show_hero` 全部加第 4 参数 `equip_descs: Array = []`，长按英雄时在技能描述下方显示分隔线 + "已装备" 标题 + 描述行 |
+| `scripts/ui/hero_panel_drag_controller.gd` | `_on_press` 从 `_hero_args_resolver` 返回数组取 `args[3]` 作 `equip_descs` 透传给 `start_long_press_hero`，兼容旧 3 项数组 |
+| `scripts/test_main.gd` | 加 `_remote_equip_insts: Array` 字段（对手装备镜像，不进 `Equipments` 单例）；`_get_player_hero_long_press_args` 返回扩到 4 项，新增 `_collect_equip_descs` / `_collect_remote_equip_descs`；`_on_enemy_hero_panel_gui_input` 传镜像列表；`action/play_equip` 分支从 `pass` 改为按 `card_name` 创建 `EquipmentInstance` 加入镜像；`action/activate_equip` 分支在 await 后按名字找镜像实例扣耐久（`durability_left -= 1`，≤0 移除） |
+
+**设计决策**：
+- 装备格式：`【装备名】效果1；效果2（剩余耐久：N）`，多件每行一条
+- 对手装备**不进 `Equipments` 全局单例**，避免战斗结算误用对手装备 effect / 耐久
+- 镜像列表只服务详情面板查看，**不与服务器再次同步**——耐久数据由本端按 `action/activate_equip` 锁步推算
+- 装备破损（耐久=0）由对端 `_on_inst_changed` 自动 unequip 入墓，本端镜像同步移除即可
+- PVE 不受影响：敌方英雄长按显式传 `_collect_remote_equip_descs()`，PVE 阶段该列表恒空
+
+### 11.4 待完成
+
+#### 优先级 P0（核心可玩性）
+
+- [x] ~~再起技能两端牌堆 desync~~ → **Step 6-A 已解决**（RNG seed 同步）
+- [x] ~~装备激活同步~~ → **Step 6-B 已解决**（白名单广播 + 对端镜像）
+- [x] ~~跨盘单位的鼓舞同步~~ → 已加 slot_id 翻转，测试通过
+- [ ] **跨盘冲锋时英雄受击同步**：A 单位从 enemy_main 后排打 B 英雄 → 双端锁步应自动同步，待专项验证
+
+#### 优先级 P1（体验完善）
+
+- [ ] **PvpLobby UI 迁入演武切磋面板**（当前是主菜单浮层，按决策应进 SparringPanel）
+- [x] ~~投降功能~~ → **Step 6-D 已解决**（选项面板红色投降按钮，PVE + PVP 通用）
+- [x] ~~战斗中途退出处理~~ → **Step 6-C 已解决**（disconnect/notify → damage_hero(100)）
+- [ ] **房间列表过滤 / 分页 / 刷新冷却**
+- [x] ~~对手装备 UI 显示~~ → **Step 6-G 已解决**（详情面板"已装备"分区 + 对手装备镜像列表）
+- [x] ~~含 await 效果同步验证~~ → **Step 6-E 审查完毕**，修复 ming_jin 对端污染问题
+- [x] ~~英雄技能同步（再起）~~ → **Step 6-F 已解决**（弃牌入对端 enemy_main 墓地）
+
+#### 优先级 P2（扩展）
+
+- [ ] **真实云服务器部署**：当前只本机 localhost:8080
+- [ ] **JSON 协议精确化**：每类消息的 payload schema 文档化
+- [ ] **2v2 / 3v3 / 1v3 扩展**：多 enemy_main / ally slot
+- [ ] **客户端版本检查**（原型期决策不做）
+- [ ] **服务器持久化 / 日志 / 反作弊**（原型期决策不做）
+- [ ] **其他英雄技能同步扩展**（water_attack 等，当前 PVP 默认英雄=再起，不阻塞）
+
+---
+
+## 12. 当前架构现状
+
+### 12.1 锁步（lockstep）模型
+
+不走"权威服务器 + 状态广播"，而是双方各自完整跑游戏逻辑，靠**同步操作消息**保持一致。简化实现，但要求：
+
+- 所有玩家行动通过消息广播给对手（出牌 / 结束回合 / 装备激活 / 英雄技能）
+- 对手收到消息后在本端**镜像执行**
+- 战斗结算（攻击、移动、英雄受击）由各端自行计算，依赖于初始状态相同 + 锁步性
+
+### 12.2 消息流
+
+```
+玩家 A 操作（如出牌）
+  ↓
+PlayController 本地执行
+  ↓
+_pvp_broadcast_play_card  ← Net.send_to(opp_id)（不发 to=all 避免 echo）
+  ↓
+Go 服务器（hub.go forward）按 to 字段精确路由
+  ↓
+玩家 B 收到 → Net.message_received.emit
+  ↓
+test_main._on_pvp_message 入 _pvp_msg_queue
+  ↓
+_drain_pvp_queue 顺序 await 处理（避免并发）
+  ↓
+_handle_pvp_message → 过滤 from==local → 分发到 handle_remote_*
+  ↓
+play_controller.handle_remote_play_card → 镜像坐标 + 翻转 slot → 镜像执行
+```
+
+### 12.3 坐标 + slot_id 翻转
+
+PVP 1v1 双方面对面，棋盘对称镜像：
+
+| 发送方坐标 | 接收方坐标 |
+|---|---|
+| `player_main(row, col)` | `enemy_main(2-row, 2-col)` |
+| `enemy_main(row, col)`（已跨入对方盘） | `player_main(2-row, 2-col)` |
+
+公式：
+```
+row_b = (ROWS-1) - row_a  // = 2 - row_a
+col_b = (COLS-1) - col_a  // = 2 - col_a
+target_slot = (sender_slot == "player_main") ? "enemy_main" : "player_main"
+```
+
+### 12.4 回合归属
+
+- `Game.pvp_action_order: Array[session_id]` — 服务器或房主在 `game/start` 时 shuffle 生成
+- `Game.pvp_active_idx: int` — 当前行动玩家在 order 中的下标
+- `Game.pvp_active_player_id()` / `pvp_is_my_turn()` / `pvp_advance_turn()`
+- 主动方按"结束回合"：本地跑 `run_pvp_phase(PLAYER)` → `Net.send_to(opp, "action/end_turn")` → 本地 `pvp_advance_turn()`
+- 被动方收到：跑 `run_pvp_phase(ENEMY)`（即对手单位移动） → `pvp_advance_turn()`
+- 双方推进同步保持 idx 一致
+
+### 12.5 PVE / PVP 分支点
+
+| 模块 | PVE | PVP |
+|---|---|---|
+| `Game.bootstrap()` | 原路径 | `bootstrap_pvp(local_pid, order, deck_cards)` |
+| `level_data` | 章节 JSON | 合成 dict（player_main + enemy_main，无 spawner/events） |
+| `TurnSystem` | `run()` 跑 PLAYER + ENEMY 双阶段 | `run_pvp_phase(faction)` 只跑单侧 |
+| `BoardOrchestrator` | 章节 enabled 附盘 | 仅主盘双方 |
+| `SpawnerSystem` | 启用 | 不挂载 |
+| `SpellCasterSystem` | 启用 | 不挂载 |
+| `ScriptedEvents / Dialogue / Objectives` | 启用 | 跳过 |
+| `DeckManager / ManaSystem` | 单实例 | 双实例（per session_id） |
+| `Equipments` | 全局 | 全局（仅本端，对手装备不互染） |
+
+### 12.6 服务器交互优化点
+
+- 所有 `action/*` 消息**只发对手**（`Net.send_to(opp_id)`）不用 `to=all`，避免 echo 触发自己消息队列处理
+- 服务器 `handleJoin` 按指针去重（同 UUID 多连接 = 多个玩家），支持本机双开测试
+- `panic` 全部 recover，单条消息异常不影响整个 hub
+
+### 12.7 文件清单（PVP 相关新增 / 改动）
+
+```
+dev_gd/nsoc/
+├── data/test_multiplayer_deck.json    新增：测试牌组
+├── scripts/net/                       新增目录
+│   ├── profile_manager.gd             静态：profile.json / server.json
+│   └── network_manager.gd             autoload "Net"
+├── scripts/ui/pvp_lobby.gd            新增：纯代码大厅 UI
+├── scripts/core/snapshot_io.gd        新增：序列化顶层包装
+├── scripts/core/game_context.gd       PVP 状态字段 + bootstrap_pvp
+├── scripts/core/turn_system.gd        + run_pvp_phase
+├── scripts/core/play_controller.gd    + PVP 广播 + handle_remote_*
+├── scripts/core/effect_context.gd     + hand_view/hero, PVP 路由
+├── scripts/core/board_slot.gd         + owner_player_id, 序列化
+├── scripts/core/board_model.gd        + 序列化
+├── scripts/core/hero_state.gd         + 序列化
+├── scripts/core/deck_manager.gd       + 序列化
+├── scripts/core/mana_system.gd        + 序列化
+├── scripts/core/equipment_instance.gd + 序列化
+├── scripts/core/equipment_manager.gd  + 序列化
+├── scripts/cell.gd                    + 序列化
+├── scripts/test_main.gd               + PVP 路径 + 消息队列
+├── scripts/main.gd                    + F5/F9 序列化热键
+├── scripts/main_menu.gd               + "联机对战"按钮
+├── scripts/ui/hero_action_bar.gd      + PVP 回合检查
+└── project.godot                      + Net autoload
+
+server/                                新增目录
+├── go.mod / go.sum
+├── main.go / hub.go / room.go / client.go / message.go
+├── README.md
+└── nsoc-server.exe                    本地编译产物
+```

@@ -10,7 +10,10 @@ extends RefCounted
 var game: Node                       # GameContext 引用
 var target_cell = null               # 法术指向目标 cell（无目标法术为 null）
 var dying_is_enemy: bool = false     # 进入 on_death 流程时由 PlayController 设置；
-                                      # banish_card / send_to_graveyard 据此路由阵营牌堆。
+									  # banish_card / send_to_graveyard 据此路由阵营牌堆。
+# 英雄技能上下文
+var hand_view = null                 # HandView 引用（restart 等技能用）
+var hero: HeroState = null           # 本次激活的 HeroState
 
 func _init(p_game: Node) -> void:
 	game = p_game
@@ -116,7 +119,14 @@ func trigger_vigilance(entered_cell) -> void:
 # 兜底：target_cell 为空时按旧 dying_is_enemy 路由（玩家→deck，敌方→原属盘）。
 func banish_card(card_data) -> void:
 	if target_cell != null and target_cell.origin == "hand":
-		game.deck.banish(card_data)
+		if game.is_pvp and target_cell.is_enemy:
+			# PVP：對手單位除外入 enemy_main slot
+			var e_slots: Array = game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY) \
+				if game.registry != null else []
+			if e_slots.size() > 0:
+				e_slots[0].banish(card_data)
+		else:
+			game.deck.banish(card_data)
 		return
 	if target_cell != null:
 		var slot: BoardSlot = _owner_slot_of(target_cell)
@@ -124,14 +134,18 @@ func banish_card(card_data) -> void:
 			slot.banish(card_data)
 		return
 	# 无 target_cell 兜底
-	if dying_is_enemy:
-		game.deck.banish(card_data)  # 不该走到，保留旧行为防止 KeyError
-	else:
-		game.deck.banish(card_data)
+	game.deck.banish(card_data)
 
 func send_to_graveyard(card_data) -> void:
 	if target_cell != null and target_cell.origin == "hand":
-		game.deck.send_to_graveyard(card_data)
+		if game.is_pvp and target_cell.is_enemy:
+			# PVP：對手單位入 enemy_main slot 墓地
+			var e_slots: Array = game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY) \
+				if game.registry != null else []
+			if e_slots.size() > 0:
+				e_slots[0].send_to_graveyard(card_data)
+		else:
+			game.deck.send_to_graveyard(card_data)
 		return
 	if target_cell != null:
 		var slot: BoardSlot = _owner_slot_of(target_cell)

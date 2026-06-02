@@ -60,11 +60,12 @@ func (h *Hub) Run() {
 // 决策 8.7：服务器立即广播 disconnect/notify 给同房间其他玩家，
 // 房主收到后对掉线 slot 调用 damage_hero(100, "triggered") 走标准阵亡流程。
 func (h *Hub) handleDisconnect(c *Client) {
-	if _, ok := h.clients[c.uuid]; !ok {
-		return
+	// 按指针比对：同 uuid 不同连接各自独立处理，避免 UUID 冲突时误删另一连接。
+	if stored, ok := h.clients[c.uuid]; ok && stored == c {
+		delete(h.clients, c.uuid)
 	}
-	delete(h.clients, c.uuid)
-	close(c.send)
+	// 安全关闭 send channel（deliver 有 recover，双重保护）
+	_safeSendClose(c.send)
 	log.Printf("disconnect uuid=%s", c.uuid)
 	if c.roomID == "" {
 		return
@@ -73,8 +74,9 @@ func (h *Hub) handleDisconnect(c *Client) {
 	if !ok {
 		return
 	}
+	// 按指针移除（允许同 uuid 多连接共存于同一房间）
 	for i, p := range room.Players {
-		if p.uuid == c.uuid {
+		if p == c {
 			room.Players = append(room.Players[:i], room.Players[i+1:]...)
 			break
 		}
@@ -92,6 +94,12 @@ func (h *Hub) handleDisconnect(c *Client) {
 		delete(h.rooms, room.ID)
 		log.Printf("room %s destroyed (empty)", room.ID)
 	}
+}
+
+// _safeSendClose 安全关闭 channel，防止 double-close panic。
+func _safeSendClose(ch chan []byte) {
+	defer func() { recover() }()
+	close(ch)
 }
 
 func (h *Hub) route(in inboundMsg) {
@@ -294,6 +302,11 @@ func (h *Hub) forward(c *Client, msg *Message) {
 }
 
 func (h *Hub) deliver(p *Client, data []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("deliver: recovered panic for %s: %v", p.uuid, r)
+		}
+	}()
 	select {
 	case p.send <- data:
 	default:
