@@ -97,6 +97,14 @@ var _auto_create_pending: bool = false   # 连上服务器后自动 room/create 
 var _player_ready: Dictionary = {}   # uuid → bool（所有玩家的准备状态）
 var _is_local_ready: bool = false    # 本地玩家当前准备状态
 
+# 各玩家已上报的牌组名列表（uuid/session_id → Array[String]）
+# 由 room/deck_ready 消息填入；房主开始游戏时合并到 per_player_decks
+var _player_decks: Dictionary = {}
+
+# 各玩家已上报的英雄 key（uuid/session_id → String）
+# 由 room/deck_ready 消息填入；房主开始游戏时合并到 per_player_heroes
+var _player_heroes: Dictionary = {}
+
 const STATE_DISCONNECTED: int = 0
 const STATE_CONNECTING: int   = 1
 const STATE_CONNECTED: int    = 2
@@ -443,8 +451,8 @@ func _build_my_room(holder: Control) -> void:
 # ── 房间号输入状态（数字键盘面板） ──────────────────────────────────────────
 var _room_input: String = ""       # 当前已输入的房间号（最多 5 位）
 const MAX_ROOM_INPUT_LEN: int = 5
-const NUMPAD_WIDTH: float     = 280.0  # 数字键盘面板总宽
-const NUMPAD_BTN_H: float     = 64.0   # 每个数字按键高度
+const NUMPAD_WIDTH: float     = 340.0  # 数字键盘面板总宽（内宽 312，3列正方形每格≈99）
+const NUMPAD_BTN_H: float     = 99.0   # 每个数字按键高度（= 内宽/3 ≈ 正方形）
 const NUMPAD_SEP: int         = 8      # 按键间距
 
 # 刷新按钮引用（跨帧持久，用于更新倒计时文字）
@@ -620,7 +628,11 @@ func _build_numpad_panel() -> Control:
 	clear_btn.text = "×"
 	clear_btn.add_theme_font_size_override("font_size", 28)
 	clear_btn.custom_minimum_size = Vector2(52, 52)
-	ThemeFactory.apply_button_styles(clear_btn, ThemeFactory.settings_button_styles())
+	var clear_normal := ThemeFactory.panel(Color("#339af0"), Color.TRANSPARENT, 0, 12, true)
+	var clear_pressed := ThemeFactory.panel(Color("#1c7ed6"), Color.TRANSPARENT, 0, 12)
+	clear_btn.add_theme_stylebox_override("normal",  clear_normal)
+	clear_btn.add_theme_stylebox_override("hover",   clear_normal)  # 无悬浮动效
+	clear_btn.add_theme_stylebox_override("pressed", clear_pressed)
 	clear_btn.pressed.connect(func():
 		_room_input = ""
 		_refresh_numpad_display(disp_lbl))
@@ -652,6 +664,7 @@ func _build_numpad_panel() -> Control:
 
 	var join_btn := _make_primary_btn("加入房间")
 	join_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	join_btn.size_flags_stretch_ratio = 2.0        # 占 2 格宽（0 占 1 格）
 	join_btn.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	join_btn.add_theme_font_size_override("font_size", FONT_SIZE_SMALL)
 	join_btn.pressed.connect(func():
@@ -675,6 +688,7 @@ func _make_numpad_row() -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.custom_minimum_size   = Vector2(0, NUMPAD_BTN_H)
 	row.add_theme_constant_override("separation", NUMPAD_SEP)
 	return row
 
@@ -686,7 +700,14 @@ func _make_numpad_digit_btn(digit: String) -> Button:
 	btn.add_theme_font_size_override("font_size", FONT_SIZE_BODY)
 	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn.size_flags_vertical   = Control.SIZE_EXPAND_FILL
-	ThemeFactory.apply_button_styles(btn, ThemeFactory.settings_button_styles())
+	# hover 与 normal 同色，去除悬浮变色动效
+	var normal_style := ThemeFactory.panel(Color("#339af0"), Color.TRANSPARENT, 0, 12, true)
+	var pressed_style := ThemeFactory.panel(Color("#1c7ed6"), Color.TRANSPARENT, 0, 12)
+	var disabled_style := ThemeFactory.panel(Color("#adb5bd"), Color.TRANSPARENT, 0, 12)
+	btn.add_theme_stylebox_override("normal",   normal_style)
+	btn.add_theme_stylebox_override("hover",    normal_style)   # 同 normal，无悬浮动效
+	btn.add_theme_stylebox_override("pressed",  pressed_style)
+	btn.add_theme_stylebox_override("disabled", disabled_style)
 	return btn
 
 
@@ -756,6 +777,8 @@ func _on_net_message(msg: Dictionary) -> void:
 			_host_uuid = String(payload.get("host_uuid", ""))
 			_players   = _parse_players(payload.get("players", []))
 			_player_ready.clear()
+			_player_decks.clear()
+			_player_heroes.clear()
 			_is_local_ready = false
 			_refresh_left_content()
 		"room/joined":
@@ -763,6 +786,8 @@ func _on_net_message(msg: Dictionary) -> void:
 			_host_uuid = String(payload.get("host_uuid", ""))
 			_players   = _parse_players(payload.get("players", []))
 			_player_ready.clear()
+			_player_decks.clear()
+			_player_heroes.clear()
 			_is_local_ready = false
 			# 强制切回 Mode 0 显示房间内容
 			if _selected_idx != 0:
@@ -776,6 +801,8 @@ func _on_net_message(msg: Dictionary) -> void:
 			var leaver: String = String(payload.get("uuid", ""))
 			_players = _players.filter(func(p): return p.uuid != leaver)
 			_player_ready.erase(leaver)
+			_player_decks.erase(leaver)
+			_player_heroes.erase(leaver)
 			var new_host: String = String(payload.get("new_host_uuid", ""))
 			if new_host != "":
 				_host_uuid = new_host
@@ -806,6 +833,8 @@ func _on_net_message(msg: Dictionary) -> void:
 			var uuid_gone: String = String(payload.get("uuid", ""))
 			_players = _players.filter(func(p): return p.uuid != uuid_gone)
 			_player_ready.erase(uuid_gone)
+			_player_decks.erase(uuid_gone)
+			_player_heroes.erase(uuid_gone)
 			var new_host: String = String(payload.get("new_host_uuid", ""))
 			if new_host != "":
 				_host_uuid = new_host
@@ -818,6 +847,18 @@ func _on_net_message(msg: Dictionary) -> void:
 				_player_ready[who] = ready
 			if _selected_idx == 0:
 				_refresh_left_content()
+		"room/deck_ready":
+			# 非房主玩家上报自己的牌组和英雄：{ uuid, deck_names: [name, ...], hero_key: "A"/"B"/... }
+			var who: String = String(payload.get("uuid", ""))
+			var raw_names = payload.get("deck_names", [])
+			if who != "" and typeof(raw_names) == TYPE_ARRAY:
+				var names: Array = []
+				for n in raw_names:
+					names.append(String(n))
+				_player_decks[who] = names
+			var hkey: String = String(payload.get("hero_key", ""))
+			if who != "" and hkey != "":
+				_player_heroes[who] = hkey
 		"game/start":
 			_handle_game_start(msg, payload)
 
@@ -909,6 +950,7 @@ func _on_leave_room() -> void:
 
 
 # 非房主玩家切换准备状态，广播给房间所有人。
+# 同时上报自己的牌组和英雄 key（room/deck_ready），供房主在 game/start 时收集。
 func _on_toggle_ready() -> void:
 	_is_local_ready = not _is_local_ready
 	_player_ready[Net.get_session_id()] = _is_local_ready
@@ -917,6 +959,18 @@ func _on_toggle_ready() -> void:
 		"room_id": _room_id,
 		"to":      "all",
 		"payload": {"uuid": Net.get_session_id(), "ready": _is_local_ready},
+	})
+	# 每次切换准备状态时上报自己的最新牌组和英雄
+	var my_deck_names: Array = _collect_deck_names()
+	Net.send({
+		"type":    "room/deck_ready",
+		"room_id": _room_id,
+		"to":      "host",
+		"payload": {
+			"uuid":       Net.get_session_id(),
+			"deck_names": my_deck_names,
+			"hero_key":   DeckStorage.get_selected_hero(),
+		},
 	})
 	_refresh_left_content()
 
@@ -1026,7 +1080,9 @@ func _open_server_config_dialog() -> void:
 
 
 func _on_start_game() -> void:
-	# 房主负责：生成行动顺序 + RNG 种子；广播 game/start
+	# 房主负责：生成行动顺序 + RNG 种子；广播 game/start。
+	# 牌组由每位玩家各自上报（room/ready_deck），此处房主只附上自己的牌组；
+	# 其他玩家的牌组已通过 _player_decks 字典在准备阶段收集。
 	var order: Array = []
 	for p in _players:
 		order.append(p.uuid)
@@ -1036,11 +1092,25 @@ func _on_start_game() -> void:
 	rng.randomize()
 	var seed_value: int = rng.randi()
 
-	var deck_names: Array = _collect_deck_names()
+	# 把所有已收集的牌组 + 自己的牌组合并为 per_player_decks
+	var per_player_decks: Dictionary = {}
+	for pid in _player_decks.keys():
+		per_player_decks[pid] = _player_decks[pid]
+	# 房主自己的牌组（session_id 为键）
+	var my_sid: String = Net.get_session_id()
+	per_player_decks[my_sid] = _collect_deck_names()
+
+	# 把所有已收集的英雄 key + 自己的英雄合并为 per_player_heroes
+	var per_player_heroes: Dictionary = {}
+	for pid in _player_heroes.keys():
+		per_player_heroes[pid] = _player_heroes[pid]
+	per_player_heroes[my_sid] = DeckStorage.get_selected_hero()
+
 	Net.send_to_room("game/start", _room_id, {
-		"action_order": order,
-		"deck_names":   deck_names,
-		"rng_seed":     seed_value,
+		"action_order":      order,
+		"per_player_decks":  per_player_decks,
+		"per_player_heroes": per_player_heroes,
+		"rng_seed":          seed_value,
 	})
 
 
@@ -1055,47 +1125,113 @@ func _handle_game_start(msg: Dictionary, payload: Dictionary) -> void:
 		for p in _players:
 			order.append(p.uuid)
 
-	var deck_names: Array = []
-	var raw_names = payload.get("deck_names", [])
-	if typeof(raw_names) == TYPE_ARRAY:
-		for v in raw_names:
-			deck_names.append(String(v))
-
 	var rng_seed: int = int(payload.get("rng_seed", 0))
 
-	# 解析 deck_names → CardBase 数组
-	var deck_cards: Array = []
-	for n in deck_names:
-		var c = Game.get_card(n)
-		if c != null:
-			deck_cards.append(c)
-	if deck_cards.is_empty() and not deck_names.is_empty():
+	# 确保 card_db 已装载（bootstrap_pvp 内部会兜底，但提前装载可减少重复 IO）
+	if Game.card_db.size() == 0:
 		var all := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
 		for c in all:
 			Game.card_db[c.name] = c
+
+	# 读取 per_player_decks（格式：{ uuid: [card_name, ...] }）
+	# 取本地玩家自己的牌组；若字段缺失（旧服务端），回退到 deck_names 共用牌组（向后兼容）
+	var my_sid: String = Net.get_session_id()
+	var per_player_deck_cards: Dictionary = {}
+
+	var raw_ppd = payload.get("per_player_decks", {})
+	if typeof(raw_ppd) == TYPE_DICTIONARY and not raw_ppd.is_empty():
+		# 新协议：每位玩家独立牌组
+		for pid_raw in raw_ppd.keys():
+			var pid: String = String(pid_raw)
+			var names_raw = raw_ppd[pid_raw]
+			var cards: Array = []
+			if typeof(names_raw) == TYPE_ARRAY:
+				for n in names_raw:
+					var c = Game.get_card(String(n))
+					if c != null:
+						cards.append(c)
+			per_player_deck_cards[pid] = cards
+	else:
+		# 旧协议回退：deck_names 为所有人共用
+		var deck_names: Array = []
+		var raw_names = payload.get("deck_names", [])
+		if typeof(raw_names) == TYPE_ARRAY:
+			for v in raw_names:
+				deck_names.append(String(v))
+		var shared_cards: Array = []
 		for n in deck_names:
 			var c = Game.get_card(n)
 			if c != null:
-				deck_cards.append(c)
+				shared_cards.append(c)
+		for pid_raw in order:
+			per_player_deck_cards[String(pid_raw)] = shared_cards.duplicate()
+
+	# 本地玩家的牌组缺失时，用本地 DeckStorage 自补（离线兜底）
+	if not per_player_deck_cards.has(my_sid) or per_player_deck_cards[my_sid].is_empty():
+		var local_names: Array = _collect_deck_names()
+		var local_cards: Array = []
+		for n in local_names:
+			var c = Game.get_card(n)
+			if c != null:
+				local_cards.append(c)
+		per_player_deck_cards[my_sid] = local_cards
+
+	# 解析 per_player_heroes（格式：{ uuid: hero_key }）
+	# 本地玩家 hero_key 缺失时回退到 DeckStorage.get_selected_hero()
+	var per_player_heroes: Dictionary = {}
+	var raw_pph = payload.get("per_player_heroes", {})
+	if typeof(raw_pph) == TYPE_DICTIONARY:
+		for pid_raw in raw_pph.keys():
+			var hkey: String = String(raw_pph[pid_raw])
+			if hkey != "":
+				per_player_heroes[String(pid_raw)] = hkey
+	# 本地玩家英雄兜底
+	if not per_player_heroes.has(my_sid) or per_player_heroes[my_sid] == "":
+		per_player_heroes[my_sid] = DeckStorage.get_selected_hero()
 
 	_unbind_net_signals()
 	Net.set_current_room_id(msg.get("room_id", _room_id))
 	# 用 session_id 作本地玩家标识，确保同机两实例 ID 不同
-	Game.bootstrap_pvp(Net.get_session_id(), order, deck_cards, [], rng_seed)
+	Game.bootstrap_pvp(my_sid, order, per_player_deck_cards, [], rng_seed, per_player_heroes)
 	get_tree().change_scene_to_file("res://scenes/TestMain.tscn")
 
 
-# ── 牌组读取（同 pvp_lobby 旧逻辑） ─────────────────────────────────────────
+# ── 牌组读取：从 DeckStorage 读取当前英雄「A」的备战卡组 ─────────────────────
+# 优先走 DeckStorage（备战界面保存的卡组）；
+# 若卡组为空（玩家尚未编辑），回退到 test_multiplayer_deck.json 或 battle_cards.json。
 const TEST_MP_DECK_PATH: String = "res://data/test_multiplayer_deck.json"
 
 func _collect_deck_names() -> Array:
+	# 读当前携带的英雄 key（备战界面退出时保存）
+	var hero_key: String = DeckStorage.get_selected_hero()
+	var saved: Dictionary = DeckStorage.load_deck(hero_key)
+	var cards_map: Dictionary = saved.get("cards", {})
+	var order: Array = saved.get("order", [])
+
+	if not cards_map.is_empty():
+		var names: Array = []
+		# 按 order 顺序展开（每张卡按 count 重复）
+		for cname in order:
+			var count: int = int(cards_map.get(String(cname), 0))
+			for _i in range(count):
+				names.append(String(cname))
+		# order 里没收录的条目兜底追加
+		for cname in cards_map.keys():
+			if not order.has(cname):
+				var count: int = int(cards_map[cname])
+				for _i in range(count):
+					names.append(String(cname))
+		if not names.is_empty():
+			return names
+
+	# 回退：test_multiplayer_deck.json
 	var path: String
 	if FileAccess.file_exists(TEST_MP_DECK_PATH):
 		path = TEST_MP_DECK_PATH
 	else:
 		path = DataLoader.BATTLE_CARDS_JSON
 		if not FileAccess.file_exists(path):
-			DataLoader.generate_battle_cards("A")
+			DataLoader.generate_battle_cards(hero_key)
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		return []
@@ -1105,13 +1241,17 @@ func _collect_deck_names() -> Array:
 	if typeof(parsed) == TYPE_ARRAY:
 		for entry in parsed:
 			if typeof(entry) == TYPE_DICTIONARY and entry.has("name"):
-				names.append(String(entry["name"]))
+				var count: int = int(entry.get("count", 1))
+				for _i in range(count):
+					names.append(String(entry["name"]))
 	elif typeof(parsed) == TYPE_DICTIONARY and parsed.has("cards"):
 		var arr = parsed["cards"]
 		if typeof(arr) == TYPE_ARRAY:
 			for entry in arr:
 				if typeof(entry) == TYPE_DICTIONARY and entry.has("name"):
-					names.append(String(entry["name"]))
+					var count: int = int(entry.get("count", 1))
+					for _i in range(count):
+						names.append(String(entry["name"]))
 	return names
 
 

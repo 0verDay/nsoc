@@ -1,0 +1,65 @@
+
+---
+
+### 11.6 本轮新增（Step 8，2026-06 续）
+
+#### Step 8-A：玩家独立卡组携带（双方各自卡组进多人游戏）
+
+**决策变更**：放弃"服务器预设统一卡组"，改为各玩家携带备战界面编辑的卡组。
+
+| 文件 | 改动 |
+|---|---|
+| `core/game_context.gd` | `bootstrap_pvp` 第三参数从 `deck_cards: Array` 改为 `per_player_deck_cards`（`Dictionary {pid: Array[CardBase]}` 或 Array 兼容旧调用）；逐玩家从 `deck_map[pid]` 取自己牌组建 DeckManager |
+| `scripts/ui/sparring_panel.gd` | 新增 `_player_decks: Dictionary`；`_on_toggle_ready` 额外发 `room/deck_ready`（含 `deck_names`）给房主；`_on_start_game` 合并广播 `per_player_decks`；`_handle_game_start` 按 session_id 取本端牌组，兼容旧 `deck_names` 协议 |
+
+**协议变更**：`game/start` payload 新增 `per_player_decks: {uuid: [card_name, ...]}`，`room/deck_ready` 为新增消息类型（只发房主）。
+
+#### Step 8-B：玩家独立英雄携带（双方各自英雄进多人游戏）
+
+**决策变更**：放弃"全员同一默认英雄 A"，改为各玩家携带备战界面选定的英雄。
+
+| 文件 | 改动 |
+|---|---|
+| `core/game_context.gd` | `bootstrap_pvp` 新增第六参数 `per_player_heroes: Dictionary = {}`；`hero_specs` 按此字典各自设置，缺失 pid 回退 `DeckStorage.get_selected_hero()` |
+| `scripts/ui/sparring_panel.gd` | 新增 `_player_heroes: Dictionary`；`room/deck_ready` 追加 `hero_key` 字段；`_on_start_game` 合并广播 `per_player_heroes`；`_handle_game_start` 解析后传入 `bootstrap_pvp` 第六参数 |
+| `scripts/test_main.gd` | `_pvp_default_hero_spec()` 改读 `DeckStorage.get_selected_hero()`，不再固定返回科因 |
+
+**协议变更**：`game/start` payload 新增 `per_player_heroes: {uuid: hero_key}`，`room/deck_ready` payload 新增 `hero_key` 字段。
+
+#### Step 8-C：英雄与卡组选择持久化（备战界面退出即生效）
+
+| 文件 | 改动 |
+|---|---|
+| `core/deck_storage.gd` | `user://decks.json` 新增顶级字段 `selected_hero: String`；新增 `DEFAULT_HERO = "A"`；`load_all()` 兼容旧存档（自动补默认值）；新增 `get_selected_hero()` / `save_selected_hero(hero_key)` |
+| `scripts/ui/hero_carousel.gd` | `_ready` 读 `DeckStorage.get_selected_hero()` → `HERO_NAMES.find(key)` → 设 `_current_page`，打开备战界面直接显示上次携带英雄 |
+| `scripts/ui/prepare_panel.gd` | `_save_current_deck()` 重写：合并卡组 + `selected_hero` 为**一次 IO**（`load_all → 修改 → save_all`），消除两次写盘之间崩溃的原子性风险 |
+| `core/game_context.gd` | 新增 `static func get_battle_hero_key() -> String`（读 `DeckStorage.get_selected_hero()`）；`bootstrap()` 两处 `BATTLE_HERO_KEY` 改为 `get_battle_hero_key()` |
+
+#### Step 8-D：英雄 B 「多人模式·测试」实现
+
+| 文件 | 改动 |
+|---|---|
+| `data/hero.json` | 英雄 B：`display_name="多人模式·测试"`, `battle_name="测试"`, `max_health=30`, `abilities=["test_discard"]`, `skill_text="测试技能：消耗 1 费用，选择一张手牌弃置，并补一张。"` |
+| `scripts/abilities/test_discard.gd` | **新建**：`cost=1`，`once_per_turn=true`；`can_activate` 检查手牌有非虚空真实卡；`on_activate`：锁 `turn.is_running` → `pick_async()` → 解锁 → 取消时退费 + `clear_turn_usage` 可重试 → 选中时 `hand_view.discard_card(chosen)` 自动补 1 张 |
+| `core/hero_ability_registry.gd` | 新增 `clear_turn_usage(ability_id)` 公开 API（单条清除本回合使用记录，原仅有全清的 `reset_turn_usage`） |
+
+**PVP 同步**：`hero_action_bar._on_ability_pressed` 改为 pre/post 双快照；`test_discard` 走 post-snapshot（激活后读 `Game.deck.graveyard.back()` 取弃置牌名）；广播条件改为 `activated and HeroAbilities.is_used_this_turn(ability_id)` 区分取消/成功；对端 `_handle_remote_activate_hero` 新增 `"test_discard"` 分支，将弃置牌名追加到 `enemy_main` slot.graveyard。
+
+#### Step 8-E：`_input` 守卫修复（第二次进入多人游戏崩溃）
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/test_main.gd` | `_input` 鼠标左键处理块前加 `is_instance_valid(detail_panel)` 守卫；`side_panels` / `enemy_side_panels` / `deck_btn` / `grave_btn` 等改为 `is_instance_valid` + `!= null` 检查 |
+
+**根因**：切场景后 `_input` 先于 `await boot()` 触发，控制器尚为 null，第二次进入时更易复现（旧场景 boot 刚完成，新场景已开始接收 input）。
+
+#### Step 8-F：Bug 修复汇总（本轮）
+
+| Bug | 根因 | 修复 |
+|---|---|---|
+| 取消「测试技能」后按钮不可再按 | `_used_this_turn` 未清除 + 费用未退 | 取消分支退费 + `HeroAbilities.clear_turn_usage(id())` |
+| `_used_this_turn` 直接访问私有字段 | Registry 无单条清除公开 API | 新增 `clear_turn_usage(id)` 方法 |
+| 取消「测试技能」仍广播给对手 | `activate` 取消时仍返回 `true`，旧代码只检查返回值 | 改为检查 `HeroAbilities.is_used_this_turn(ability_id)` 区分取消/成功 |
+| 备战卡组+英雄两次写盘原子性问题 | 先 `save_deck` 再 `save_selected_hero` 两次 IO | 合并一次 `load_all → 修改 → save_all` |
+| `_collect_deck_names` 回退固定用 "A" | 硬编码 `generate_battle_cards("A")` | 改为 `generate_battle_cards(hero_key)` |
+| `game_context.gd` 注释"全员 A" | 注释未更新 | 更新为"按 per_player_heroes 各自英雄" |

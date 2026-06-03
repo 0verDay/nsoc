@@ -174,7 +174,10 @@ func _load_deck_for(hero_key: String) -> void:
 
 
 # 把当前 _muster_entries 序列化成 name→count + 顺序数组 + 排序模式字符串，
-# 写盘到 _current_hero_key 名下。_current_hero_key 为空 → 跳过（界面初始化未完成时）。
+# 写盘到 _current_hero_key 名下。同时将 _current_hero_key 作为玩家"当前携带英雄"
+# 保存到 DeckStorage，供 Test 场景和多人游戏读取。
+# _current_hero_key 为空 → 跳过（界面初始化未完成时）。
+# 卡组与 selected_hero 合并为一次 IO，避免两次写盘之间崩溃导致状态不一致。
 func _save_current_deck() -> void:
 	if _current_hero_key == "":
 		return
@@ -183,7 +186,17 @@ func _save_current_deck() -> void:
 	for key in _muster_entries.keys():
 		out[key] = int(_muster_entries[key].count)
 		order.append(String(key))
-	DeckStorage.save_deck(_current_hero_key, out, order, _sort_mode_to_string(_sort_mode))
+	# 合并卡组 + selected_hero 一次写盘
+	var data := DeckStorage.load_all()
+	if not data.has("decks") or typeof(data["decks"]) != TYPE_DICTIONARY:
+		data["decks"] = {}
+	data["decks"][_current_hero_key] = {
+		"cards":     out,
+		"order":     order,
+		"sort_mode": _sort_mode_to_string(_sort_mode),
+	}
+	data["selected_hero"] = _current_hero_key
+	DeckStorage.save_all(data)
 
 
 # SortMode <-> 字符串。存盘用字符串避免枚举数值与 schema 耦合（未来加模式不破档）。

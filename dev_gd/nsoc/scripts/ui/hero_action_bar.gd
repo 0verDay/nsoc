@@ -130,15 +130,25 @@ func _on_ability_pressed() -> void:
 	if not HeroAbilities.can_activate(ability_id, ctx): return
 	# PVP 同步前快照：restart 需要把弃牌入对端的 enemy_main slot.graveyard，
 	# 必须在 activate 之前记录当前手牌（discard_all_and_refill 之后再取就是新抽的牌了）。
-	var pre_snapshot: Dictionary = _pvp_snapshot_for_ability(ability_id)
-	await HeroAbilities.activate(ability_id, ctx)
-	# 激活成功后广播给对手
-	if Game.is_pvp:
-		_pvp_broadcast_activate_hero(ability_id, pre_snapshot)
+	var pre_snapshot: Dictionary = _pvp_snapshot_for_ability_pre(ability_id)
+	var activated: bool = await HeroAbilities.activate(ability_id, ctx)
+	# 广播条件：activate 返回 true（扣费/标记成功）
+	# 且技能未被取消（取消时 on_activate 内部会退费并清 turn_usage 标记，
+	# 但 Registry.activate 在 await on_activate 后仍返回 true，
+	# 因此用 is_used_this_turn 区分：取消时标记已被 clear_turn_usage 清除）
+	if Game.is_pvp and activated and HeroAbilities.is_used_this_turn(ability_id):
+		var post_snapshot: Dictionary = _pvp_snapshot_for_ability_post(ability_id)
+		# 合并 pre + post 快照
+		var merged: Dictionary = {}
+		for k in pre_snapshot.keys():
+			merged[k] = pre_snapshot[k]
+		for k in post_snapshot.keys():
+			merged[k] = post_snapshot[k]
+		_pvp_broadcast_activate_hero(ability_id, merged)
 
-# 不同 ability 需要的"前置快照"。activate 是 async，必须在 await 前记录。
-# - restart：当前手牌名单（用于对端把弃牌入 enemy_main.graveyard）
-func _pvp_snapshot_for_ability(ability_id: String) -> Dictionary:
+# 激活前快照（手牌可见时）。
+# - restart：弃置前的全部手牌名单
+func _pvp_snapshot_for_ability_pre(ability_id: String) -> Dictionary:
 	var snap: Dictionary = {}
 	if ability_id == "restart":
 		var names: Array = []
@@ -152,6 +162,23 @@ func _pvp_snapshot_for_ability(ability_id: String) -> Dictionary:
 						names.append(String(data.name))
 		snap["discarded"] = names
 	return snap
+
+# 激活后快照（弃牌已入墓地时）。
+# - test_discard：墓地最新入库的 1 张（墓地末尾）
+func _pvp_snapshot_for_ability_post(ability_id: String) -> Dictionary:
+	var snap: Dictionary = {}
+	if ability_id == "test_discard":
+		var discarded_name: String = ""
+		if Game.deck != null and Game.deck.graveyard.size() > 0:
+			var top = Game.deck.graveyard.back()
+			if top != null and top is CardBase:
+				discarded_name = String(top.name)
+		snap["discarded"] = [discarded_name] if discarded_name != "" else []
+	return snap
+
+# 不同 ability 需要的"前置快照"（保留旧签名供外部兼容，内部委托给 _pre 版本）。
+func _pvp_snapshot_for_ability(ability_id: String) -> Dictionary:
+	return _pvp_snapshot_for_ability_pre(ability_id)
 
 # 广播 action/activate_hero 给对手。
 func _pvp_broadcast_activate_hero(ability_id: String, snapshot: Dictionary) -> void:

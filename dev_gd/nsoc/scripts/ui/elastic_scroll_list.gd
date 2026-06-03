@@ -13,8 +13,16 @@ extends Control
 #
 # 与 DragScrollHelper 的区别：DragScrollHelper 附在原生 ScrollContainer 上，
 # 无越界；本类完全自行管理 clip + offset，支持 rubber band 回弹。
+#
+# ── 子元素 mouse_filter 问题与解法 ──────────────────────────────────────────
+# 子元素（PanelContainer / Button 等）mouse_filter = STOP，会吃掉 MouseMotion，
+# gui_input 收不到拖拽事件，导致列表无法滚动。
+# 解决方案：
+#   1. 改用全局 _input 处理拖拽（绕过子元素 filter）。
+#   2. 拖动阈值确认后在列表上方挂一个透明 _drag_overlay（MOUSE_FILTER_STOP），
+#      拦截后续 gui_input，防止松手时命中「加入」等按钮触发 pressed 信号。
 
-# ── 参数（与 PreparePenal 同款） ─────────────────────────────────────────────
+# ── 参数 ─────────────────────────────────────────────────────────────────────
 const OVERSCROLL_RESISTANCE: float = 0.55   # rubber band 强度（越小阻力越大）
 const OVERSCROLL_SETTLE_TIME: float = 0.28  # 释放后回弹时长（秒）
 const SCROLL_THRESHOLD_PX: float   = 18.0  # 判定为滚动手势的最小位移
@@ -23,6 +31,7 @@ const WHEEL_STEP_PX: float         = 60.0  # 滚轮单步像素
 # ── 内部节点 ─────────────────────────────────────────────────────────────────
 var _content: Control        # 可越界平移的内容根
 var _vbox: VBoxContainer     # 实际放子项的容器
+var _drag_overlay: Control   # 拖动时挂在最上层，拦截子元素 gui_input
 
 # ── 滚动状态 ─────────────────────────────────────────────────────────────────
 var _logical_offset: float = 0.0   # 允许越界（<0 顶部过拉；>max 底部过拉）
@@ -36,15 +45,13 @@ var _settle_tween: Tween = null
 # ── 初始化 ───────────────────────────────────────────────────────────────────
 func _ready() -> void:
 	clip_contents = true
-	mouse_filter = Control.MOUSE_FILTER_STOP   # 接收鼠标事件
+	mouse_filter = Control.MOUSE_FILTER_STOP   # 接收鼠标事件（滚轮等）
 
-	# 内容根：允许超出裁剪区范围移动
 	_content = Control.new()
 	_content.name = "_content"
 	_content.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(_content)
 
-	# 实际列表容器
 	_vbox = VBoxContainer.new()
 	_vbox.name = "_vbox"
 	_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -53,7 +60,7 @@ func _ready() -> void:
 
 	resized.connect(_schedule_layout)
 	_vbox.minimum_size_changed.connect(_schedule_layout)
-	gui_input.connect(_on_gui_input)
+	# 注意：使用全局 _input 而非 gui_input，避免子元素 STOP filter 拦截 MouseMotion。
 
 
 # ── 公开 API ─────────────────────────────────────────────────────────────────
@@ -82,7 +89,6 @@ func _do_layout() -> void:
 	_content.size = Vector2(size.x, content_h)
 	_vbox.size    = _content.size
 
-	# 布局变化后确保 offset 仍在合法范围
 	_logical_offset = clamp(_logical_offset, 0.0, _max_scroll())
 	_apply_offset()
 
@@ -95,10 +101,7 @@ func _max_scroll() -> float:
 	return max(0.0, _content.size.y - size.y)
 
 
-## 把 logical_offset（允许越界）映射为实际视觉位移（rubber band 衰减越界量）。
 ## rubber band 公式：f(x) = (x·c·d)/(d + c·x)
-##   x = 越界量；d = 视口高；c = OVERSCROLL_RESISTANCE
-##   x→0 时 ≈ c·x；x→∞ 时趋近 d，视觉上永不超过视口高。
 func _to_display(logical: float) -> float:
 	var max_s: float = _max_scroll()
 	if logical < 0.0:
@@ -125,8 +128,25 @@ func _scroll_by(dy: float) -> void:
 	_apply_offset()
 
 
+# ── 覆盖层（拖动期间阻止子元素触发 pressed） ────────────────────────────────
+func _attach_drag_overlay() -> void:
+	if is_instance_valid(_drag_overlay):
+		return
+	_drag_overlay = Control.new()
+	_drag_overlay.name = "_drag_overlay"
+	_drag_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_drag_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_drag_overlay.z_index = 100
+	add_child(_drag_overlay)
+
+
+func _remove_drag_overlay() -> void:
+	if is_instance_valid(_drag_overlay):
+		_drag_overlay.queue_free()
+	_drag_overlay = null
+
+
 # ── 回弹 ─────────────────────────────────────────────────────────────────────
-## 将 logical_offset 以 cubic ease-out 动画归位到合法范围。
 func _settle_to_clamped() -> void:
 	_kill_settle_tween()
 	var target: float = clamp(_logical_offset, 0.0, _max_scroll())
@@ -151,60 +171,55 @@ func _kill_settle_tween() -> void:
 	_settle_tween = null
 
 
-# ── 输入处理 ─────────────────────────────────────────────────────────────────
-func _on_gui_input(event: InputEvent) -> void:
+# ── 输入处理（全局 _input） ──────────────────────────────────────────────────
+func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 
-		# 滚轮：滚动一步后立即 settle（保持越界回弹手感）
-		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
-			_kill_settle_tween()
-			_scroll_by(-WHEEL_STEP_PX)
-			_settle_to_clamped()
-			accept_event()
-			return
-		if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
-			_kill_settle_tween()
-			_scroll_by(WHEEL_STEP_PX)
-			_settle_to_clamped()
-			accept_event()
-			return
+		# 滚轮：仅在本控件矩形内响应
+		if get_global_rect().has_point(mb.global_position):
+			if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+				_kill_settle_tween()
+				_scroll_by(-WHEEL_STEP_PX)
+				_settle_to_clamped()
+				get_viewport().set_input_as_handled()
+				return
+			if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+				_kill_settle_tween()
+				_scroll_by(WHEEL_STEP_PX)
+				_settle_to_clamped()
+				get_viewport().set_input_as_handled()
+				return
 
-		# 鼠标左键按下 / 抬起
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
-				_pressing      = true
-				_is_scrolling  = false
-				_press_y       = mb.global_position.y
-				_start_offset  = _logical_offset
-				_kill_settle_tween()
+				# 仅在本控件范围内按下才开始追踪
+				if get_global_rect().has_point(mb.global_position):
+					_pressing     = true
+					_is_scrolling = false
+					_press_y      = mb.global_position.y
+					_start_offset = _logical_offset
+					_kill_settle_tween()
 			else:
-				if _is_scrolling:
-					accept_event()
-					_settle_to_clamped()
-				_pressing     = false
-				_is_scrolling = false
+				# 抬起：无论位置都结束追踪（拖出控件外松手也能 settle）
+				if _pressing:
+					if _is_scrolling:
+						_settle_to_clamped()
+						get_viewport().set_input_as_handled()
+					_remove_drag_overlay()
+					_pressing     = false
+					_is_scrolling = false
 
 	elif event is InputEventMouseMotion and _pressing:
 		var mm := event as InputEventMouseMotion
 		var dy: float = mm.global_position.y - _press_y
 
-		# 超过阈值后确认为滚动手势
 		if not _is_scrolling and absf(dy) >= SCROLL_THRESHOLD_PX:
 			_is_scrolling = true
+			# 确认滚动后挂覆盖层，阻止 gui_input 到达子元素（防止松手触发按钮）
+			_attach_drag_overlay()
 
 		if _is_scrolling:
 			_logical_offset = _start_offset - dy
 			_apply_offset()
-			accept_event()
-
-
-## 全局鼠标释放捕获：拖出容器外也能触发 settle。
-func _input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and \
-			event.button_index == MOUSE_BUTTON_LEFT and \
-			not event.pressed and _pressing:
-		if _is_scrolling:
-			_settle_to_clamped()
-		_pressing     = false
-		_is_scrolling = false
+			get_viewport().set_input_as_handled()
