@@ -11,6 +11,8 @@ extends Node
 #   - resume_label / resume_action: 一级菜单第一项标签 + 行为（默认"继续"+ close）
 #   - exit_label / exit_action:    一级菜单第三项标签 + 行为（默认"退回菜单"切回 MainMenu）
 #   - can_open: Callable→bool。控制器在打开前询问；主菜单转场期间需禁用。
+#   - surrender_action: Callable（可选）。有效时在"设置"与"退回菜单"之间插入红色"投降"按钮，
+#     面板高度自动从 400 扩为 490 以容纳额外按钮。主菜单不传此项。
 
 const OPEN_DURATION: float = 0.2
 const SUBMENU_DURATION: float = 0.15
@@ -40,6 +42,8 @@ var _resume_action: Callable
 var _exit_label: String = "退回菜单"
 var _exit_action: Callable
 var _can_open: Callable
+# 可选：投降按钮（仅 PVP 模式注入）。Callable 有效则在"设置"与"退回菜单"之间插入红色"投降"按钮。
+var _surrender_action: Callable
 
 func setup(parent: Control, config: Dictionary = {}) -> void:
 	_parent = parent
@@ -51,6 +55,8 @@ func setup(parent: Control, config: Dictionary = {}) -> void:
 		_exit_action = config["exit_action"]
 	if config.has("can_open") and config["can_open"] is Callable:
 		_can_open = config["can_open"]
+	if config.has("surrender_action") and config["surrender_action"] is Callable:
+		_surrender_action = config["surrender_action"]
 	if bool(config.get("create_trigger_button", true)):
 		_build_button()
 	_build_overlay_and_panel()
@@ -99,26 +105,33 @@ func _build_overlay_and_panel() -> void:
 	_parent.add_child(_overlay)
 	_overlay.gui_input.connect(_on_overlay_input)
 
+	# 是否含投降按钮决定面板高度：
+	#   无投降（3 按钮）：panel 高 400，vbox 高 270
+	#   含投降（4 按钮）：panel 高 490，vbox 高 360（多一个按钮 70 + 间距 20 = 90）
+	var has_surrender: bool = _surrender_action.is_valid()
+	var panel_half_h: int  = 245 if has_surrender else 200
+	var vbox_half_h:  int  = 180 if has_surrender else 135
+
 	_panel = Panel.new()
 	_panel.name = "SettingsPanel"
 	_panel.set_anchors_preset(Control.PRESET_CENTER, false)
-	_panel.offset_left = -300
-	_panel.offset_top = -200
-	_panel.offset_right = 300
-	_panel.offset_bottom = 200
+	_panel.offset_left   = -300
+	_panel.offset_top    = -panel_half_h
+	_panel.offset_right  = 300
+	_panel.offset_bottom = panel_half_h
 	_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	_panel.add_theme_stylebox_override("panel", ThemeFactory.panel(Color(0.96, 0.97, 0.98, 1.0), Color("#d1d9e0"), 1, 20, true))
-	# 缩放动效需以面板中心为枢轴。offset_right-offset_left = 600，offset_bottom-offset_top = 400。
-	_panel.pivot_offset = Vector2(300, 200)
+	# 缩放动效枢轴需与面板几何中心一致（宽 600，高 = panel_half_h*2）。
+	_panel.pivot_offset = Vector2(300, panel_half_h)
 	_overlay.add_child(_panel)
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "SettingsVBox"
 	vbox.set_anchors_preset(Control.PRESET_CENTER, false)
-	vbox.offset_left = -140
-	vbox.offset_top = -135
-	vbox.offset_right = 140
-	vbox.offset_bottom = 135
+	vbox.offset_left   = -140
+	vbox.offset_top    = -vbox_half_h
+	vbox.offset_right  = 140
+	vbox.offset_bottom = vbox_half_h
 	vbox.add_theme_constant_override("separation", 20)
 	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	_panel.add_child(vbox)
@@ -131,6 +144,14 @@ func _build_overlay_and_panel() -> void:
 	var config_btn := _make_button("设置")
 	config_btn.pressed.connect(_show_config)
 	vbox.add_child(config_btn)
+
+	# PVP 模式专用：投降按钮（仅 surrender_action 有效时显示）
+	if _surrender_action.is_valid():
+		var surrender_btn := _make_button("投降")
+		# 红色警示样式区分常规按钮
+		_apply_danger_button_style(surrender_btn)
+		surrender_btn.pressed.connect(_on_surrender_pressed)
+		vbox.add_child(surrender_btn)
 
 	var exit_btn := _make_button(_exit_label)
 	exit_btn.pressed.connect(_on_exit_pressed)
@@ -149,6 +170,31 @@ func _on_exit_pressed() -> void:
 		_exit_action.call()
 	else:
 		get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+
+# 投降按钮：先关闭面板再触发回调（test_main 端走 damage_hero(100) 标准阵亡流程）。
+# 决策：点即投降，无二次确认。
+func _on_surrender_pressed() -> void:
+	if not _surrender_action.is_valid():
+		return
+	close()
+	_surrender_action.call()
+
+# 红色警示按钮样式（投降等危险操作专用）。
+static func _apply_danger_button_style(btn: Button) -> void:
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color("#fa5252")
+	normal.corner_radius_top_left = 8
+	normal.corner_radius_top_right = 8
+	normal.corner_radius_bottom_left = 8
+	normal.corner_radius_bottom_right = 8
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color("#ff6b6b")
+	var pressed_sb := normal.duplicate() as StyleBoxFlat
+	pressed_sb.bg_color = Color("#e03131")
+	btn.add_theme_stylebox_override("normal", normal)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed_sb)
+	btn.add_theme_color_override("font_color", Color.WHITE)
 
 func _build_config_vbox() -> void:
 	var vbox := VBoxContainer.new()

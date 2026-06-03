@@ -125,6 +125,23 @@ func run() -> void:
 	is_running = false
 	turn_ended.emit()
 
+# PVP 专用：只跑指定阵营一侧的行动阶段。
+#   faction = PLAYER(0)：本端 player_main 的单位行动（主动结束回合时调用）
+#   faction = ENEMY(1) ：本端 enemy_main 的单位行动（收到对方 end_turn 时调用）
+# 不跑 spawn / spell_caster / Events，不递增 turn_number，不发 turn_started/ended。
+# 攻击 flag 在调用方按需重置（或等双方都完成后一次性重置）。
+func run_pvp_phase(faction: int) -> void:
+	if is_running:
+		return
+	is_running = true
+	await _run_phase(faction)
+	var reg := _registry()
+	if reg != null:
+		for slot in reg.slots:
+			if is_instance_valid(slot.board) and slot.faction == faction:
+				slot.board.reset_attack_flags()
+	is_running = false
+
 func _run_phase(faction: int) -> void:
 	phase_started.emit(faction)
 	# 敌方阶段开始时，推进所有盘的法术施放器（在单位行动前）
@@ -407,6 +424,10 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 	# 已到 goal_row：
 	#   自家盘上 = 自家 front_row → idle（跨盘已处理）
 	#   敌方盘上 = 该盘 back_row → 打英雄（"unit_direct" 来源）
+	# PVP 锁步说明：hero_resolver 只修改本端对应 HeroState，无需广播。
+	#   run_pvp_phase(PLAYER) 在 A 端打 A 的 enemy hero（对手）；
+	#   run_pvp_phase(ENEMY)  在 B 端打 B 的 player hero（自己）。
+	#   两端各打各端的 hero_resolver，结果对称，已验证。
 	if cell.row == goal_row:
 		if not on_home_board and hero_resolver.is_valid():
 			hero_resolver.call(cell.attack, "unit_direct")
@@ -535,6 +556,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, player_slots: Array) -> bool:
 				if _combat == null or _combat.aborted:
 					return true
 			elif probe_hit_hero and ply_slot2.hero_resolver.is_valid():
+				# PVP 锁步：hero_resolver 天然对称，无需广播。
 				ply_slot2.hero_resolver.call(probe_dest.attack, "unit_direct")
 				await get_tree().create_timer(STEP_INTERVAL).timeout
 			if is_instance_valid(probe_dest) and probe_dest.has_card:
@@ -654,6 +676,7 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 		if _combat == null or _combat.aborted:
 			return null
 	elif hit_hero and hero_resolver.is_valid():
+		# PVP 锁步：见 _process_cell 同处注释，hero_resolver 天然对称，无需广播。
 		hero_resolver.call(dest.attack, "unit_direct")
 		await get_tree().create_timer(STEP_INTERVAL).timeout
 		if _combat == null or _combat.aborted:
