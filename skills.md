@@ -72,7 +72,8 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 | `pvp_rng_seed` | `int` | 服务器下发随机种子（0=不固定） |
 
 **Game PVP 方法**：
-- `bootstrap_pvp(local_pid, all_player_ids, deck_cards, all_cards_db, rng_seed)` — PVP 专用初始化（不走章节路径，为每位玩家建 deck+mana，设 hero_specs 全为英雄A）
+- `bootstrap_pvp(local_pid, all_player_ids, per_player_deck_cards, all_cards_db, rng_seed, per_player_heroes)` — PVP 专用初始化（不走章节路径，为每位玩家建 deck+mana，按 `per_player_heroes[pid]` 各自设置 hero_specs；第三参数兼容旧 Array 格式自动回退共用牌组；`per_player_heroes` 缺失的 pid 回退 `DeckStorage.get_selected_hero()`）
+- `get_battle_hero_key() -> String` — 静态方法，返回 `DeckStorage.get_selected_hero()`，PVE bootstrap 通过此方法动态读取玩家携带英雄（而非硬编码 "A"）
 - `pvp_active_player_id() -> String` — 当前应行动玩家 ID
 - `pvp_is_my_turn() -> bool` — 当前是否轮到本端行动
 - `pvp_advance_turn()` — 推进 pvp_active_idx
@@ -196,9 +197,29 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 - `Game.pending_chapter_config` 非空时 bootstrap 走章节固定牌堆路径；`pending_level_path` 非空时覆盖关卡 JSON 路径
 - **MarkupParser**（`scripts/core/markup_parser.gd`）：静态工具类，`parse(text) -> String`，将自定义轻量标记转换为 Godot BBCode。段首缩进用透明汉字 `[color=#00000000]文字[/color]` 占位（2em 宽，可靠跨平台含 Android）。
 
-### 3.9 卡组持久化
+### 3.9 卡组持久化与英雄选择持久化
 
-`scripts/core/deck_storage.gd`：`user://decks.json`，接口 `load_deck / save_deck`。
+`scripts/core/deck_storage.gd`：`user://decks.json`，接口 `load_deck / save_deck / get_selected_hero / save_selected_hero`。
+
+**`user://decks.json` 结构**：
+```json
+{
+  "version": 2,
+  "selected_hero": "B",
+  "decks": {
+    "A": { "cards": {}, "order": [], "sort_mode": "no_sort" },
+    "B": { "cards": {}, "order": [], "sort_mode": "no_sort" }
+  }
+}
+```
+
+**`selected_hero` 字段**：玩家在备战界面退出时保存的当前英雄 key，供 Test 场景和多人游戏读取。初次启动无记录时默认 `"A"`。`PreparePanel._save_current_deck()` 合并卡组与 selected_hero 为**一次** IO 写盘，避免两次写盘之间崩溃导致状态不一致。
+
+**API**：
+- `load_all() / save_all(data)` — 全量读写
+- `load_deck(hero_key) / save_deck(hero_key, cards, order, sort_mode)` — 单英雄卡组读写
+- `get_selected_hero() -> String` — 读当前选中英雄，缺省 `"A"`
+- `save_selected_hero(hero_key)` — 保存选中英雄
 
 ### 3.10 战役胜利目标系统
 
@@ -367,9 +388,13 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + MusterPnl。手势分流：SCROLL / DRAG / 长按三态互斥。卡组持久化：切英雄前存旧卡组，tree_exiting 兜底保存。
 
+**退出行为**：任何离开路径（BackBtn / tree_exiting）均调 `_save_current_deck()`，一次 IO 同步写卡组 + selected_hero。退出时备战界面的当前英雄即为玩家"携带英雄"，作用于 Test 场景和多人游戏。
+
 ## 6. HeroCarousel（英雄轮播）
 
 竖向无限轮播，3 page 循环 + snap，`current_hero_changed(hero_key)` 信号。
+
+**英雄恢复**：`_ready` 时调 `DeckStorage.get_selected_hero()` 获取上次退出时的英雄 key，通过 `HERO_NAMES.find(key)` 定位初始页 `_current_page`，`_layout_pages()` 调用后自动刷新标签，进入备战界面直接显示上次携带的英雄。
 
 ## 7. 卡牌效果清单
 
@@ -409,7 +434,8 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 | ID | 名称 | 所属英雄 | 费用 | 每回合限用 | 描述 |
 |---|---|---|---|---|---|
-| `restart` | 再起 | 科因 | 1 | 是 | 弃全手牌补满至 MIN_HAND_SIZE |
+| `restart` | 再起 | 科因（A） | 1 | 是 | 弃全手牌补满至 MIN_HAND_SIZE |
+| `test_discard` | 测试技能 | 多人模式·测试（B） | 1 | 是 | 选一张手牌弃置并自动补 1 张；手牌为空时按钮不可用；玩家取消时退还费用并清除本回合限用标记（可重试） |
 | `yi_yong_jun` | 义勇军 | 长坂坡·刘备 | 2 | 是 | 消灭 player_main 半场所有敌方单位；随后在所有空格召唤「乡勇」并追加 ash；origin="ability" 入除外区 |
 | `caocao_archery` | 箭阵 | 长坂坡·曹操 | — | — | 纯展示被动，`can_activate` 返回 false；实际由 `SpellCasterSystem` 每回合对最前方玩家单位施放「放箭」 |
 | `flood_strategy_hero` | 水攻（英雄） | 威震华夏·关羽 | 2 | 否 | 选一个敌方单位格，施加 `soaked`（浸水）；玩家取消则退费 |
@@ -421,12 +447,19 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 | `straight_in_ability` | 直入 | 樊城·徐晃 | — | — | 被动；静态 `trigger_start(game)`，回合开始时全场敌方单位（含已跨盘者）获得 `charge`；steadfast 单位免疫 |
 | `first_arrow_ability` | 先射 | 樊城·庞德 | — | — | 被动；静态 `trigger(game)`，回合开始时若「樊城·关羽」在场，对其 front 面造成 4 点伤害，若任意面≤0 则走标准死亡流程 |
 
+**英雄技能注册机制**：`scripts/abilities/<id>.gd` 文件名即 ID，`HeroAbilityRegistry` 启动期自动扫描注册，无需手动注册。
+
+**PVP 技能同步机制**：
+- `hero_action_bar.gd` 在 `_on_ability_pressed` 中：激活前拍 pre-snapshot（`restart` 专用：弃牌前的手牌名单）→ `await HeroAbilities.activate` → 激活后拍 post-snapshot（`test_discard` 专用：墓地末尾牌名）→ 仅当 `HeroAbilities.is_used_this_turn(ability_id)` 为真时广播（取消时标记已被清除，不误发）
+- `test_main._handle_remote_activate_hero` 处理 `restart` / `test_discard`，将弃牌追加到对端 `enemy_main` slot.graveyard
+- 新增 `HeroAbilityRegistry.clear_turn_usage(id)` 公开 API，供技能取消时清除单条记录（`test_discard` 取消后可重试）
+
 ## 9. 现有英雄
 
 | key | display_name | battle_name | max_health | abilities | 备注 |
 |---|---|---|---|---|---|
-| `A` | 往日之王：科因 | 科因 | 30 | restart | — |
-| `B` | B | B | 30 | — | — |
+| `A` | 往日之王：科因 | 科因 | 30 | restart | 默认多人英雄之一 |
+| `B` | 多人模式·测试 | 测试 | 30 | test_discard | 多人测试英雄；技能：选手牌弃置补1张 |
 | `C` | C | C | 30 | — | — |
 | `liubei` | 长坂坡·刘备 | 刘备 | 30 | yi_yong_jun | 长坂坡章节玩家英雄 |
 | `guanyu_wei` | 威震华夏·关羽 | 关羽 | 30 | flood_strategy_hero | 威震华夏章节玩家英雄 |
@@ -439,6 +472,8 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 | `enemy_default` | 敌人 | 敌人 | 30 | — | 无专属章节时回退 |
 
 **hero.json boards 字段 `flags`**：chapter JSON boards 的 hero 节点可含 `"flags": ["die_hard"]` 数组，`BoardSlotFactory` 解析后调 `HeroState.set_flag(k, true)` 初始化。
+
+**多人模式英雄选择**：`HeroCarousel.HERO_NAMES = ["A", "B", "C"]`，玩家在备战界面滑动选择，退出时自动保存到 `DeckStorage.selected_hero`。Test 场景和多人游戏均读 `DeckStorage.get_selected_hero()` 作为当前携带英雄。
 
 **HeroState 新字段 / 方法（§3 补充）**：
 - `stacks: Dictionary` — 通用英雄计数器（如 `flood_charge`）：`get_stack / add_stack / set_stack`

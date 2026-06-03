@@ -9,11 +9,11 @@
 			"skill_text": "再起：消耗 1 费用，弃置所有手牌，然后重新补满 5 张。"
 		},
 		"B": {
-			"display_name": "B",
-			"battle_name": "B",
+			"display_name": "多人模式·测试",
+			"battle_name": "测试",
 			"max_health": 30,
-			"abilities": [],
-			"skill_text": ""
+			"abilities": ["test_discard"],
+			"skill_text": "测试技能：一回合最多一次，消耗 1 费用，选择一张手牌弃置，并补一张。"
 		},
 		"C": {
 			"display_name": "C",

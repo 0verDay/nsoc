@@ -238,10 +238,10 @@ func bootstrap() -> void:
 		level = DataLoader.load_level()
 	level_data = level
 
-	# ② 决定玩家英雄 key：章节 hero_key 优先，否则回退默认。
+	# ② 决定玩家英雄 key：章节 hero_key 优先，否则读玩家在备战界面最后选定的英雄。
 	var hero_key: String = String(level.get("hero_key", ""))
 	if hero_key == "":
-		hero_key = BATTLE_HERO_KEY
+		hero_key = get_battle_hero_key()
 
 	var player_data: Dictionary = DataLoader.get_hero(hero_key)
 	var enemy_data: Dictionary = DataLoader.get_enemy_default()
@@ -268,11 +268,11 @@ func bootstrap() -> void:
 	}
 
 	# 生成本局牌池文件（user://battle_cards.json），再加载玩家卡组。
-	# pending_chapter_config 非空 → 战役章节固定牌堆；否则走玩家备战卡组旧路径。
+	# pending_chapter_config 非空 → 战役章节固定牌堆；否则走玩家备战卡组。
 	if pending_chapter_config != "":
 		DataLoader.generate_battle_cards_from_chapter(pending_chapter_config)
 	else:
-		DataLoader.generate_battle_cards(BATTLE_HERO_KEY)
+		DataLoader.generate_battle_cards(get_battle_hero_key())
 	var deck_cards := DataLoader.load_cards(DataLoader.BATTLE_CARDS_JSON)
 	# card_db 装载所有卡片原型（all_cards.json），供关卡 initial_units / spawners
 	# 按名字反查（test_level.json 仅存卡名索引）。deck 只装玩家牌组。
@@ -330,17 +330,22 @@ func bootstrap() -> void:
 # 由 NetworkManager 在收到服务器 game/start 时调用。
 # - p_local_pid：本地玩家 uuid（NetworkManager 持有）
 # - all_player_ids：房间内全部玩家 uuid（含本地），按服务器分配的行动顺序排列
-# - deck_cards：服务器下发的预设牌组（CardBase 数组，已通过 card_db 解析）
+# - per_player_deck_cards：每位玩家自己的牌组，格式 { pid: Array[CardBase] }
+#   若第三参数传 Array（旧调用方式），则所有玩家共用该 Array
 # - all_cards_db：可选，PVP 阶段若客户端未预加载 all_cards.json 时用于补 card_db
+# - rng_seed：房主生成的 RNG 种子（0 = 不使用确定性洗牌）
+# - per_player_heroes：每位玩家选定的英雄 key，格式 { pid: hero_key }
+#   缺失的 pid 回退到 DeckStorage.get_selected_hero()
 #
 # 与 PVE bootstrap 的区别：
 #   - 跳过章节加载、Objectives.setup_for_battle、Events.setup_for_battle
-#   - 双方独立 DeckManager + ManaSystem
-#   - 全员同英雄 A「再起」（按决策 1.3）
+#   - 双方独立 DeckManager + ManaSystem，各持自己的牌组和英雄
 #   - SpawnerSystem / SpellCasterSystem 不挂载（由场景装配方按 is_pvp 跳过）
 #   - 不消费 pending_chapter_config / pending_level_path
 func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
-		deck_cards: Array, all_cards_db: Array = [], rng_seed: int = 0) -> void:
+		per_player_deck_cards,  # Dictionary { pid: Array[CardBase] } 或 Array（向后兼容）
+		all_cards_db: Array = [], rng_seed: int = 0,
+		per_player_heroes: Dictionary = {}) -> void:  # { pid: hero_key }，缺失时回退本地选中
 	is_pvp = true
 	local_player_id = p_local_pid
 
@@ -356,7 +361,19 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 		for c in loaded:
 			card_db[c.name] = c
 
-	cards_loaded.emit(deck_cards)
+	# 兼容旧调用：第三参数为 Array 时视为所有玩家共用同一套牌组
+	var deck_map: Dictionary = {}
+	if typeof(per_player_deck_cards) == TYPE_DICTIONARY:
+		deck_map = per_player_deck_cards
+	else:
+		# 旧路径：Array → 所有玩家共用
+		var shared: Array = per_player_deck_cards if typeof(per_player_deck_cards) == TYPE_ARRAY else []
+		for pid_raw in all_player_ids:
+			deck_map[String(pid_raw)] = shared
+
+	# cards_loaded 信号：发本地玩家的牌组（HandView / 旧订阅方只关心本地牌）
+	var local_cards: Array = deck_map.get(p_local_pid, [])
+	cards_loaded.emit(local_cards)
 
 	# 清旧
 	clear_extra_decks_and_manas()
@@ -369,38 +386,42 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 		turn.is_running = false
 		turn.turn_number = 0
 
-	# 逐玩家建 deck + mana（同一套预设牌组 → 各自独立洗牌）
+	# 逐玩家建 deck + mana，每人使用自己的牌组。
 	# PVP 模式下每位玩家用 (rng_seed + slot_index) 作为确定性种子，
-	# 保证不同玩家牌堆顺序不同（避免双方手牌完全一致）但均可复现。
+	# 保证同一牌组各自洗牌顺序不同但均可复现。
 	pvp_rng_seed = rng_seed
 	var pid_index: int = 0
 	for pid_raw in all_player_ids:
 		var pid: String = String(pid_raw)
-		# 牌组按引用复制即可（CardBase 是不可变模板）；DeckManager.setup 内部会按 count 展开。
+		var pid_cards: Array = deck_map.get(pid, [])
 		var d: DeckManager = add_deck(pid)
 		if rng_seed != 0:
 			# 每位玩家的种子 = base_seed + 玩家序号，保证各玩家洗牌结果不同
-			d.setup_seeded(deck_cards.duplicate(), rng_seed + pid_index)
+			d.setup_seeded(pid_cards.duplicate(), rng_seed + pid_index)
 		else:
-			d.setup(deck_cards.duplicate())
+			d.setup(pid_cards.duplicate())
 		pid_index += 1
 		var m: ManaSystem = add_mana(pid)
 		m.setup(1)
 
-	# hero_specs：PVP 全员 A「再起」（决策 1.3）
+	# hero_specs：按 per_player_heroes 字典为每位玩家分配各自选定的英雄。
+	# 若某玩家 hero_key 缺失 → 回退到本地存档的 selected_hero（DeckStorage）。
 	hero_specs.clear()
-	var a_data: Dictionary = DataLoader.get_hero("A")
-	var a_full: String  = String(a_data.get("display_name", "再起"))
-	var a_short: String = String(a_data.get("battle_name", a_full))
-	var a_abilities: Array = _to_string_array(a_data.get("abilities", []))
-	var a_hp: int = int(a_data.get("max_health", 30))
 	for pid_raw in all_player_ids:
 		var pid: String = String(pid_raw)
+		var hkey: String = String(per_player_heroes.get(pid, ""))
+		if hkey == "":
+			hkey = DeckStorage.get_selected_hero()
+		var hdata: Dictionary = DataLoader.get_hero(hkey)
+		var h_full: String    = String(hdata.get("display_name", hkey))
+		var h_short: String   = String(hdata.get("battle_name", h_full))
+		var h_abilities: Array = _to_string_array(hdata.get("abilities", []))
+		var h_hp: int         = int(hdata.get("max_health", 30))
 		hero_specs[pid] = {
-			"hp": a_hp,
-			"name_short": a_short,
-			"name_full": a_full,
-			"abilities": a_abilities,
+			"hp":         h_hp,
+			"name_short": h_short,
+			"name_full":  h_full,
+			"abilities":  h_abilities,
 		}
 
 	# level_data：PVP 不走章节关卡，留空让装配方按 is_pvp 走 PVP 专属布局。
@@ -428,8 +449,14 @@ static func _to_string_array(raw) -> Array:
 	return out
 
 
-# 测试关卡的固定参数（暂时不走主菜单 UI 选择）。
-# 后续接入"选英雄/选关卡"后，BATTLE_HERO_KEY 应由调用方注入。
+# 测试关卡英雄 key：动态读取玩家在备战界面选定并退出时的英雄。
+# DeckStorage.get_selected_hero() 返回 "A"/"B"/"C" 等，首次启动无记录时默认 "A"。
+# 注意：此属性是运行时计算值，不缓存，每次 bootstrap 调用时都重新读取，
+# 保证玩家在主菜单 → 备战界面修改选英雄 → 返回 → 点 Test 时能立刻生效。
+static func get_battle_hero_key() -> String:
+	return DeckStorage.get_selected_hero()
+
+# 向后兼容：保留常量供外部可能的直接引用，但指向默认值（实际走 get_battle_hero_key()）。
 const BATTLE_HERO_KEY: String = "A"
 
 func get_card(name_str: String):

@@ -8,7 +8,7 @@ extends RefCounted
 #   { "uuid": "...", "nickname": "玩家甲" }
 #
 # user://server.json 结构：
-#   { "host": "127.0.0.1", "port": 8080 }
+#   { "host": "159.75.154.122", "port": 8080 }
 
 const PROFILE_PATH: String = "user://profile.json"
 const SERVER_PATH:  String = "user://server.json"
@@ -46,7 +46,7 @@ static func get_server_config() -> Dictionary:
 	if typeof(d) != TYPE_DICTIONARY:
 		return _default_server()
 	return {
-		"host": String(d.get("host", "127.0.0.1")),
+		"host": String(d.get("host", "159.75.154.122")),
 		"port": int(d.get("port", 8080)),
 	}
 
@@ -59,7 +59,7 @@ static func save_server_config(host: String, port: int) -> void:
 
 # ── 内部 ─────────────────────────────────────────────────────────────
 static func _default_server() -> Dictionary:
-	return {"host": "127.0.0.1", "port": 8080}
+	return {"host": "159.75.154.122", "port": 8080}
 
 static func _load_profile() -> Dictionary:
 	if not FileAccess.file_exists(PROFILE_PATH):

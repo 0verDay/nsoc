@@ -486,6 +486,9 @@ func _input(event) -> void:
 		return
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		# 控制器尚未就绪（场景切换 / 异步 boot 期间）直接忽略
+		if not is_instance_valid(detail_panel):
+			return
 		if not event.pressed:
 			detail_panel.cancel_long_press()
 			detail_panel.hide_panel()
@@ -502,16 +505,16 @@ func _input(event) -> void:
 			if is_instance_valid(hero_drag_ctrl) and $LeftSidePnl.get_global_rect().has_point(p):
 				hero_drag_ctrl.on_gui_input(event)
 				return
-			if side_panels.has_open_panel():
+			if is_instance_valid(side_panels) and side_panels.has_open_panel():
 				if side_panels.is_panel_hit(p): return
-				if deck_btn.get_global_rect().has_point(p): return
-				if grave_btn.get_global_rect().has_point(p): return
-				if banished_btn.get_global_rect().has_point(p): return
+				if deck_btn != null and deck_btn.get_global_rect().has_point(p): return
+				if grave_btn != null and grave_btn.get_global_rect().has_point(p): return
+				if banished_btn != null and banished_btn.get_global_rect().has_point(p): return
 				side_panels.close_current()
-			if enemy_side_panels.has_open_panel():
+			if is_instance_valid(enemy_side_panels) and enemy_side_panels.has_open_panel():
 				if enemy_side_panels.is_panel_hit(p): return
-				if enemy_grave_btn.get_global_rect().has_point(p): return
-				if enemy_banished_btn.get_global_rect().has_point(p): return
+				if enemy_grave_btn != null and enemy_grave_btn.get_global_rect().has_point(p): return
+				if enemy_banished_btn != null and enemy_banished_btn.get_global_rect().has_point(p): return
 				enemy_side_panels.close_current()
 			# 阶段 5：附盘墓地/除外面板
 			if is_instance_valid(board_orchestrator):
@@ -910,25 +913,48 @@ func _handle_remote_activate_hero(payload: Dictionary) -> void:
 				if c != null:
 					e_slot.graveyard.append(c)
 			e_slot.pile_changed.emit("graveyard")
+		"test_discard":
+			# 把对手弃的单张加入 ROLE_MAIN_ENEMY slot.graveyard（视觉同步）
+			if Game.registry == null:
+				return
+			var enemy_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
+			if enemy_slots.is_empty():
+				return
+			var e_slot: BoardSlot = enemy_slots[0]
+			var discarded = payload.get("discarded", [])
+			if typeof(discarded) != TYPE_ARRAY:
+				return
+			for n in discarded:
+				var name_str: String = String(n)
+				if name_str == "":
+					continue
+				var c = Game.get_card(name_str)
+				if c != null:
+					e_slot.graveyard.append(c)
+			e_slot.pile_changed.emit("graveyard")
 		_:
 			# 其他 ability 暂不实现（PVP 默认英雄=A，仅 restart 会被触发）
 			push_warning("PVP: unhandled ability_id=" + ability_id)
 
 static func _pvp_default_hero_spec() -> Dictionary:
-	var spec := DataLoader.get_hero("A")
+	# 兜底：读本地选中英雄（bootstrap_pvp 的 hero_specs 未命中时使用）
+	var hero_key: String = DeckStorage.get_selected_hero()
+	var spec := DataLoader.get_hero(hero_key)
+	if spec.is_empty():
+		# hero.json 解析失败时硬兜底为 A（科因）
+		spec = DataLoader.get_hero("A")
 	if spec.is_empty():
 		return {"hp": 30, "name_short": "科因", "name_full": "往日之王：科因", "abilities": ["restart"]}
-	var ab_raw = spec.get("abilities", ["restart"])
+	var ab_raw = spec.get("abilities", [])
 	var ab: Array = []
 	if typeof(ab_raw) == TYPE_ARRAY:
 		for v in ab_raw:
 			ab.append(String(v))
-	else:
-		ab = ["restart"]
+	var display: String = String(spec.get("display_name", hero_key))
 	return {
 		"hp":         int(spec.get("max_health", 30)),
-		"name_short": String(spec.get("battle_name", "科因")),
-		"name_full":  String(spec.get("display_name", "往日之王：科因")),
+		"name_short": String(spec.get("battle_name", display)),
+		"name_full":  display,
 		"abilities":  ab,
 	}
 

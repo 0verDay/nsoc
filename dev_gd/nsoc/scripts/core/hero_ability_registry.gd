@@ -100,6 +100,10 @@ func activate(ability_id: String, ctx) -> bool:
 func is_used_this_turn(ability_id: String) -> bool:
 	return _used_this_turn.get(ability_id, false)
 
+# 清除单个技能的本回合使用记录（用于技能取消后允许重试）。
+func clear_turn_usage(ability_id: String) -> void:
+	_used_this_turn.erase(ability_id)
+
 # 新回合开始时清空"本回合已用"计数。由 main.gd 在 mana.start_new_turn 后调用。
 func reset_turn_usage() -> void:
 	_used_this_turn.clear()

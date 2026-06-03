@@ -5,6 +5,7 @@ extends RefCounted
 # 文件结构：
 # {
 #   "version": 2,
+#   "selected_hero": "A",   # 玩家上次在备战界面确认携带的英雄 key
 #   "decks": {
 #     "<hero_key>": {
 #       "cards": { "<card_name>": <count>, ... },
@@ -16,6 +17,8 @@ extends RefCounted
 # }
 # 设计要点：
 #   - 每英雄一套卡组，key 与 HeroCarousel.HERO_NAMES 元素一致（"A"/"B"/"C"...）。
+#   - selected_hero：玩家退出备战界面时保存的英雄 key，作为 Test 场景和多人游戏
+#     使用的英雄/卡组来源。初次启动无记录时默认 "A"。
 #   - cards 用 name→count 字典；order 显式存条目顺序，避免依赖 JSON 字典保序假设。
 #   - sort_mode 记录玩家上次离开时的排序模式，下次进入界面恢复同一视图。
 #   - 静态方法 + 全量读写（卡组数据量小，避免持有状态导致一致性 bug）。
@@ -24,11 +27,12 @@ extends RefCounted
 
 const PATH: String = "user://decks.json"
 const SCHEMA_VERSION: int = 2
+const DEFAULT_HERO: String = "A"
 
 
 # 读取整个存档；文件不存在 / 损坏 → 返回空骨架。
 static func load_all() -> Dictionary:
-	var empty := {"version": SCHEMA_VERSION, "decks": {}}
+	var empty := {"version": SCHEMA_VERSION, "selected_hero": DEFAULT_HERO, "decks": {}}
 	if not FileAccess.file_exists(PATH):
 		return empty
 	var f := FileAccess.open(PATH, FileAccess.READ)
@@ -43,6 +47,8 @@ static func load_all() -> Dictionary:
 		return empty
 	if not parsed.has("decks") or typeof(parsed["decks"]) != TYPE_DICTIONARY:
 		parsed["decks"] = {}
+	if not parsed.has("selected_hero"):
+		parsed["selected_hero"] = DEFAULT_HERO
 	return parsed
 
 
@@ -103,4 +109,17 @@ static func save_deck(hero_key: String, cards: Dictionary, order: Array = [], so
 		"order": order,
 		"sort_mode": sort_mode,
 	}
+	save_all(data)
+
+
+# ── 选中英雄 ──────────────────────────────────────────────────────────────────
+# 读取玩家上次在备战界面退出时携带的英雄 key。不存在 → 返回 DEFAULT_HERO。
+static func get_selected_hero() -> String:
+	return String(load_all().get("selected_hero", DEFAULT_HERO))
+
+
+# 保存当前选中的英雄 key（退出备战界面时调用）。
+static func save_selected_hero(hero_key: String) -> void:
+	var data := load_all()
+	data["selected_hero"] = hero_key
 	save_all(data)

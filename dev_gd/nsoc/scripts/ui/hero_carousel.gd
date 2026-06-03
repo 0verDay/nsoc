@@ -133,6 +133,12 @@ func _ready() -> void:
 		_pages.append(page)
 		_track.add_child(page)
 
+	# 从 DeckStorage 恢复上次备战界面退出时选中的英雄，跳转到对应页。
+	var saved_hero: String = DeckStorage.get_selected_hero()
+	var saved_idx: int = HERO_NAMES.find(saved_hero)
+	if saved_idx >= 0:
+		_current_page = saved_idx
+
 	gui_input.connect(_on_gui_input)
 	resized.connect(_layout_pages)
 	# size 在初始 _ready 时可能为 0，等一帧让 anchor 生效再布局。
