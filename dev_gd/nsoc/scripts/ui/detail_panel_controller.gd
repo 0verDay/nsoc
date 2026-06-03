@@ -141,6 +141,38 @@ func _build_panel() -> void:
 	effect_lbl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	vbox.add_child(effect_lbl)
 
+	# ── 英雄专用：已装备区（分隔线 + 标题 + 描述）──────────────────────
+	var sep := HSeparator.new()
+	sep.name = "EquipSep"
+	sep.visible = false
+	vbox.add_child(sep)
+
+	var equip_title_lbl := Label.new()
+	equip_title_lbl.name = "EquipTitleLbl"
+	equip_title_lbl.text = "已装备"
+	equip_title_lbl.add_theme_font_size_override("font_size", 20)
+	equip_title_lbl.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3, 1))
+	equip_title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	equip_title_lbl.visible = false
+	vbox.add_child(equip_title_lbl)
+
+	var equip_desc_lbl := Label.new()
+	equip_desc_lbl.name = "EquipDescLbl"
+	equip_desc_lbl.add_theme_font_size_override("font_size", 18)
+	equip_desc_lbl.add_theme_color_override("font_color", Color(0.35, 0.35, 0.45, 1))
+	equip_desc_lbl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	equip_desc_lbl.visible = false
+	vbox.add_child(equip_desc_lbl)
+
+# 隐藏英雄专用装备区（长按其他类型详情时调用，防残留）
+static func _hide_equip_section(vbox: Node) -> void:
+	if vbox == null:
+		return
+	for n_name in ["EquipSep", "EquipTitleLbl", "EquipDescLbl"]:
+		var n = vbox.get_node_or_null(n_name)
+		if n != null:
+			n.visible = false
+
 func start_long_press(target_data) -> void:
 	_long_press_target = target_data
 	_long_press_kind = "card"
@@ -148,8 +180,9 @@ func start_long_press(target_data) -> void:
 		_long_press_timer.start()
 
 # 英雄长按。ability_ids 支持传字符串（单个）或数组（多个）。
-func start_long_press_hero(hero_name: String, ability_ids = "", display_hp: int = -1) -> void:
-	_long_press_target = {"name": hero_name, "ability_ids": _normalize_ability_ids(ability_ids), "hp": display_hp}
+# equip_descs：已装备装备的描述字符串数组，格式由调用方组装。空数组 = 无装备。
+func start_long_press_hero(hero_name: String, ability_ids = "", display_hp: int = -1, equip_descs: Array = []) -> void:
+	_long_press_target = {"name": hero_name, "ability_ids": _normalize_ability_ids(ability_ids), "hp": display_hp, "equip_descs": equip_descs}
 	_long_press_kind = "hero"
 	if _long_press_timer:
 		_long_press_timer.start()
@@ -203,9 +236,12 @@ func _on_long_press_timeout() -> void:
 				ids = t["ability_ids"] as Array
 			elif t.has("ability_id") and String(t.get("ability_id", "")) != "":
 				ids = [String(t["ability_id"])]
-			show_hero(String(t.get("name", "")), ids, int(t.get("hp", -1)))
+			var equip_descs: Array = []
+			if t.has("equip_descs") and typeof(t["equip_descs"]) == TYPE_ARRAY:
+				equip_descs = t["equip_descs"] as Array
+			show_hero(String(t.get("name", "")), ids, int(t.get("hp", -1)), equip_descs)
 		else:
-			show_hero(String(t), [], -1)
+			show_hero(String(t), [], -1, [])
 	elif _long_press_kind == "equipment":
 		show_equipment(_long_press_target)
 	else:
@@ -227,6 +263,8 @@ func show_for(data) -> void:
 	card_center.visible = true
 	card_center.custom_minimum_size = Vector2(0, 240)
 	hp_lbl.visible = false
+	# 隐藏英雄专用装备区（长按英雄→长按卡牌切换时防残留）
+	_hide_equip_section(vbox)
 
 	for c in card_center.get_children():
 		c.queue_free()
@@ -285,18 +323,22 @@ func show_for(data) -> void:
 
 # 英雄详情：显示名字 + 血量 + 所有技能描述，复用同一弹出动画。
 # ability_ids 为技能 ID 字符串数组（兼容旧单 String 传入）。
-func show_hero(hero_name: String, ability_ids = [], display_hp: int = -1) -> void:
+# equip_descs：已装备装备的描述字符串数组，空则隐藏装备区。
+func show_hero(hero_name: String, ability_ids = [], display_hp: int = -1, equip_descs: Array = []) -> void:
 	if hero_name == "":
 		return
 	var ids: Array = _normalize_ability_ids(ability_ids)
 	var vbox := _panel.get_node_or_null("DetailVBox")
 	if vbox == null:
 		return
-	var card_center := vbox.get_node("CardCenter") as Control
-	var name_lbl := vbox.get_node("NameLbl") as Label
-	var hp_lbl := vbox.get_node("HpLbl") as Label
-	var cost_lbl := vbox.get_node("CostLbl") as Label
-	var effect_lbl := vbox.get_node("EffectLbl") as Label
+	var card_center      := vbox.get_node("CardCenter")       as Control
+	var name_lbl         := vbox.get_node("NameLbl")          as Label
+	var hp_lbl           := vbox.get_node("HpLbl")            as Label
+	var cost_lbl         := vbox.get_node("CostLbl")          as Label
+	var effect_lbl       := vbox.get_node("EffectLbl")        as Label
+	var sep              := vbox.get_node_or_null("EquipSep")
+	var equip_title_lbl  := vbox.get_node_or_null("EquipTitleLbl") as Label
+	var equip_desc_lbl   := vbox.get_node_or_null("EquipDescLbl")  as Label
 
 	for c in card_center.get_children():
 		c.queue_free()
@@ -329,6 +371,19 @@ func show_hero(hero_name: String, ability_ids = [], display_hp: int = -1) -> voi
 	else:
 		cost_lbl.text = ""
 		effect_lbl.text = ""
+
+	# ── 已装备区 ──────────────────────────────────────────────────────
+	var has_equips: bool = equip_descs.size() > 0
+	if sep != null:
+		sep.visible = has_equips
+	if equip_title_lbl != null:
+		equip_title_lbl.visible = has_equips
+	if equip_desc_lbl != null:
+		if has_equips:
+			equip_desc_lbl.text = "\n".join(equip_descs)
+			equip_desc_lbl.visible = true
+		else:
+			equip_desc_lbl.visible = false
 
 	if _is_open:
 		return
@@ -385,6 +440,7 @@ func show_equipment(inst) -> void:
 	card_center.visible = true
 	card_center.custom_minimum_size = Vector2(0, 240)
 	hp_lbl.visible = false
+	_hide_equip_section(vbox)
 	for c in card_center.get_children():
 		c.queue_free()
 

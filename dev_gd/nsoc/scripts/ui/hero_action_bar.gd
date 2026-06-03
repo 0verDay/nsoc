@@ -119,13 +119,56 @@ func _get_player_ability_label() -> String:
 	return "英雄能力"
 
 func _on_ability_pressed() -> void:
+	# PVP：非当前行动玩家不能用英雄技能
+	if Game.is_pvp and not Game.pvp_is_my_turn():
+		return
 	var hero: HeroState = Game.player_hero()
 	if hero == null: return
 	var ability_id: String = hero.ability_id()
 	if ability_id == "" or not HeroAbilities.has(ability_id): return
 	var ctx = _make_ctx()
 	if not HeroAbilities.can_activate(ability_id, ctx): return
+	# PVP 同步前快照：restart 需要把弃牌入对端的 enemy_main slot.graveyard，
+	# 必须在 activate 之前记录当前手牌（discard_all_and_refill 之后再取就是新抽的牌了）。
+	var pre_snapshot: Dictionary = _pvp_snapshot_for_ability(ability_id)
 	await HeroAbilities.activate(ability_id, ctx)
+	# 激活成功后广播给对手
+	if Game.is_pvp:
+		_pvp_broadcast_activate_hero(ability_id, pre_snapshot)
+
+# 不同 ability 需要的"前置快照"。activate 是 async，必须在 await 前记录。
+# - restart：当前手牌名单（用于对端把弃牌入 enemy_main.graveyard）
+func _pvp_snapshot_for_ability(ability_id: String) -> Dictionary:
+	var snap: Dictionary = {}
+	if ability_id == "restart":
+		var names: Array = []
+		var hv: HandView = Game.play.hand_view if Game.play != null else null
+		if hv != null:
+			var container: Container = hv.get_hand_container()
+			if container != null:
+				for c in container.get_children():
+					var data = c.card_data if "card_data" in c else null
+					if data != null and data is CardBase and String(data.name) != "虚空":
+						names.append(String(data.name))
+		snap["discarded"] = names
+	return snap
+
+# 广播 action/activate_hero 给对手。
+func _pvp_broadcast_activate_hero(ability_id: String, snapshot: Dictionary) -> void:
+	if not has_node("/root/Net"):
+		return
+	if Game.play == null:
+		return
+	var opp_id: String = ""
+	if Game.play.has_method("_pvp_opponent_id"):
+		opp_id = Game.play._pvp_opponent_id()
+	if opp_id == "":
+		return
+	var payload: Dictionary = {"ability_id": ability_id}
+	# 合并 snapshot 字段
+	for k in snapshot.keys():
+		payload[String(k)] = snapshot[k]
+	Net.send_to("action/activate_hero", Game.pvp_room_id, opp_id, payload)
 
 func _refresh_ability_button() -> void:
 	if _ability_btn == null: return
@@ -137,7 +180,11 @@ func _refresh_ability_button() -> void:
 		_ability_btn.disabled = true; return
 	# 每次刷新时同步更新按钮文字，确保 setup() 时序问题不导致永久显示 fallback 文字
 	_ability_btn.text = HeroAbilities.get_display_name(ability_id)
-	_ability_btn.disabled = not HeroAbilities.can_activate(ability_id, _make_ctx())
+	var can_use: bool = HeroAbilities.can_activate(ability_id, _make_ctx())
+	# PVP：非当前行动玩家时禁用
+	if Game.is_pvp and not Game.pvp_is_my_turn():
+		can_use = false
+	_ability_btn.disabled = not can_use
 
 # ── 装备按钮 ──────────────────────────────────────────────────────────────────
 func _on_equipment_added(inst: EquipmentInstance) -> void:
@@ -216,6 +263,9 @@ func _build_equipment_row(inst: EquipmentInstance) -> HBoxContainer:
 
 func _on_equip_btn_pressed(inst: EquipmentInstance) -> void:
 	if inst == null or not inst.can_activate(): return
+	# PVP：非当前行动玩家不能激活装备
+	if Game.is_pvp and not Game.pvp_is_my_turn():
+		return
 	var ctx = _make_ctx()
 	# 需要目标：锁 UI → 进入选择模式 → 等待选择 → 解锁
 	var req_target: String = inst.required_target()
@@ -243,9 +293,25 @@ func _on_equip_btn_pressed(inst: EquipmentInstance) -> void:
 			Game.turn.is_running = false
 		if success:
 			_refresh_equipment_button(inst)
+			# PVP：激活成功后广播给对手（仅白名单 effect 实际发包）
+			_pvp_broadcast_equip_activation(inst, chosen_cell)
 		return
 	# 无目标：直接激活
-	await inst.activate(ctx)
+	var success_no_target: bool = await inst.activate(ctx)
+	if success_no_target:
+		_pvp_broadcast_equip_activation(inst, null)
+
+# PVP 广播包装：仅 PVP 模式 + Game.play 存在时调用。
+# play_controller 内部按 effect 白名单决定是否实际发包。
+func _pvp_broadcast_equip_activation(inst: EquipmentInstance, target_cell) -> void:
+	if not Game.is_pvp:
+		return
+	if inst == null or inst.card_data == null:
+		return
+	if Game.play == null:
+		return
+	if Game.play.has_method("_pvp_broadcast_activate_equip"):
+		Game.play._pvp_broadcast_activate_equip(inst.card_data.name, target_cell)
 
 func _on_equip_btn_down(inst: EquipmentInstance) -> void:
 	if _detail_panel != null and _detail_panel.has_method("start_long_press_equipment"):
@@ -267,7 +333,11 @@ func _refresh_equipment_button(inst: EquipmentInstance) -> void:
 	# 刷新按钮禁用状态
 	var inner_btn: Button = row.get_node_or_null("EquipBtn")
 	if inner_btn != null:
-		inner_btn.disabled = not inst.can_activate()
+		var can_use: bool = inst.can_activate()
+		# PVP：非当前行动玩家时禁用
+		if Game.is_pvp and not Game.pvp_is_my_turn():
+			can_use = false
+		inner_btn.disabled = not can_use
 
 # ── 全量刷新 ──────────────────────────────────────────────────────────────────
 func _refresh_all() -> void:

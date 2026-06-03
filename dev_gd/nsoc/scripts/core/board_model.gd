@@ -118,3 +118,33 @@ func populate_initial_units(configs: Array, card_resolver: Callable,
 			if cell:
 				# origin = "initial"：关卡初始铺盘。死亡入 cell 所属盘墓地。
 				cell.set_card(cdata.name, cdata.attack, cdata.health, enemy_flag, cdata.effects, "", "initial")
+
+# ── 序列化（PVP 联机用）────────────────────────────────────────────
+# 序列化所有 grid_cells 中的 cell 数据。键用 "r,c" 字符串（JSON 兼容）。
+func to_dict() -> Dictionary:
+	var cells: Dictionary = {}
+	for key in grid_cells.keys():
+		var cell = grid_cells[key]
+		if cell == null:
+			continue
+		var k_str: String = "%d,%d" % [int(key.x), int(key.y)]
+		cells[k_str] = cell.to_dict()
+	return {"cells": cells}
+
+# 在已建好的 board（grid_cells 已注册空 Cell）上原地恢复。
+func from_dict(d: Dictionary) -> void:
+	var cells = d.get("cells", {})
+	if typeof(cells) != TYPE_DICTIONARY:
+		return
+	for k_str in cells.keys():
+		var parts: PackedStringArray = String(k_str).split(",")
+		if parts.size() != 2:
+			continue
+		var key := Vector2(int(parts[0]), int(parts[1]))
+		var cell = grid_cells.get(key)
+		if cell == null:
+			continue
+		var entry = cells[k_str]
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		cell.from_dict(entry)

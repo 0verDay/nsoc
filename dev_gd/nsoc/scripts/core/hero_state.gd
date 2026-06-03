@@ -81,3 +81,34 @@ func has_flag(key: String) -> bool:
 
 func set_flag(key: String, value: bool) -> void:
 	flags[key] = value
+
+# ── 序列化（PVP 联机用）────────────────────────────────────────────
+# abilities 是 String 数组、stacks/flags 是基础类型字典，可直接序列化。
+func to_dict() -> Dictionary:
+	return {
+		"health": health,
+		"max_health": max_health,
+		"name_short": name_short,
+		"name_full": name_full,
+		"abilities": abilities.duplicate(),
+		"is_dead": is_dead,
+		"stacks": stacks.duplicate(),
+		"flags": flags.duplicate(),
+	}
+
+func from_dict(d: Dictionary) -> void:
+	max_health = int(d.get("max_health", 30))
+	health = int(d.get("health", max_health))
+	name_short = String(d.get("name_short", "Hero"))
+	name_full = String(d.get("name_full", name_short))
+	var raw_ab = d.get("abilities", [])
+	abilities.clear()
+	if typeof(raw_ab) == TYPE_ARRAY:
+		for a in raw_ab:
+			abilities.append(String(a))
+	is_dead = bool(d.get("is_dead", false))
+	var raw_st = d.get("stacks", {})
+	stacks = raw_st.duplicate() if typeof(raw_st) == TYPE_DICTIONARY else {}
+	var raw_fl = d.get("flags", {})
+	flags = raw_fl.duplicate() if typeof(raw_fl) == TYPE_DICTIONARY else {}
+	health_changed.emit(health)

@@ -1,0 +1,19 @@
+2026/06/02 14:07:15 nsoc server listening on :8080
+2026/06/02 14:07:40 connect uuid=8222456b-f97f-4772-acfb-a6f6c06db628 nickname=玩家
+2026/06/02 14:07:41 room 57978 created by 8222456b-f97f-4772-acfb-a6f6c06db628
+2026/06/02 14:07:43 connect uuid=8222456b-f97f-4772-acfb-a6f6c06db628 nickname=玩家
+2026/06/02 14:07:44 client 8222456b-f97f-4772-acfb-a6f6c06db628 joined room 57978 (now 2 players)
+2026/06/02 14:08:02 disconnect uuid=8222456b-f97f-4772-acfb-a6f6c06db628
+panic: send on closed channel
+
+goroutine 7 [running]:
+main.(*Hub).deliver(0x7ff71536cc80?, 0x1020b4f502d0, {0x1020b4e22400?, 0x58?, 0x7ff7153c40c0?})
+	c:/Users/yuyi08/Documents/GitHub/nsoc/server/hub.go:298 +0x3f
+main.(*Hub).broadcast(0x1020b4e25a10, 0x1020b4e8a2a0, 0x7ff7153e8a8a?, {0x0, 0x0})
+	c:/Users/yuyi08/Documents/GitHub/nsoc/server/hub.go:310 +0xee
+main.(*Hub).handleDisconnect(0x1020b4e25a10, 0x1020b4f502d0)
+	c:/Users/yuyi08/Documents/GitHub/nsoc/server/hub.go:90 +0x46b
+main.(*Hub).Run(0x1020b4e25a10)
+	c:/Users/yuyi08/Documents/GitHub/nsoc/server/hub.go:50 +0x16e
+created by main.main in goroutine 1
+	c:/Users/yuyi08/Documents/GitHub/nsoc/server/main.go:34 +0x14e
