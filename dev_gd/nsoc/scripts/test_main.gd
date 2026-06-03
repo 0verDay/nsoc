@@ -35,6 +35,10 @@ var enemy_grave_btn: Button
 var enemy_banished_btn: Button
 var hero_action_bar: HeroActionBar
 
+# PVP：对手已装备的装备实例列表（本端镜像，仅用于详情面板展示，不参与战斗结算）。
+# 收到 action/play_equip 时追加，激活耐久归零时移除。
+var _remote_equip_insts: Array = []
+
 # ── 抽出的控制器 ─────────────────────────────────────────────────────
 # 用 Node 弱类型避免 class_name 全局表未刷新时的解析报错。
 # 实际类型分别为 FrontRowSelector / ExtraBoardController / HeroPanelDragController。
@@ -54,9 +58,15 @@ var _main_enemy_nodes: Array = []
 func _ready() -> void:
 	visible = false
 	await _apply_editor_window_scale()
-	# test_main 专用多棋盘测试关卡；main 场景继续读默认 test_level.json。
-	Game.pending_level_path = "res://data/multi_chessboard_test_level.json"
-	Game.bootstrap()
+
+	if Game.is_pvp:
+		# ── PVP 路径：bootstrap_pvp 已由 PvpLobby 调用，不走 PVE bootstrap ──
+		_inject_pvp_level_data()
+	else:
+		# ── PVE 路径 ─────────────────────────────────────────────────────
+		# test_main 专用多棋盘测试关卡；main 场景继续读默认 test_level.json。
+		Game.pending_level_path = "res://data/multi_chessboard_test_level.json"
+		Game.bootstrap()
 
 	_apply_styles()
 
@@ -77,10 +87,13 @@ func _ready() -> void:
 	_create_hero_action_bar()
 
 	settings_panel = SettingsPanelController.new(); settings_panel.name = "SettingsPanel"; add_child(settings_panel)
-	settings_panel.setup(self, {
+	var settings_cfg: Dictionary = {
 		"create_trigger_button": false,
 		"exit_action": Callable(self, "_on_exit_to_menu"),
-	})
+		# PVE + PVP 均提供投降功能；面板高度自动适配（含投降按钮时 490px，不含时 400px）
+		"surrender_action": Callable(self, "_on_pvp_surrender"),
+	}
+	settings_panel.setup(self, settings_cfg)
 	_create_settings_button()
 
 	_collect_main_enemy_nodes()
@@ -121,6 +134,9 @@ func _ready() -> void:
 		},
 	})
 	board_orchestrator.boot()
+	if Game.is_pvp:
+		_setup_pvp_slots()
+		Net.message_received.connect(_on_pvp_message)
 	if hero_action_bar != null:
 		hero_action_bar._refresh_all()
 	# boot 后把主敌盘 slot 注入 enemy_side_panels 作数据源
@@ -200,8 +216,46 @@ func _install_controllers() -> void:
 func _get_player_hero_long_press_args() -> Array:
 	var hero: HeroState = Game.player_hero()
 	if hero == null:
-		return ["", [], -1]
-	return [hero.name_full, hero.all_ability_ids(), hero.max_health]
+		return ["", [], -1, []]
+	return [hero.name_full, hero.all_ability_ids(), hero.max_health, _collect_equip_descs()]
+
+# 玩家当前已装备的描述字符串列表。格式：【装备名】效果1；效果2（剩余耐久：N）
+func _collect_equip_descs() -> Array:
+	if not has_node("/root/Equipments"):
+		return []
+	var out: Array = []
+	for inst in Equipments.all():
+		if inst == null or inst.card_data == null:
+			continue
+		var card: CardEquipment = inst.card_data
+		var parts: Array = []
+		for eff in card.effects:
+			var desc: String = Effects.get_description(String(eff))
+			if desc != "":
+				parts.append(desc)
+		if card.once_per_turn:
+			parts.append("每回合一次")
+		var desc_str: String = "；".join(parts) if parts.size() > 0 else "无效果"
+		out.append("【%s】%s（剩余耐久：%d）" % [inst.display_name(), desc_str, inst.durability_left])
+	return out
+
+# 对手已装备装备的描述字符串列表（由 _remote_equip_insts 镜像列表生成）。
+func _collect_remote_equip_descs() -> Array:
+	var out: Array = []
+	for inst in _remote_equip_insts:
+		if inst == null or inst.card_data == null:
+			continue
+		var card: CardEquipment = inst.card_data
+		var parts: Array = []
+		for eff in card.effects:
+			var desc: String = Effects.get_description(String(eff))
+			if desc != "":
+				parts.append(desc)
+		if card.once_per_turn:
+			parts.append("每回合一次")
+		var desc_str: String = "；".join(parts) if parts.size() > 0 else "无效果"
+		out.append("【%s】%s（剩余耐久：%d）" % [inst.display_name(), desc_str, inst.durability_left])
+	return out
 
 # ── 信号连接 ─────────────────────────────────────────────────────────
 func _wire_signals() -> void:
@@ -251,6 +305,10 @@ func _wire_signals() -> void:
 	# 视觉和 drop 检测始终优先于棋盘格子。
 	$LeftSidePnl.move_to_front()
 
+	# PVP：场景装配完成后立即更新回合归属按钮
+	if Game.is_pvp:
+		_update_pvp_turn_ui()
+
 # ── UI 刷新槽 ────────────────────────────────────────────────────────
 func _on_mana_changed(current: int, maximum: int) -> void:
 	mana_label.text = str(current) + "/" + str(maximum)
@@ -268,7 +326,28 @@ func _on_enemy_hero_died() -> void:
 func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利" if is_enemy else "失败"
+	# PVP：通知服务器战斗结束（房间将被销毁，对手也会收到 game/end）
+	if Game.is_pvp and Game.pvp_room_id != "":
+		Net.send_to_room("game/end", Game.pvp_room_id, {
+			"winner_id": Game.local_player_id if is_enemy else _pvp_opponent_id(),
+			"reason": "hero_dead",
+		})
 	_show_game_over(is_enemy)
+
+# 投降：对自家英雄执行 damage_hero(100, "triggered") → 走标准阵亡流程
+# → 自动触发 _on_player_hero_died → _on_hero_died(false) → 显示失败画面
+# PVP 模式：还会发 game/end 给对手（对手收到后按 winner_id 显示胜利画面）。
+# PVE 模式：同一阵亡流程，但不发网络消息。
+func _on_pvp_surrender() -> void:
+	if _game_over_shown:
+		return
+	if Game.registry == null:
+		return
+	var slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_PLAYER)
+	if slots.is_empty():
+		return
+	var p_slot: BoardSlot = slots[0]
+	p_slot.damage_hero(100, "triggered")
 
 # 战役胜利目标达成（与敌方英雄死亡同语义：玩家胜利）
 func _on_objective_completed() -> void:
@@ -276,7 +355,10 @@ func _on_objective_completed() -> void:
 	end_turn_btn.text = "胜利"
 	_show_game_over(true)
 
+var _game_over_shown: bool = false
+
 func _show_game_over(victory: bool) -> void:
+	_game_over_shown = true
 	# CanvasLayer 独立渲染层，layer=100 保证覆盖所有游戏内元素（棋子/英雄面板等）。
 	# z_index 方案在多层级节点混杂时不可靠；CanvasLayer 完全隔离。
 	var canvas := CanvasLayer.new()
@@ -323,6 +405,30 @@ func _show_game_over(victory: bool) -> void:
 
 # ── 回合 ─────────────────────────────────────────────────────────────
 func _on_end_turn_pressed() -> void:
+	if Game.is_pvp:
+		if not Game.pvp_is_my_turn():
+			return
+		end_turn_btn.disabled = true
+		end_turn_btn.text = "行动中"
+		# 只跑己方（player_main, faction=0）单位行动
+		await Game.turn.run_pvp_phase(TurnSystem.PLAYER)
+		var my_mana := Game.get_mana(Game.local_player_id)
+		if my_mana != null:
+			my_mana.start_new_turn()
+		HeroAbilities.reset_turn_usage()
+		Equipments.reset_turn_usage()
+		# 只发给对手（不发 "all"），避免自己收到 echo 后双重 advance
+		var opp_id: String = _pvp_opponent_id()
+		if opp_id != "":
+			Net.send_to("action/end_turn", Game.pvp_room_id, opp_id, {
+				"player_id":   Game.local_player_id,
+				"turn_number": Game.turn.turn_number,
+			})
+		Game.pvp_advance_turn()
+		_update_pvp_turn_ui()
+		return
+
+	# ── PVE 路径 ──────────────────────────────────────────────────────
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "行动中"
 	await Game.turn.run()
@@ -358,6 +464,15 @@ func _on_cell_cleared(cell) -> void:
 
 # ── 输入路由 ─────────────────────────────────────────────────────────
 func _input(event) -> void:
+	# F5 / F9 = 战斗状态快照存读档（PVP 序列化原型期开发键）
+	if event is InputEventKey and event.is_pressed() and not event.ctrl_pressed:
+		if event.keycode == KEY_F5:
+			print("SnapshotIO.save_to_file -> ", SnapshotIO.save_to_file(), " (", SnapshotIO.SAVE_PATH, ")")
+			return
+		if event.keycode == KEY_F9:
+			print("SnapshotIO.load_from_file -> ", SnapshotIO.load_from_file())
+			return
+
 	# Ctrl+数字 快捷键控制附盘开关
 	if event is InputEventKey and event.is_pressed() and event.ctrl_pressed:
 		var orch: BoardOrchestrator = board_orchestrator
@@ -456,6 +571,12 @@ func _on_exit_to_menu() -> void:
 		combat.abort()
 	if Game.turn != null:
 		Game.turn.is_running = false
+	# PVP：退出战斗时断开网络连接，避免残留消息进入主菜单
+	if Game.is_pvp and has_node("/root/Net"):
+		Net.disconnect_from_server()
+		Game.is_pvp = false
+		Game.pvp_room_id = ""
+		Game.pvp_action_order = []
 
 	# CanvasLayer(200) 确保覆盖所有游戏元素及结算界面(layer=100)
 	var canvas := CanvasLayer.new()
@@ -582,6 +703,8 @@ func _create_hero_action_bar() -> void:
 func _make_hero_ability_ctx() -> EffectContext:
 	var ctx: EffectContext = Game.make_effect_context_with_selectors()
 	ctx.target_cell = null
+	ctx.hand_view   = hand_view
+	ctx.hero        = Game.player_hero()
 	return ctx
 
 func _left_side_pnl_can_drop(_pos: Vector2, data) -> bool:
@@ -612,7 +735,8 @@ func _on_enemy_hero_panel_gui_input(event: InputEvent) -> void:
 		var hero: HeroState = Game.enemy_main_hero()
 		if hero != null:
 			detail_panel.start_long_press_hero(
-				hero.name_full, hero.all_ability_ids(), hero.max_health)
+				hero.name_full, hero.all_ability_ids(), hero.max_health,
+				_collect_remote_equip_descs())
 		var pnl: Panel = $EnemyHpPnl
 		pnl.pivot_offset = pnl.size / 2.0
 		var tween := pnl.create_tween()
@@ -713,3 +837,217 @@ func _play_intro_animation() -> void:
 	if is_instance_valid(blocker):
 		blocker.queue_free()
 	set_process_input(true)
+
+# ── PVP 专属辅助 ─────────────────────────────────────────────────────
+
+# bootstrap_pvp 调用前向 Game.level_data 注入 PVP 用的虚拟棋盘元数据。
+# BoardOrchestrator.boot() 读 level_data.boards，此函数让它拿到正确的双盘结构。
+func _inject_pvp_level_data() -> void:
+	var local_pid: String = Game.local_player_id
+	var opponent_pid: String = _find_opponent_pid(local_pid)
+	var local_spec: Dictionary = Game.hero_specs.get(local_pid, _pvp_default_hero_spec())
+	var opp_spec: Dictionary   = Game.hero_specs.get(opponent_pid, _pvp_default_hero_spec())
+	Game.level_data = {
+		"boards": {
+			"player_main": {
+				"faction": 0, "role": "main_player", "slot_index": 0,
+				"hero": local_spec,
+				"initial_units": [], "spawners": [], "spell_casters": [],
+			},
+			"enemy_main": {
+				"faction": 1, "role": "main_enemy", "slot_index": 1,
+				"hero": opp_spec,
+				"initial_units": [], "spawners": [], "spell_casters": [],
+			},
+		},
+	}
+
+# boot() 完成后把 owner_player_id 注入两个主盘。
+# PlayController / TurnSystem 通过 Game.deck_of_slot / mana_of_slot 反查该玩家的牌库费用。
+func _setup_pvp_slots() -> void:
+	if Game.registry == null:
+		return
+	var local_pid: String  = Game.local_player_id
+	var opponent_pid: String = _find_opponent_pid(local_pid)
+	var p_slot: BoardSlot = Game.registry.get_by_id("player_main")
+	if p_slot != null:
+		p_slot.owner_player_id = local_pid
+	var e_slot: BoardSlot = Game.registry.get_by_id("enemy_main")
+	if e_slot != null:
+		e_slot.owner_player_id = opponent_pid
+
+func _find_opponent_pid(local_pid: String) -> String:
+	for pid in Game.decks.keys():
+		if pid != local_pid:
+			return pid
+	return ""
+
+func _pvp_opponent_id() -> String:
+	for id in Game.pvp_action_order:
+		if id != Game.local_player_id:
+			return id
+	return ""
+
+# 远端英雄技能激活：仅做必要的状态镜像（视觉一致性 / 锁步关键状态）。
+# 不调用 HeroAbilities.activate，因为对端不该执行对手英雄的逻辑（如 hand_view 操作自家手牌）。
+func _handle_remote_activate_hero(payload: Dictionary) -> void:
+	var ability_id: String = String(payload.get("ability_id", ""))
+	match ability_id:
+		"restart":
+			# 把对手弃的手牌名加入 ROLE_MAIN_ENEMY slot.graveyard（视觉同步）
+			# 对端 enemy_side_panels 监听 _slot.pile_changed，自动刷新墓地面板
+			if Game.registry == null:
+				return
+			var enemy_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
+			if enemy_slots.is_empty():
+				return
+			var e_slot: BoardSlot = enemy_slots[0]
+			var discarded = payload.get("discarded", [])
+			if typeof(discarded) != TYPE_ARRAY:
+				return
+			for n in discarded:
+				var c = Game.get_card(String(n))
+				if c != null:
+					e_slot.graveyard.append(c)
+			e_slot.pile_changed.emit("graveyard")
+		_:
+			# 其他 ability 暂不实现（PVP 默认英雄=A，仅 restart 会被触发）
+			push_warning("PVP: unhandled ability_id=" + ability_id)
+
+static func _pvp_default_hero_spec() -> Dictionary:
+	var spec := DataLoader.get_hero("A")
+	if spec.is_empty():
+		return {"hp": 30, "name_short": "科因", "name_full": "往日之王：科因", "abilities": ["restart"]}
+	var ab_raw = spec.get("abilities", ["restart"])
+	var ab: Array = []
+	if typeof(ab_raw) == TYPE_ARRAY:
+		for v in ab_raw:
+			ab.append(String(v))
+	else:
+		ab = ["restart"]
+	return {
+		"hp":         int(spec.get("max_health", 30)),
+		"name_short": String(spec.get("battle_name", "科因")),
+		"name_full":  String(spec.get("display_name", "往日之王：科因")),
+		"abilities":  ab,
+	}
+
+# ── PVP 网络消息处理 ─────────────────────────────────────────────────
+
+# 所有来自 Net 的消息（战斗中）都经此分发。
+# 仅处理与战斗逻辑相关的 action/* 类型；大厅/房间消息已在 pvp_lobby 处理。
+# ── PVP 消息隊列（保证順序处理，避免 await 並發導致格子状态错乱）───────────
+var _pvp_msg_queue: Array = []
+var _pvp_processing: bool = false
+
+func _on_pvp_message(msg: Dictionary) -> void:
+	_pvp_msg_queue.append(msg)
+	if not _pvp_processing:
+		_drain_pvp_queue()
+
+func _drain_pvp_queue() -> void:
+	_pvp_processing = true
+	while _pvp_msg_queue.size() > 0:
+		var msg: Dictionary = _pvp_msg_queue.pop_front()
+		await _handle_pvp_message(msg)
+	_pvp_processing = false
+
+func _handle_pvp_message(msg: Dictionary) -> void:
+	var type: String = String(msg.get("type", ""))
+	var from: String = String(msg.get("from", ""))
+	var payload = msg.get("payload", {})
+	if typeof(payload) != TYPE_DICTIONARY:
+		payload = {}
+	if from == Game.local_player_id:
+		return
+	match type:
+		"action/play_card":
+			await play_controller.handle_remote_play_card(payload)
+		"action/play_equip":
+			# 记录对手装备实例（仅用于详情面板展示，不加入 Equipments 单例）。
+			var card_name: String = String(payload.get("card_name", ""))
+			if card_name != "":
+				var card = Game.get_card(card_name)
+				if card is CardEquipment:
+					_remote_equip_insts.append(EquipmentInstance.new(card))
+		"action/activate_equip":
+			# 对手激活装备 → 本端镜像执行 effect（仅白名单 effect 实际发包）
+			await play_controller.handle_remote_activate_equip(payload)
+			# 同步扣减对手装备耐久（破损则从镜像列表移除）
+			var eq_name: String = String(payload.get("equip_name", ""))
+			if eq_name != "":
+				for i in range(_remote_equip_insts.size() - 1, -1, -1):
+					var inst: EquipmentInstance = _remote_equip_insts[i]
+					if inst.display_name() == eq_name:
+						inst.durability_left -= 1
+						if inst.durability_left <= 0:
+							_remote_equip_insts.remove_at(i)
+						break
+		"action/end_turn":
+			await _on_remote_end_turn(payload)
+		"action/activate_hero":
+			# 对手激活英雄技能 → 本端镜像必要状态变更
+			_handle_remote_activate_hero(payload)
+		"disconnect/notify":
+			# 对手断线：决策 8.7 — 走标准阵亡流程
+			# 1v1 场景：本端是存活方（断线方连接已断收不到此消息）
+			# 对掉线方对应的本端 slot（ROLE_MAIN_ENEMY = 对手英雄盘）执行 damage_hero(100, "triggered")
+			# → 走标准阵亡 → 触发 hero.died 信号 → _on_enemy_hero_died → 发 game/end + 显示胜利画面
+			var nick: String = String(payload.get("nickname", "对手"))
+			var disc_uuid: String = String(payload.get("uuid", ""))
+			# 防护：若 uuid 是本端自己（理论不会但兜底），跳过
+			if disc_uuid == Game.local_player_id:
+				pass
+			elif _game_over_shown:
+				# 已显示胜负画面，无需重复处理
+				pass
+			else:
+				end_turn_btn.text = nick + " 已断线"
+				end_turn_btn.disabled = true
+				if Game.registry != null:
+					var enemy_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
+					if enemy_slots.size() > 0:
+						var e_slot: BoardSlot = enemy_slots[0]
+						e_slot.damage_hero(100, "triggered")
+		"game/end":
+			# 本端已显示胜负画面 → 跳过；否则按 winner_id 决定胜负
+			# 正常对战：双端单位/法术伤害锁步，自家 hero.died 已触发 _on_hero_died → _game_over_shown=true
+			# 对手投降场景：对手发 game/end 但本端 hero 没死，需根据 winner_id 显示胜利画面
+			if not _game_over_shown:
+				var winner: String = String(payload.get("winner_id", ""))
+				if winner != "" and winner == Game.local_player_id:
+					_show_game_over(true)
+				else:
+					# 异常兜底：未知胜负来源 → 直接退主菜单
+					_on_exit_to_menu()
+
+# 收到对手结束回合消息：运行 TurnSystem（锁步）→ 推进回合 → 恢复按钮
+func _on_remote_end_turn(_payload: Dictionary) -> void:
+	if Game.pvp_is_my_turn():
+		push_warning("_on_remote_end_turn: called on my turn (idx=%d), skipping" % Game.pvp_active_idx)
+		return
+	end_turn_btn.disabled = true
+	end_turn_btn.text = "结算中"
+	await play_controller.handle_remote_end_turn()
+	Game.pvp_advance_turn()
+	_update_pvp_turn_ui()
+
+# 更新"结束回合"按钮状态与标签，反映当前回合归属。
+# 同时强制刷新英雄技能按钮（turn_reset / mana_changed 信号在 pvp_advance_turn 之前触发，
+# 不主动刷新则按钮仍停留在前一回合的状态）。
+func _update_pvp_turn_ui() -> void:
+	var my_turn: bool = Game.pvp_is_my_turn()
+	end_turn_btn.disabled = not my_turn
+	if my_turn:
+		end_turn_btn.text = "结束回合"
+	else:
+		end_turn_btn.text = "等待对方"
+	if is_instance_valid(hero_action_bar):
+		hero_action_bar._refresh_ability_button()
+	if my_turn:
+		end_turn_btn.text = "结束回合"
+	else:
+		end_turn_btn.text = "等待对方"
+	# 强制刷新英雄技能按钮，避免回合切换后按钮残留旧状态
+	if is_instance_valid(hero_action_bar):
+		hero_action_bar._refresh_ability_button()

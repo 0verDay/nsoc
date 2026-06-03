@@ -71,3 +71,30 @@ func reset_turn() -> void:
 	if used_this_turn:
 		used_this_turn = false
 		changed.emit()
+
+# ── 序列化（PVP 联机用）────────────────────────────────────────────
+# card_data 按 name 序列化，反序时通过 Game.get_card(name) 还原。
+func to_dict() -> Dictionary:
+	return {
+		"card_name": card_data.name if card_data != null else "",
+		"durability_left": durability_left,
+		"used_this_turn": used_this_turn,
+	}
+
+# 静态构造：从 dict 还原 EquipmentInstance。card_db 缺失对应卡牌时返回 null。
+static func from_dict(d: Dictionary) -> EquipmentInstance:
+	var name_str: String = String(d.get("card_name", ""))
+	if name_str == "":
+		return null
+	if Engine.get_main_loop() == null:
+		return null
+	var root: Node = Engine.get_main_loop().root
+	if not root.has_node("/root/Game"):
+		return null
+	var card = Game.get_card(name_str)
+	if not (card is CardEquipment):
+		return null
+	var inst := EquipmentInstance.new(card)
+	inst.durability_left = int(d.get("durability_left", card.durability))
+	inst.used_this_turn  = bool(d.get("used_this_turn", false))
+	return inst

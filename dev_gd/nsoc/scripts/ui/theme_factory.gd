@@ -58,9 +58,10 @@ static func apply_button_styles(btn: Button, styles: Dictionary) -> void:
 # 设置面板按钮的略深三态。
 static func settings_button_styles() -> Dictionary:
 	return {
-		"normal": panel(Color("#339af0"), Color.TRANSPARENT, 0, 12, true),
-		"hover": panel(Color("#228be6"), Color.TRANSPARENT, 0, 12, true),
-		"pressed": panel(Color("#1c7ed6"), Color.TRANSPARENT, 0, 12),
+		"normal":   panel(Color("#339af0"), Color.TRANSPARENT, 0, 12, true),
+		"hover":    panel(Color("#228be6"), Color.TRANSPARENT, 0, 12, true),
+		"pressed":  panel(Color("#1c7ed6"), Color.TRANSPARENT, 0, 12),
+		"disabled": panel(Color("#adb5bd"), Color.TRANSPARENT, 0, 12),
 	}
 
 # 圆角胶囊（HP/费用/攻击数字底图）。

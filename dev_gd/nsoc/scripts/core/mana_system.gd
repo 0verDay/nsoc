@@ -36,3 +36,16 @@ func start_new_turn() -> void:
 		maximum += 1
 	current = maximum
 	mana_changed.emit(current, maximum)
+
+# ── 序列化（PVP 联机用）────────────────────────────────────────────
+# 状态对外只有 current / maximum 两个标量。
+func to_dict() -> Dictionary:
+	return {
+		"current": current,
+		"maximum": maximum,
+	}
+
+func from_dict(d: Dictionary) -> void:
+	current = int(d.get("current", 1))
+	maximum = int(d.get("maximum", 1))
+	mana_changed.emit(current, maximum)
