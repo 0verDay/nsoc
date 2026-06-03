@@ -38,12 +38,14 @@ VideoSplash（OGV 开场 Logo 视频，~3s，可点击跳过）
 
 ```
 Game (autoload "game_context.gd")
-├── deck      DeckManager
-├── mana      ManaSystem
-├── turn      TurnSystem        支持多棋盘遍历
-├── registry  BoardRegistry     所有活跃 BoardSlot 的注册表
-├── play      PlayController    由 main.gd 注入
-└── combat    CombatSystem      由 main.gd 注入
+├── deck      DeckManager         （local_player_id 对应实例的别名；PVP 时与 decks[local_player_id] 同指）
+├── mana      ManaSystem          （同上别名）
+├── decks     Dictionary          （player_id → DeckManager，PVP 多玩家各持一份）
+├── manas     Dictionary          （player_id → ManaSystem，PVP 多玩家各持一份）
+├── turn      TurnSystem          支持多棋盘遍历
+├── registry  BoardRegistry       所有活跃 BoardSlot 的注册表
+├── play      PlayController      由 main.gd 注入
+└── combat    CombatSystem        由 main.gd 注入
 
 Effects       (autoload) 扫描 scripts/effects/*.gd 自注册
 HeroAbilities (autoload) 扫描 scripts/abilities/*.gd 自注册
@@ -53,7 +55,32 @@ Actions       (autoload "action_registry.gd") 扫描 scripts/actions/*.gd 自注
 Events        (autoload "scripted_events.gd") 剧情事件调度器，驱动 turn/unit_died/hero_hp 触发器
 Dialogue      (autoload "dialogue_manager.gd") 对话气泡 FIFO 队列，CanvasLayer(z=92)
 QuitConfirm   (autoload) 全局退出确认弹窗
+Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP 专用）
 ```
+
+**Game PVP 专属字段**（`scripts/core/game_context.gd`）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `is_pvp` | `bool` | PVP 模式开关；`bootstrap_pvp()` 置 true，`bootstrap()` 置 false |
+| `local_player_id` | `String` | 本端玩家标识（PVE 默认 `"player_main"`，PVP 为 session_id） |
+| `decks` | `Dictionary` | `player_id → DeckManager`，1v1 共 2 份 |
+| `manas` | `Dictionary` | `player_id → ManaSystem`，1v1 共 2 份 |
+| `pvp_action_order` | `Array` | 服务器下发的行动顺序 `[uuid1, uuid2, ...]` |
+| `pvp_active_idx` | `int` | 当前行动玩家在 action_order 中的索引 |
+| `pvp_room_id` | `String` | 当前房间号（由 pvp_lobby 注入 Net 后取回镜像） |
+| `pvp_rng_seed` | `int` | 服务器下发随机种子（0=不固定） |
+
+**Game PVP 方法**：
+- `bootstrap_pvp(local_pid, all_player_ids, deck_cards, all_cards_db, rng_seed)` — PVP 专用初始化（不走章节路径，为每位玩家建 deck+mana，设 hero_specs 全为英雄A）
+- `pvp_active_player_id() -> String` — 当前应行动玩家 ID
+- `pvp_is_my_turn() -> bool` — 当前是否轮到本端行动
+- `pvp_advance_turn()` — 推进 pvp_active_idx
+- `get_deck(pid) / get_mana(pid)` — 按玩家ID取对应实例
+- `add_deck(pid) / add_mana(pid)` — 创建并注册新实例
+- `deck_of_slot(slot) / mana_of_slot(slot)` — 按 slot.owner_player_id 路由
+- `clear_extra_decks_and_manas()` — 清除全部 decks/manas（bootstrap 时调用）
+- `register_selectors(target_selector, hand_picker)` — 注入交互选择器节点（`EffectContext.pick_target_async / pick_hand_card_async` 用）
 
 **BoardSlot**（`scripts/core/board_slot.gd`）：一个棋盘的全部上下文聚合体，包含：
 - `board: BoardModel` — 棋盘数据层
@@ -445,6 +472,8 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 ## 11. 工作流
 
+**PVP 战斗状态快照**：`F5` 键调 `SnapshotIO.save_to_file()` 存 `user://battle_snapshot.json`，`F9` 键调 `load_from_file()` 恢复（开发期调试用）。
+
 **新效果**：`scripts/effects/<id>.gd` 继承 Effect，实现钩子，重启自动注册。
 
 **新卡牌**：`all_cards.json` 加条目，引用已注册效果 ID；备战界面同步加 `review_cards.json`。
@@ -510,4 +539,225 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 - **apply_soaked_to_all + require_effect**：`flood_strategy_unit` 效果不含代码钩子，水攻触发由 `turn_gte` trigger 每回合调 `apply_soaked_to_all`（`require_effect="flood_strategy_unit"`）—— 场上若无此效果单位则不执行；保证效果存在性检查与施加逻辑完全解耦
 - **DialogueManager FIFO + CanvasLayer(92)**：叠于战斗 UI 之上、结算面板之下；`clear_queue()` 退出战斗时清空防残留；气泡全代码构建，显示时长自适应字数，点击可提前关闭
 - **威震华夏章节异步预加载**：`weizhenhuaxia.gd` 入场动画与 `Main.tscn` 后台 `load_threaded_request` 并行；加载完毕进度条滑出 → "点击开始"呼吸动效 → 点击 `change_scene_to_packed`（直接用已加载 packed，秒切无延迟）
+- **Game.decks / manas 字典化**：PVE 旧代码通过 `Game.deck` / `Game.mana` 别名无感使用；PVP 模式新增 `Game.decks[player_id]` / `Game.manas[player_id]`，`deck_of_slot / mana_of_slot` 按 slot.owner_player_id 路由，避免多玩家费用串联
+- **bootstrap_pvp 与 bootstrap 分支**：`bootstrap_pvp` 不走章节/关卡路径，不初始化 ScriptedEvents/SpawnerSystem，为每位玩家独立建 DeckManager + ManaSystem + HeroSpec（全为英雄A），PVP 战斗场景通过 `Game.is_pvp` 分支走 `_inject_pvp_level_data → _setup_pvp_slots` 专属路径
+- **PVP 消息队列串行**：`test_main._pvp_msg_queue` + `_pvp_processing` 保证 await 消息依序处理，避免并发导致格子状态错乱
+- **对手装备镜像**：本端 `Equipments` 单例只含本地玩家装备；对手装备单独维护 `_remote_equip_insts: Array`，收到 `action/play_equip` 时追加 `EquipmentInstance`，激活后按耐久扣减，归零移除；长按对手英雄面板由 `_collect_remote_equip_descs()` 生成描述
+- **PVP 回合控制**：`Game.pvp_is_my_turn()` 判断行动归属；本端结束回合调 `TurnSystem.run_pvp_phase(PLAYER)` 只跑己方单位，发 `action/end_turn` 只发给对手（避免 echo）；收到 `action/end_turn` 调 `play_controller.handle_remote_end_turn()` + `Game.pvp_advance_turn()`
+- **SnapshotIO 序列化基础设施**：`DeckManager.to_dict/from_dict`、`ManaSystem.to_dict/from_dict`、`BoardSlot.to_dict/from_dict`、`Equipments.to_dict/from_dict` 等；版本号字段兼容；`SnapshotIO.serialize_battle / restore_battle` 顶层封装；F5/F9 开发键本地存读档
+- **SparringPanel 大厅 UI**：继承 SecondaryPanel，完全代码布局（绕开 anchor 系统，在 NOTIFICATION_RESIZED 手动设 position/size）；Mode0「我的房间」展示 2×3 槽位格 + 准备/开始按钮；Mode1「加入房间」展示房间列表 + 数字键盘直接输房号；刷新按钮 3 秒冷却倒计时；Node 销毁前自动 `_unbind_net_signals`
+- **session_id 同机双开隔离**：NetworkManager._session_id = uuid + 随机4位后缀，同一台机跑两个实例时两端 session_id 不同，服务器/路由正确区分两个玩家
+
+## 13. PVP 多人联机系统
+
+### 13.1 网络层（NetworkManager / Net autoload）
+
+`scripts/net/network_manager.gd`，autoload 名 `Net`。
+
+**职责**：
+1. 管理与 Go 中继服务器的 WebSocket 连接（连接/断开/重连）
+2. 收到 JSON 文本后反序列化为 Dictionary 并发出 `message_received` 信号
+3. 提供 `send / send_to_room / send_to_host / send_to` 便捷发送 API
+4. 持有本端 `_uuid`（持久）与 `_session_id`（每次启动随机后缀，同机双开隔离）、`_nickname`
+
+**连接 URL 格式**：`ws://host:port/ws?uuid=<session_id>&nickname=<uri_encoded>`
+
+| 信号 | 触发时机 |
+|---|---|
+| `connected` | WebSocketPeer 状态变为 STATE_OPEN |
+| `connection_failed(reason)` | `connect_to_url` 返回非 OK |
+| `disconnected` | WebSocket 关闭（含断线） |
+| `message_received(msg: Dictionary)` | 每条合法 JSON 包 |
+
+**关键 API**：
+- `connect_to_server(host="", port=0)` — 空参时读 `ProfileManager.get_server_config()`
+- `disconnect_from_server()`
+- `send(msg: Dictionary)` — 直发
+- `send_to_room(type, room_id, payload={}, to="all")` — 自动填 room_id + to
+- `send_to_host(type, room_id, payload={})` — to="host"
+- `send_to(type, room_id, target_uuid, payload={})` — 发给指定 uuid
+- `set_current_room_id(rid)` / `get_current_room_id()` — 战斗场景通过此字段发 action/*
+- `get_session_id()` — 本次会话唯一标识（含随机后缀）
+- `set_nickname(nick)` — 同步更新昵称并持久化
+
+### 13.2 玩家身份（ProfileManager）
+
+`scripts/net/profile_manager.gd`，`class_name ProfileManager extends RefCounted`，全静态方法，无需 autoload。
+
+**持久化文件**：
+- `user://profile.json`：`{ "uuid": "...", "nickname": "玩家甲" }`
+- `user://server.json`：`{ "host": "127.0.0.1", "port": 8080 }`
+
+**主要方法**：
+- `get_or_create_uuid() -> String` — 首次生成 UUID v4（32位随机16进制）并持久化
+- `get_nickname() / set_nickname(nick)` — 昵称读写
+- `get_server_config() -> Dictionary` — 读服务器配置，缺省返回 `{host:"127.0.0.1", port:8080}`
+- `save_server_config(host, port)`
+
+### 13.3 战斗状态序列化（SnapshotIO）
+
+`scripts/core/snapshot_io.gd`，`class_name SnapshotIO extends RefCounted`，全静态方法。
+
+**设计目标（分步实现）**：
+- Step 1（当前）：单玩家本地存读档原型，验证序列化边界
+- Step 5+：扩展为多玩家 + 私密性过滤（按 player_id 拆 deck/hand/equipments）
+
+**顶层 API**：
+- `serialize_battle() -> Dictionary` — 序列化当前全局状态快照
+- `restore_battle(snap: Dictionary)` — 从快照还原（前提：Game.bootstrap 已跑，空 BoardSlot 已建好）
+- `save_to_file(path=SAVE_PATH) -> bool` — 写 `user://battle_snapshot.json`
+- `load_from_file(path=SAVE_PATH) -> bool` — 读文件并还原
+
+**快照结构**（`VERSION=1`）：
+```json
+{
+  "version": 1,
+  "turn_number": N,
+  "deck": { /* DeckManager.to_dict() */ },
+  "mana": { /* ManaSystem.to_dict() */ },
+  "counters": { /* Game.counters */ },
+  "slots": [ /* slot.to_dict() 数组 */ ],
+  "equipments": { /* Equipments.to_dict() */ }
+}
+```
+
+**不序列化的部分**：SpawnerSystem 配置（PVP 关闭）、SpellCasterSystem 配置（PVP 关闭）、HeroAbilityRegistry once_per_turn 状态（待加）、DialogueManager / ScriptedEvents 状态（PVP 禁用）
+
+**开发快捷键**（`test_main._input`）：
+- `F5`：`SnapshotIO.save_to_file()` — 存当前战斗状态
+- `F9`：`SnapshotIO.load_from_file()` — 读文件还原战斗状态
+
+### 13.4 大厅 UI（SparringPanel）
+
+`scripts/ui/sparring_panel.gd`，`class_name SparringPanel extends SecondaryPanel`，场景 `res://scenes/SparringPanel.tscn`。
+
+**布局**：完全代码手动布局（在 `NOTIFICATION_RESIZED` 中手动设 position/size，绕开 anchor 系统）：
+- 右侧固定宽 160px：BackBtn + 4 个模式按钮（RightActionPnl）
+- 左侧主内容区（LeftContentPnl）：随大小动态填充
+
+**4 个模式**（右侧按钮切换）：
+
+| 索引 | 名称 | 行为 |
+|---|---|---|
+| 0 | 我的房间 | 自动连接服务器 → 发 room/create → 显示房间号 + 2×3 槽位格 + 准备/开始按钮 |
+| 1 | 加入房间 | 连接服务器 → 拉房间列表（3s 冷却） + 数字键盘输入房号直接加入 |
+| 2 | 随机匹配 | 占位（施工中） |
+| 3 | 随机排位 | 占位（施工中，默认落入此页） |
+
+**准备系统**：
+- `_player_ready: Dictionary` = `uuid → bool`，所有玩家准备状态
+- `_is_local_ready: bool` — 本地玩家当前准备状态
+- 非房主玩家点「准备」发 `room/ready_update`；房主看到所有非房主准备完毕且 ≥2 人时「开始」按钮解锁
+
+**数字键盘面板**（Mode 1 右侧）：
+- 最多输 5 位房号；× 键清空；「加入房间」按钮发 `room/join`
+- `_refresh_btn_ref` 跨帧持久，重建 UI 后协程继续更新倒计时文字
+
+**网络消息处理**（`_on_net_message`）：
+
+| type | 动作 |
+|---|---|
+| `room/create_ok` | 记录 room_id / host_uuid / players，清空 ready 状态，刷新 UI |
+| `room/joined` | 同上 + 强制切回 Mode 0 |
+| `room/join_rejected` | 刷新 UI |
+| `room/left` | 过滤离开玩家，更新 host_uuid |
+| `room/list_response` | 更新 _rooms 列表（过滤 started=true 的房间） |
+| `room/expired` / `room/destroy` | 清空 room_id / players / host_uuid |
+| `disconnect/notify` | 过滤断线玩家，更新 host_uuid |
+| `room/ready_update` | 更新 _player_ready，刷新 UI |
+| `game/start` | 调 `_handle_game_start` → 发起战斗场景跳转 |
+
+**信号绑定生命周期**：`_apply_styles` 中 `_bind_net_signals`；`NOTIFICATION_PREDELETE` 时 `_unbind_net_signals`，防止节点销毁后信号野火。
+
+### 13.5 PVP 战斗场景路径（test_main.gd）
+
+`test_main._ready` 根据 `Game.is_pvp` 分叉：
+
+**PVP 路径**：
+1. `_inject_pvp_level_data()` — 向 `Game.level_data.boards` 注入本端/对端双盘元数据（hero_spec 由 `Game.hero_specs[player_id]` 取）
+2. `BoardOrchestrator.boot()` — 装配两块棋盘
+3. `_setup_pvp_slots()` — 按 session_id 为 player_main / enemy_main 注入 `owner_player_id`
+4. `Net.message_received.connect(_on_pvp_message)` — 接入战斗消息
+5. `_update_pvp_turn_ui()` — 按 `Game.pvp_is_my_turn()` 设置按钮初始状态
+
+**PVP 消息处理（串行队列）**：
+- `_pvp_msg_queue + _pvp_processing` 保证顺序
+- `_handle_pvp_message` 分发：
+
+| type | 动作 |
+|---|---|
+| `action/play_card` | `play_controller.handle_remote_play_card(payload)` |
+| `action/play_equip` | 追加 `EquipmentInstance` 到 `_remote_equip_insts` |
+| `action/activate_equip` | `play_controller.handle_remote_activate_equip` + 扣对手装备耐久 |
+| `action/end_turn` | `_on_remote_end_turn` → `run_pvp_phase` + `pvp_advance_turn` |
+| `action/activate_hero` | `_handle_remote_activate_hero`（仅 restart 有视觉镜像） |
+| `disconnect/notify` | 对掉线玩家 `damage_hero(100,"triggered")` → 标准阵亡流程 |
+| `game/end` | 未显示胜负时按 winner_id 显示胜利/退出 |
+
+**本端结束回合（PVP）**：
+1. 检查 `Game.pvp_is_my_turn()`
+2. `await Game.turn.run_pvp_phase(TurnSystem.PLAYER)` — 只跑己方单位
+3. `my_mana.start_new_turn()` + reset abilities/equipments
+4. `Net.send_to(action/end_turn, room_id, opp_id, ...)` — 只发给对手，避免 echo
+5. `Game.pvp_advance_turn()` + `_update_pvp_turn_ui()`
+
+**胜负判定**：
+- 英雄死亡（己方或对方）→ `_on_hero_died(is_enemy)` → 若 `Game.is_pvp` 发 `game/end` → `_show_game_over`
+- 投降：`_on_pvp_surrender` → `damage_hero(100, "triggered")` → 走标准阵亡流程 → 自动触发 `_on_player_hero_died` → `game/end`
+- 退出战斗：`_on_exit_to_menu` → `Net.disconnect_from_server()` + 清 PVP 状态
+
+### 13.6 网络消息协议（客户端 ↔ 服务器）
+
+消息格式（JSON 文本）：
+```json
+{
+  "type":    "action/play_card",
+  "to":      "all",            // "all" | "host" | "<uuid>"
+  "from":    "<session_id>",   // 服务器填入，客户端可不填
+  "room_id": "12345",
+  "payload": { ... }
+}
+```
+
+**房间管理消息**（大厅用）：
+
+| type（客→服） | 说明 |
+|---|---|
+| `room/create` | 创建新房间（服务器随机5位数字号） |
+| `room/join` | 加入指定 room_id 的房间 |
+| `room/leave` | 离开当前房间 |
+| `room/list` | 请求公开房间列表 |
+| `room/ready_update` | 广播本玩家准备状态 |
+
+| type（服→客） | 说明 |
+|---|---|
+| `room/create_ok` | 创建成功，含 room_id / host_uuid / players |
+| `room/joined` | 有玩家加入（含更新后的 players 列表） |
+| `room/join_rejected` | 加入失败（已开战/已满） |
+| `room/left` | 有玩家离开，含 new_host_uuid |
+| `room/list_response` | 房间列表，含 started 字段（客户端过滤） |
+| `room/expired` / `room/destroy` | 房间销毁 |
+| `disconnect/notify` | 有玩家掉线，含 uuid / new_host_uuid |
+| `game/start` | 服务器下发行动顺序 + 随机种子，触发场景切换 |
+
+**战斗中消息**（战斗场景用）：
+
+| type | 发送方 | 说明 |
+|---|---|---|
+| `action/play_card` | 房主 → 对手 | 出牌，含 card_name / slot_id / cell 等 |
+| `action/play_equip` | 房主 → 对手 | 出装备，含 card_name |
+| `action/activate_equip` | 房主 → 对手 | 激活装备，含 equip_name + 效果参数 |
+| `action/activate_hero` | 任一 → 对手 | 激活英雄技能，含 ability_id + 相关参数 |
+| `action/end_turn` | 任一 → 对手（非 all） | 结束回合，含 player_id / turn_number |
+| `game/end` | 房主 → all | 战斗结束，含 winner_id / reason |
+
+- **Game.decks / manas 字典化**：PVE 旧代码通过 `Game.deck` / `Game.mana` 别名无感使用；PVP 模式新增 `Game.decks[player_id]` / `Game.manas[player_id]`，`deck_of_slot / mana_of_slot` 按 slot.owner_player_id 路由，避免多玩家费用串联
+- **bootstrap_pvp 与 bootstrap 分支**：`bootstrap_pvp` 不走章节/关卡路径，不初始化 ScriptedEvents/SpawnerSystem，为每位玩家独立建 DeckManager + ManaSystem + HeroSpec（全为英雄A），PVP 战斗场景通过 `Game.is_pvp` 分支走 `_inject_pvp_level_data → _setup_pvp_slots` 专属路径
+- **PVP 消息队列串行**：`test_main._pvp_msg_queue` + `_pvp_processing` 保证 await 消息依序处理，避免并发导致格子状态错乱
+- **对手装备镜像**：本端 `Equipments` 单例只含本地玩家装备；对手装备单独维护 `_remote_equip_insts: Array`，收到 `action/play_equip` 时追加 `EquipmentInstance`，激活后按耐久扣减，归零移除；长按对手英雄面板由 `_collect_remote_equip_descs()` 生成描述
+- **PVP 回合控制**：`Game.pvp_is_my_turn()` 判断行动归属；本端结束回合调 `TurnSystem.run_pvp_phase(PLAYER)` 只跑己方单位，发 `action/end_turn` 只发给对手（避免 echo）；收到 `action/end_turn` 调 `play_controller.handle_remote_end_turn()` + `Game.pvp_advance_turn()`
+- **SnapshotIO 序列化基础设施**：`DeckManager.to_dict/from_dict`、`ManaSystem.to_dict/from_dict`、`BoardSlot.to_dict/from_dict`、`Equipments.to_dict/from_dict` 等；版本号字段兼容；`SnapshotIO.serialize_battle / restore_battle` 顶层封装；F5/F9 开发键本地存读档
+- **SparringPanel 大厅 UI**：继承 SecondaryPanel，完全代码布局（绕开 anchor 系统，在 NOTIFICATION_RESIZED 手动设 position/size）；Mode0「我的房间」展示 2×3 槽位格 + 准备/开始按钮；Mode1「加入房间」展示房间列表 + 数字键盘直接输房号；刷新按钮 3 秒冷却倒计时；Node 销毁前自动 `_unbind_net_signals`
+- **session_id 同机双开隔离**：NetworkManager._session_id = uuid + 随机4位后缀，同一台机跑两个实例时两端 session_id 不同，服务器/路由正确区分两个玩家
+
 
