@@ -28,6 +28,9 @@ func can_equip(data) -> bool:
 		return false
 	if Game.turn != null and Game.turn.is_running:
 		return false
+	# PVP：非当前行动玩家不能装备
+	if Game.is_pvp and not Game.pvp_is_my_turn():
+		return false
 	if not Game.mana.can_spend(int(data.cost)):
 		return false
 	return true
@@ -51,6 +54,9 @@ func handle_equip(data) -> void:
 		src.set_meta("consumed", true)
 	Equipments.equip(full)
 	hand_consumed.emit(slot_index, src)
+	# PVP：广播装备出牌
+	if Game.is_pvp:
+		_pvp_broadcast_play_equip(full.name)
 
 # 是否允许在 cell 上释放该卡。供 cell._can_drop_data 调用。
 # 多盘语义：cell 必须属于一个 PLAYER 阵营盘且 slot.allow_player_deploy == true。
@@ -62,6 +68,9 @@ func can_play_at(cell, data) -> bool:
 	if String(data.get("type", "")) == "装备":
 		return false
 	if Game.turn.is_running:
+		return false
+	# PVP：非当前行动玩家不能出牌
+	if Game.is_pvp and not Game.pvp_is_my_turn():
 		return false
 	if not Game.mana.can_spend(data.cost):
 		return false
@@ -127,8 +136,10 @@ func handle_drop(cell, data) -> void:
 	var full_data = data.get("full_data")
 
 	if data.type == "法术":
-		_play_spell(full_data, cell)
+		await _play_spell(full_data, cell)   # ← 必須 await 等效果執行完
 		hand_consumed.emit(slot_index, src)
+		if Game.is_pvp:
+			_pvp_broadcast_play_card(cell, data)
 		return
 
 	# 单位：先播飞入动画并落子，落子后再触发 on_play。
@@ -140,6 +151,9 @@ func handle_drop(cell, data) -> void:
 	# origin = "hand"：玩家手牌部署，死亡入 Game.deck 而非所在盘 slot.graveyard
 	cell.set_card(data.card_name, data.attack, data.health, false, effs, "", "hand")
 	_trigger_unit_play_effects(full_data, cell)
+	# PVP：广播出牌给对手（本端已执行，对手收到后镜像到 enemy_main）
+	if Game.is_pvp:
+		_pvp_broadcast_play_card(cell, data)
 
 func _animate_drop(cell, data, drop_global_pos: Vector2, effs: Array) -> void:
 	var visual = _cell_scene.instantiate()
@@ -175,6 +189,221 @@ func _play_spell(spell_data, target_cell) -> void:
 	match destination:
 		"banish": Game.deck.banish(spell_data)
 		_: Game.deck.send_to_graveyard(spell_data)
+
+# ── PVP 出牌同步 ─────────────────────────────────────────────────────────
+# 广播：本端出牌完成后通知对手。
+# 协议约定：row/col 是本端 player_main 坐标，对手映射到 enemy_main 的对称位。
+# card_type: "单位" / "法术" / "装备"
+func _pvp_broadcast_play_card(cell, data) -> void:
+	if not has_node("/root/Net"):
+		return
+	var payload: Dictionary = {
+		"card_name": String(data.get("card_name", "")),
+		"card_type": String(data.get("type", "单位")),
+		"slot_id":   String(cell.slot_id),   # 发送者的 slot_id，接收者需翻转
+		"row":       cell.row,
+		"col":       cell.col,
+	}
+	if String(data.get("type", "")) == "法术":
+		if cell.has_card:
+			# 法术执行后单位仍在格子上（如 inspire/empower/weaken 未死）→ 发终态数值
+			payload["result_atk"]    = cell.attack
+			payload["result_health"] = cell.health.duplicate()
+			print("[SPELL] cast at %s(%d,%d) result_atk=%d" % [cell.slot_id, cell.row, cell.col, cell.attack])
+		else:
+			# 法术执行后格子已清空；需区分"死亡"与"放回手牌"两种情况：
+			# - 死亡（weaken 等）：对端需自跑 effect 完成死亡动画/流程，不加标志
+			# - 放回手牌（ming_jin）：对端只需 clear_card，不能跑 effect（会污染对端牌库/counter）
+			var spell_effs: Array = _get_effects(data.get("full_data"))
+			var is_return_to_hand: bool = false
+			for eff_id in spell_effs:
+				if String(eff_id) in _RETURN_TO_HAND_EFFECTS:
+					is_return_to_hand = true
+					break
+			if is_return_to_hand:
+				payload["result_cleared"] = true   # 对端只清格子，不跑 effect
+	# 只发给对手，去掉 echo 避免消息队列混乱
+	var opp_id: String = _pvp_opponent_id()
+	if opp_id != "":
+		Net.send_to("action/play_card", Game.pvp_room_id, opp_id, payload)
+
+# "放回手牌"类法术效果白名单：格子清空后对端只 clear_card，不重跑 effect。
+# 与死亡类不同（死亡类需对端自跑 effect 完成动画 + 死亡流程），
+# 放回手牌类不能跑 effect 否则对端会错误操作自己的牌库 / counter。
+const _RETURN_TO_HAND_EFFECTS: Array = ["ming_jin"]
+
+# 广播装备出牌
+func _pvp_broadcast_play_equip(card_name: String) -> void:
+	if not has_node("/root/Net"):
+		return
+	var opp_id: String = _pvp_opponent_id()
+	if opp_id != "":
+		Net.send_to("action/play_equip", Game.pvp_room_id, opp_id, {"card_name": card_name})
+
+# 装备激活影响对手的 effect 白名单（仅这些会改对端状态需要镜像）。
+# 其他 effect（如 gain_mana_1 / discard_hand_card）只影响自家，不需广播。
+const _PVP_BROADCAST_EQUIP_EFFECTS: Array = ["destroy_unit"]
+
+# 广播装备激活：仅当装备的 effects 中含白名单内 effect 才发送。
+# 由 hero_action_bar 在 inst.activate 成功后调用。
+func _pvp_broadcast_activate_equip(equip_name: String, target_cell) -> void:
+	if not has_node("/root/Net"):
+		return
+	if not Game.is_pvp:
+		return
+	var card = Game.get_card(equip_name)
+	if not (card is CardEquipment):
+		return
+	# 检查 effect 白名单
+	var need_broadcast: bool = false
+	for eff_id in card.effects:
+		if String(eff_id) in _PVP_BROADCAST_EQUIP_EFFECTS:
+			need_broadcast = true
+			break
+	if not need_broadcast:
+		return
+	var payload: Dictionary = {"equip_name": equip_name}
+	if target_cell != null:
+		payload["slot_id"] = String(target_cell.slot_id)
+		payload["row"]     = int(target_cell.row)
+		payload["col"]     = int(target_cell.col)
+	var opp_id: String = _pvp_opponent_id()
+	if opp_id != "":
+		Net.send_to("action/activate_equip", Game.pvp_room_id, opp_id, payload)
+
+# 远端接收：对手激活了装备 → 在本端镜像执行 effect。
+# 坐标 + slot_id 翻转规则同 handle_remote_play_card。
+func handle_remote_activate_equip(payload: Dictionary) -> void:
+	var equip_name: String = String(payload.get("equip_name", ""))
+	if equip_name == "":
+		return
+	var card = Game.get_card(equip_name)
+	if not (card is CardEquipment):
+		push_warning("PlayController.handle_remote_activate_equip: card not found: " + equip_name)
+		return
+
+	var ctx := Game.make_effect_context()
+
+	# 解析目标 cell（若装备 effect 需要目标）
+	if payload.has("row") and payload.has("col"):
+		var row_a: int = int(payload.get("row", 0))
+		var col_a: int = int(payload.get("col", 0))
+		var sender_slot: String = String(payload.get("slot_id", "player_main"))
+		var row_b: int = (BoardModel.ROWS - 1) - row_a
+		var col_b: int = (BoardModel.COLS - 1) - col_a
+		var target_slot_id: String
+		if sender_slot == "player_main":
+			target_slot_id = "enemy_main"
+		elif sender_slot == "enemy_main":
+			target_slot_id = "player_main"
+		else:
+			target_slot_id = "enemy_main"
+		var t_slot: BoardSlot = Game.registry.get_by_id(target_slot_id) if Game.registry != null else null
+		if t_slot != null and t_slot.board != null:
+			var cell = t_slot.board.get_cell(Vector2(row_b, col_b))
+			if cell != null:
+				ctx.target_cell = cell
+
+	# 镜像执行 effect（与本端 inst.activate 走同一路径，保证动画/死亡流程一致）。
+	# 不扣本端耐久（对手装备实例不在本端 Equipments 里）。
+	for eff_id in card.effects:
+		if not (String(eff_id) in _PVP_BROADCAST_EQUIP_EFFECTS):
+			continue   # 白名单外的 effect 跳过（如 gain_mana_1 不应在对端执行）
+		await Effects.trigger_play(String(eff_id), card, ctx)
+
+static func _pvp_opponent_id() -> String:
+	if Engine.get_main_loop() == null or not Engine.get_main_loop().root.has_node("/root/Game"):
+		return ""
+	for id in Game.pvp_action_order:
+		if id != Game.local_player_id:
+			return id
+	return ""
+
+# 远端接收：对手打出了一张牌，在本端镜像执行。
+# 坐标镜像规则（两人面对面）：
+#   row_b = (ROWS-1) - row_a
+#   col_b = (COLS-1) - col_a
+# slot_id 翻转规则：
+#   发送者的 "player_main" → 接收者的 "enemy_main"（对手自家盘 = 本端敌方盘）
+#   发送者的 "enemy_main"  → 接收者的 "player_main"（对手已跨入的盘 = 本端自家盘）
+func handle_remote_play_card(payload: Dictionary) -> void:
+	var card_name: String = String(payload.get("card_name", ""))
+	var card_type: String = String(payload.get("card_type", "单位"))
+	var row_a: int = int(payload.get("row", 0))
+	var col_a: int = int(payload.get("col", 0))
+	# 发送方 slot_id，若无则默认 player_main（向后兼容）
+	var sender_slot: String = String(payload.get("slot_id", "player_main"))
+	var card = Game.get_card(card_name)
+	if card == null:
+		push_warning("PlayController.handle_remote_play_card: card not found: " + card_name)
+		return
+	# 镜像坐标
+	var row_b: int = (BoardModel.ROWS - 1) - row_a
+	var col_b: int = (BoardModel.COLS - 1) - col_a
+	# slot_id 翻转：发送者的 player_main → 接收者的 enemy_main，反之亦然
+	var target_slot_id: String
+	if sender_slot == "player_main":
+		target_slot_id = "enemy_main"
+	elif sender_slot == "enemy_main":
+		target_slot_id = "player_main"
+	else:
+		target_slot_id = "enemy_main"   # 默认兜底
+	var t_slot: BoardSlot = Game.registry.get_by_id(target_slot_id) if Game.registry != null else null
+	if t_slot == null or t_slot.board == null:
+		return
+	var cell = t_slot.board.get_cell(Vector2(row_b, col_b))
+	if cell == null:
+		return
+	# 确定放置时的 is_enemy 标志：target_slot == enemy_main → true；player_main → false
+	var place_as_enemy: bool = (target_slot_id == "enemy_main")
+	match card_type:
+		"单位":
+			var effs: Array = _get_effects(card)
+			cell.set_card(card_name, card.attack, card.health, place_as_enemy, effs, "", "hand")
+			cell.owner_slot_id = t_slot.id
+			_trigger_unit_play_effects(card, cell)
+		"法术":
+			print("[SPELL] recv at %s(%d,%d) has_card=%s result_atk=%s" % [
+				target_slot_id, row_b, col_b, str(cell.has_card), str(payload.get("result_atk", "N/A"))])
+			if payload.has("result_atk") and cell.has_card:
+				# 法术执行后单位仍存活：直接写终态数值（绕过 is_enemy 等 effect 内部检查）
+				cell.attack = int(payload.get("result_atk", cell.attack))
+				var rh = payload.get("result_health", {})
+				if typeof(rh) == TYPE_DICTIONARY and not rh.is_empty():
+					# JSON 往返后数值变浮点，显式转 int 避免显示 "2.0"
+					var clean: Dictionary = {}
+					for k in rh.keys():
+						clean[String(k)] = int(rh[k])
+					cell.health = clean
+				if cell.has_method("_update_atk_label"):
+					cell._update_atk_label()
+				if cell.has_method("_update_hp_labels"):
+					cell._update_hp_labels()
+			elif payload.get("result_cleared", false):
+				# 法术让单位"放回手牌"（ming_jin 等）：只清格子，不跑 effect。
+				# 不能重跑 effect，否则对端会错误操作自己的牌库 / counter。
+				if cell.has_card:
+					cell.clear_card()
+			else:
+				# 法术执行后格子被清空（单位死亡，如 weaken）：对端自跑 effect 完成死亡动画+流程
+				var ctx := Game.make_effect_context()
+				ctx.target_cell = cell
+				for eff in _get_effects(card):
+					await Effects.trigger_play(eff, card, ctx)
+		"装备":
+			# 对手装备由对手自己的 Equipments 管理，本端不添加。
+			# Step 5-D：若需展示对手装备 UI，在此补充视觉逻辑。
+			pass
+
+# 远端接收：对手结束回合后，本端跑 ENEMY phase（锁步模型）。
+# 对手单位从本端视角是 enemy_main（faction=1），所以跑 ENEMY phase。
+func handle_remote_end_turn() -> void:
+	await Game.turn.run_pvp_phase(TurnSystem.ENEMY)
+	var opp_mana: ManaSystem = Game.get_mana(Game.pvp_active_player_id())
+	if opp_mana != null:
+		opp_mana.start_new_turn()
+	HeroAbilities.reset_turn_usage()
+	Equipments.reset_turn_usage()
 
 func _trigger_unit_play_effects(unit_data, target_cell = null) -> void:
 	if unit_data == null:
@@ -215,7 +444,16 @@ func handle_unit_death(cell) -> void:
 		_notify_events_unit_died(snap)
 		return
 	if cell.origin == "hand":
-		Game.deck.send_to_graveyard(cdata)
+		if Game.is_pvp and cell.is_enemy:
+			# PVP 對手單位：入 enemy_main slot 的墓地，供敵方墓地面板顯示。
+			# 用 ROLE_MAIN_ENEMY 直接查，不依賴 cell.slot_id（可能因跨盤移動被更新）。
+			var e_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY) \
+				if Game.registry != null else []
+			if e_slots.size() > 0:
+				e_slots[0].send_to_graveyard(cdata)
+		else:
+			# 本端玩家單位（或 PVE）：入 Game.deck.graveyard
+			Game.deck.send_to_graveyard(cdata)
 	else:
 		var slot: BoardSlot = _resolve_owner_slot(cell)
 		if slot != null:

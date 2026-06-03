@@ -25,6 +25,12 @@ var faction: int = FACTION_PLAYER
 var role: int = ROLE_MAIN_PLAYER
 var slot_index: int = 0           # 屏幕水平槽位 0..N-1，用于排序与布局
 
+# 该盘归属玩家 uuid（PVP 用）。
+# PVE 默认空串 → 由 Game.local_player_id 兜底；PVP 装配时显式填入。
+# 用于 PlayController / TurnSystem 通过 Game.get_deck(owner_player_id) /
+# Game.get_mana(owner_player_id) 反查该盘玩家的牌库与费用。
+var owner_player_id: String = ""
+
 var board: BoardModel = null      # 数据层
 var hero: HeroState = null        # 该盘所属英雄
 var spawners: SpawnerSystem = null # 该盘的 spawner（可为空）
@@ -135,3 +141,63 @@ func visual_x() -> float:
 			if is_instance_valid(cell):
 				return cell.global_position.x
 	return INF
+
+# ── 序列化（PVP 联机用）────────────────────────────────────────────
+# 把 board / hero / 本盘墓地除外打包；视觉节点（bg_panel / grid_node / hero_panel）
+# 不序列化（由场景树持有）。spawners / spell_casters 在 PVP 不启用，序列化时空跳过。
+# owner_player_id 留位（多人扩展用），1v1 阶段无字段对应。
+func to_dict() -> Dictionary:
+	var out: Dictionary = {
+		"id":          id,
+		"faction":     faction,
+		"role":        role,
+		"slot_index":  slot_index,
+		"owner_player_id":     owner_player_id,
+		"allow_player_deploy": allow_player_deploy,
+		"graveyard":   _names_of(graveyard),
+		"banished":    _names_of(banished),
+	}
+	if board != null:
+		out["board"] = board.to_dict()
+	if hero != null:
+		out["hero"] = hero.to_dict()
+	return out
+
+func from_dict(d: Dictionary) -> void:
+	id          = String(d.get("id", id))
+	faction     = int(d.get("faction", faction))
+	role        = int(d.get("role", role))
+	slot_index  = int(d.get("slot_index", slot_index))
+	owner_player_id     = String(d.get("owner_player_id", owner_player_id))
+	allow_player_deploy = bool(d.get("allow_player_deploy", allow_player_deploy))
+	if d.has("board") and board != null:
+		board.from_dict(d["board"])
+	if d.has("hero") and hero != null:
+		hero.from_dict(d["hero"])
+	graveyard = _resolve_cards(d.get("graveyard", []))
+	banished  = _resolve_cards(d.get("banished",  []))
+	pile_changed.emit("graveyard")
+	pile_changed.emit("banished")
+
+static func _names_of(arr: Array) -> Array:
+	var out: Array = []
+	for c in arr:
+		if c == null:
+			continue
+		out.append(String(c.name))
+	return out
+
+static func _resolve_cards(names) -> Array:
+	var out: Array = []
+	if typeof(names) != TYPE_ARRAY:
+		return out
+	if Engine.get_main_loop() == null:
+		return out
+	var root: Node = Engine.get_main_loop().root
+	if not root.has_node("/root/Game"):
+		return out
+	for n in names:
+		var c = Game.get_card(String(n))
+		if c != null:
+			out.append(c)
+	return out

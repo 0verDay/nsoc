@@ -130,7 +130,7 @@ QuitConfirm   (autoload) 全局退出确认弹窗
 
 **main.gd / TestMain.tscn 共用基础控制器：**
 - `HandView` — 手牌渲染 + 抽牌动画
-- `DetailPanelController` — 长按大图，支持 `start_long_press_equipment(inst)` 展示装备详情
+- `DetailPanelController` — 长按大图，支持 `start_long_press_equipment(inst)` 展示装备详情；`start_long_press_hero(name, ability_ids, hp, equip_descs=[])` 第 4 参数为已装备描述字符串数组，非空时在技能描述下方追加分隔线 + "已装备" 标题 + 每件装备一行
 - `SidePanelManager(center_x_offset)` — 玩家牌堆/墓地/除外，支持水平定位
 - `EnemySidePanelManager(center_x_offset)` — 绑定 BoardSlot 展示敌方墓地/除外，支持 `update_clip_center_x()` 动态跟随棋盘移动
 - `AllySidePanelManager(center_x_offset)` — 绑定 BoardSlot 展示友军墓地/除外，从底部滑入；`set_slot(slot)` 运行时切换数据源
@@ -214,6 +214,8 @@ QuitConfirm   (autoload) 全局退出确认弹窗
 - 信号：`equipment_added(inst)` / `equipment_removed(inst)` / `equipment_changed(inst)`
 
 **装备出牌流程**：拖拽 HandCard（type="装备"）到 LeftSidePnl → `HeroActionBar.show_equip_drag_highlight()` 高亮 → 释放 → `PlayController.handle_equip(data)` → `Equipments.equip(full)` → `hand_consumed` → `HeroActionBar._on_equipment_added` 播面板扩展动画。
+
+**PVP 装备镜像**：本端装备仅存 `Equipments` 单例；对手装备由 `test_main._remote_equip_insts` 独立镜像（不进 `Equipments`，避免战斗结算误用）。收到 `action/play_equip` 时追加 `EquipmentInstance`；收到 `action/activate_equip` 后扣耐久（归零则移除）。长按对手英雄面板时由 `_collect_remote_equip_descs()` 生成描述传入 `DetailPanelController`。
 
 ### 3.12 BoardOrchestrator
 
