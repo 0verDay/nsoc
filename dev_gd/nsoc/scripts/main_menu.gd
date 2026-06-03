@@ -76,7 +76,6 @@ func _ready() -> void:
 	_style_right_panel_buttons()
 	_style_left_nav_buttons()
 	_build_options_button()
-	_build_multiplay_button()
 	_build_settings_controller()
 	if _test_btn:
 		_test_btn.pressed.connect(_on_test_pressed)
@@ -206,40 +205,6 @@ func _build_options_button() -> void:
 	ThemeFactory.apply_button_styles(_options_btn, ThemeFactory.primary_button_styles())
 	_options_btn.add_theme_color_override("font_color", Color.WHITE)
 	add_child(_options_btn)
-
-# ── 联机按钮（屏幕正中显眼位置，无样式，后续迁入演武切磋面板）────────────
-var _multiplay_btn: Button
-
-func _build_multiplay_button() -> void:
-	_multiplay_btn = Button.new()
-	_multiplay_btn.name = "MultiplayBtn"
-	_multiplay_btn.text = "联机对战"
-	_multiplay_btn.add_theme_font_size_override("font_size", 40)
-	# 锚点居中，屏幕正中稍偏下
-	_multiplay_btn.anchor_left   = 0.5
-	_multiplay_btn.anchor_right  = 0.5
-	_multiplay_btn.anchor_top    = 0.5
-	_multiplay_btn.anchor_bottom = 0.5
-	_multiplay_btn.offset_left   = -120.0
-	_multiplay_btn.offset_right  =  120.0
-	_multiplay_btn.offset_top    =  60.0
-	_multiplay_btn.offset_bottom =  120.0
-	_multiplay_btn.pressed.connect(_on_multiplay_pressed)
-	add_child(_multiplay_btn)
-
-var _pvp_lobby: Control = null
-
-func _on_multiplay_pressed() -> void:
-	if _pvp_lobby != null and is_instance_valid(_pvp_lobby):
-		return
-	const PvpLobbyScript = preload("res://scripts/ui/pvp_lobby.gd")
-	_pvp_lobby = PvpLobbyScript.new()
-	_pvp_lobby.closed.connect(func(): _pvp_lobby = null)
-	var canvas := CanvasLayer.new()
-	canvas.layer = 150
-	add_child(canvas)
-	canvas.add_child(_pvp_lobby)
-	_pvp_lobby.closed.connect(canvas.queue_free)
 
 func _on_test_pressed() -> void:
 	get_tree().change_scene_to_file(MAIN_SCENE_PATH)

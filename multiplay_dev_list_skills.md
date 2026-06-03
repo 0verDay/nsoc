@@ -589,6 +589,7 @@ Step 7：扩展到 2v2 / 3v3（后续）
 | 第二轮 | 房间加入方式、行动顺序、英雄/卡组、断线、超时、协议、协议格式、阵亡处理 | 14 项细化决策，原型期改为 1v1 |
 | 第三轮 | 玩家身份、房号格式、服务器地址、房间生命周期、棋盘布局、Spawner、手牌上限、牌库耗尽、战前阶段、持久化、房间数限制、动画同步策略、单位详情、UI 布局、装备系统、英雄技能、心跳检测 | 17 项进一步细化，明确所有原型期实现选项 |
 | 第四轮 | 服务器语言（Go）、昵称重复、房号生成、战斗结算后流程、投降功能、战斗启动后加入、中途退出、版本检查、房主权限、服务器日志、卡组下发时机、牌组数量、双方手牌处理 | 13 项实施层面细化，所有原型期内待决策点已基本闭环 |
+| 第五轮 | SparringPanel 内嵌联机大厅、Mode 分工（我的房间/加入房间/随机匹配/排位）、默认昵称 player、本地服务器 127.0.0.1:8080、6 格玩家槽位网格（中央 2 格开放）、准备系统、房主断线/退出随机转让、刷新冷却内联按钮 | 围绕 UI 重构 + 房主转让 + 准备系统的实施细节 |
 
 ---
 
@@ -813,14 +814,17 @@ Step 7：扩展到 2v2 / 3v3（后续）
 - [x] ~~再起技能两端牌堆 desync~~ → **Step 6-A 已解决**（RNG seed 同步）
 - [x] ~~装备激活同步~~ → **Step 6-B 已解决**（白名单广播 + 对端镜像）
 - [x] ~~跨盘单位的鼓舞同步~~ → 已加 slot_id 翻转，测试通过
-- [ ] **跨盘冲锋时英雄受击同步**：A 单位从 enemy_main 后排打 B 英雄 → 双端锁步应自动同步，待专项验证
+- [x] ~~跨盘冲锋时英雄受击同步~~ → **Step 7-A 已验证**（锁步模型天然对称：PLAYER phase 打 enemy hero，ENEMY phase 打 player hero，两端各打各端 hero_resolver，结果对称；已在 turn_system.gd 加注释说明）
 
 #### 优先级 P1（体验完善）
 
-- [ ] **PvpLobby UI 迁入演武切磋面板**（当前是主菜单浮层，按决策应进 SparringPanel）
+- [x] ~~PvpLobby UI 迁入演武切磋面板~~ → **Step 7-B 已完成**（SparringPanel ModeBtn0「我的房间」点击弹出联机大厅；移除 main_menu.gd 临时按钮）
 - [x] ~~投降功能~~ → **Step 6-D 已解决**（选项面板红色投降按钮，PVE + PVP 通用）
 - [x] ~~战斗中途退出处理~~ → **Step 6-C 已解决**（disconnect/notify → damage_hero(100)）
-- [ ] **房间列表过滤 / 分页 / 刷新冷却**
+- [x] ~~房间列表过滤 / 分页 / 刷新冷却~~ → **Step 7-C/7-D 已完成**（刷新冷却 3s 内联倒计时；过滤 started=true 房间；进入大厅页可立即拉一次）
+- [x] ~~房间内 UI 重设计~~ → **Step 7-D 已完成**（6格玩家槽位网格 + 房主/准备按钮 + 弹性滚动 + 数字键盘）
+- [x] ~~房主转让~~ → **Step 7-E 已完成**（hub.go 服务端 random 选新房主 + new_host_uuid 广播）
+- [x] ~~准备系统~~ → **Step 7-E 已完成**（room/ready_update 广播，房主"开始"按钮 gated by 全员 ready）
 - [x] ~~对手装备 UI 显示~~ → **Step 6-G 已解决**（详情面板"已装备"分区 + 对手装备镜像列表）
 - [x] ~~含 await 效果同步验证~~ → **Step 6-E 审查完毕**，修复 ming_jin 对端污染问题
 - [x] ~~英雄技能同步（再起）~~ → **Step 6-F 已解决**（弃牌入对端 enemy_main 墓地）
@@ -833,6 +837,172 @@ Step 7：扩展到 2v2 / 3v3（后续）
 - [ ] **客户端版本检查**（原型期决策不做）
 - [ ] **服务器持久化 / 日志 / 反作弊**（原型期决策不做）
 - [ ] **其他英雄技能同步扩展**（water_attack 等，当前 PVP 默认英雄=再起，不阻塞）
+
+---
+
+### 11.5 本轮新增（Step 7，2026-06 续）
+
+#### Step 7-A：跨盘冲锋英雄受击同步验证
+
+经过逐行分析 `run_pvp_phase`、`_process_cell`、`_run_charge_on_board`、`_enemy_auto_cross` 等函数：
+
+- PVP 锁步模型下，`hero_resolver` 只修改**本端对应 HeroState**，天然对称，无需额外广播
+- A 端 `run_pvp_phase(PLAYER)` → 玩家单位冲锋打 A 的 `enemy_main`（对手）英雄 ✅
+- B 端收 `action/end_turn` 跑 `run_pvp_phase(ENEMY)` → 敌方单位冲锋打 B 的 `player_main`（自己）英雄 ✅
+- 两端计算来源不同（A 端的 enemy_main 英雄 = B 端的 player_main 英雄），无双重扣血
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/core/turn_system.gd` | `_process_cell`、`_run_charge_on_board`、`_enemy_auto_cross` 三处 `hero_resolver.call` 加 PVP 锁步说明注释 |
+
+#### Step 7-B：联机大厅完全迁入 SparringPanel（重构）
+
+**决策变更**：放弃 PvpLobby 浮层方案，将所有联机交互内嵌到 SparringPanel 的 `LeftContentPnl`，按 Mode 标签分工：
+
+| Mode | 标签 | 内容 |
+|---|---|---|
+| 0 | 我的房间 | 进入即视为创建房间，显示房号 / 玩家列表 / 开始战斗 / 离开房间 |
+| 1 | 加入房间 | 房间列表 + 刷新按钮（带 3s 冷却） |
+| 2/3 | 随机匹配 / 排位 | 占位（施工中） |
+
+**测试期默认配置**（跳过昵称 / 服务器配置环节）：
+- 昵称固定为 `player`
+- 服务器固定为 `127.0.0.1:8080`
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/ui/sparring_panel.gd` | 完全重写：内嵌房间 UI 渲染 + 网络信号处理 + game/start 切场景；DEFAULT_MODE 改为 0；BackBtn 退房（不主动断开 Net 长连） |
+| `scripts/ui/pvp_lobby.gd` | **删除**（功能完全迁入 SparringPanel） |
+| `scripts/main_menu.gd` | 之前已删除临时联机按钮（Step 7-B 第一版） |
+
+**交互流程（首次进入）**：
+1. `SecondaryPanel._ready` → 转场附加 SparringPanel
+2. `_apply_styles` 调用 `_enter_mode(0)` 进入「我的房间」
+3. `_ensure_connected_then(true)`：未连接 → `Net.set_nickname("player")` + `Net.connect_to_server("127.0.0.1", 8080)`
+4. UI 显示「正在连接服务器…」
+5. `Net.connected` 信号 → `_on_ready_after_connect` → 发 `room/create` → UI 显示「正在创建房间…」
+6. `room/create_ok` → 房间号 + 玩家列表 + 开始战斗按钮渲染
+
+**离开行为**：
+- 「离开房间」按钮 → 发 `room/leave` + 自动切到 Mode 1（加入房间）显示房间列表
+- BackBtn → 发 `room/leave` + 保持 Net 长连（下次再开 SparringPanel 直接 connected 状态）
+- `game/start` 收到 → `bootstrap_pvp` + `change_scene_to_file("res://scenes/TestMain.tscn")`
+
+#### Step 7-C：房间列表刷新冷却 + 已启动房间过滤
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/ui/sparring_panel.gd` | `REFRESH_COOLDOWN = 3.0`、`_last_refresh_time` 字段；点刷新按钮冷却中显示剩余秒数；`room/list_response` 解析时过滤 `started=true` 的房间 |
+
+#### Step 7-D：SparringPanel UI 全面重构（Mode 分工 + 房间内 UI 重做）
+
+**决策回滚**：DEFAULT_MODE 改回 3「随机排位」（占位页，不联网），按用户主动点击触发联机；离开 Mode 0 时视为退出当前房间（自动 `room/leave`）。
+
+##### Mode 0「我的房间」UI 设计
+
+| 区域 | 内容 |
+|---|---|
+| **顶部** | 标题「我的房间」 |
+| **左半 `left_col`** | 房号（48px 蓝色大字）+ 身份（房主/玩家）+ 6 格玩家显示网格（2行×3列，竖直 EXPAND_FILL） |
+| **右半 `right_panel`**（宽 280，蓝灰底圆角） | 顶部弹性空白 + 底部「开始」/「准备」按钮（大字 BTN_HEIGHT+24） |
+
+**6 格玩家网格**：
+- 锁定格（4 个边角格）：浅灰底，居中显示 `×`
+- 开放格（中央两格 `[1, 4]`）：对应 server slot 0 / 1
+  - 空：淡蓝底，居中 `…`
+  - 有人：白底蓝边 + 昵称 + ` ✓`（已准备时）+ 房主下方换行 `【host】`（蓝色小字）
+
+**房主 vs 非房主按钮**：
+- 房主：「开始」按钮，`disabled` 直到 `_players ≥ 2` AND 所有非房主玩家均 `_player_ready[uuid] == true`
+- 非房主：「准备」/「已准备 ✓」切换按钮（绿色样式 `#2f9e44` 表示已准备）
+
+##### Mode 1「加入房间」UI 设计
+
+| 区域 | 内容 |
+|---|---|
+| **顶部行** | 「刷新列表」按钮（带内联倒计时） + 标签「可加入的房间（未开战）」 |
+| **左半（`SIZE_EXPAND_FILL`）** | 房间列表底板（蓝灰底圆角投影）+ ElasticScrollList 弹性滚动列表 |
+| **右半（宽 280）** | 数字键盘面板（输入栏 + 1-9 网格 + 0/加入房间）|
+
+**列表行**：白底浅灰边小圆角的 `PanelContainer` 卡片，单行：`房间 12345    房主: player    人数: 1/6` + 「加入」按钮。
+
+**数字键盘**：
+```
+[ 房间号显示 ]  [ × 清空 ]
+[ 1 ][ 2 ][ 3 ]
+[ 4 ][ 5 ][ 6 ]
+[ 7 ][ 8 ][ 9 ]
+[ 0 ][  加入房间（2 列宽）  ]
+```
+- 显示栏空时不显示占位符
+- 数字键 / 0 / 加入房间均 `SIZE_EXPAND_FILL` 双向，自动等比撑满竖直空间
+- 点击加入房间 → `_on_join_room(_room_input)` + 清空输入
+
+**刷新按钮内联倒计时**：
+- 按下后按钮文字每 0.25s 刷新：`"3 秒"` → `"2 秒"` → `"1 秒"` → `"刷新列表"`
+- 倒计时期间 `disabled = true`
+- UI 重建时（如切 tab 再回来）自动恢复正确文字 + 重启协程，不会重置倒计时
+- 协程实现 `_run_refresh_countdown` + 幂等 `_start_refresh_countdown`（已运行则只刷新引用）
+
+##### 弹性滚动新组件 `ElasticScrollList`
+
+新文件 `scripts/ui/elastic_scroll_list.gd`：完全自管 clip 容器，支持过度拉动 + 释放回弹，行为对齐备战界面卡牌列表。
+
+| 参数 | 值 |
+|---|---|
+| `OVERSCROLL_RESISTANCE` | 0.55 |
+| `OVERSCROLL_SETTLE_TIME` | 0.28s（cubic ease-out） |
+| `SCROLL_THRESHOLD_PX` | 18px |
+| `WHEEL_STEP_PX` | 60px |
+
+公式 `f(x) = (x·c·d)/(d + c·x)`，越界量 → rubber band 衰减，视觉永不超过视口高度。
+
+##### ThemeFactory 补完
+
+`settings_button_styles()` 增加 `disabled` 样式（`#adb5bd` 灰底 + 同款 12px 圆角），解决 disabled 按钮丢失圆角的视觉 bug。
+
+##### 文件清单
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/ui/sparring_panel.gd` | 重写 `_build_my_room` + `_build_join_room`；新增数字键盘、弹性滚动列表、准备系统、玩家格网格、刷新倒计时协程 |
+| `scripts/ui/elastic_scroll_list.gd` | **新建**：rubber band 弹性滚动容器 |
+| `scripts/ui/theme_factory.gd` | `settings_button_styles` 加 `disabled` 项 |
+
+#### Step 7-E：服务器房主转让 + 准备系统消息
+
+**问题**：原服务器在房主退出 / 断线时**不转让房主**——同一玩家再次进房还会被认作房主（因为本地无状态）。
+
+##### 服务器改动
+
+| 文件 | 改动 |
+|---|---|
+| `server/hub.go` | `handleLeave` 和 `handleDisconnect` 移除房主玩家后，若房间仍有其他人则 `rand.Intn` 随机选一人为新房主，broadcast payload 加 `new_host_uuid` 字段 |
+
+##### 客户端改动
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/ui/sparring_panel.gd` | `room/left` 和 `disconnect/notify` 解析 `new_host_uuid` 更新 `_host_uuid`；新增 `_player_ready: Dict / _is_local_ready: bool` 字段；新增 `_on_toggle_ready` 发 `room/ready_update` 广播；新增 `_all_non_host_ready` 校验房主开始按钮启用条件；新增 `room/ready_update` 入站消息处理 |
+
+##### 准备协议
+
+| 消息 | 方向 | payload |
+|---|---|---|
+| `room/ready_update` | 玩家 → 服务器 → 全房 | `{uuid, ready: bool}` |
+
+服务器无需任何改动——`forward()` 现有逻辑会按 `to: "all"` 自动广播。准备状态完全由客户端 `_player_ready` 字典维护（原型期不上服务器持久化）。
+
+##### Bug 修复合订
+
+| Bug | 根因 | 修复 |
+|---|---|---|
+| 刷新按钮卡在"3 秒"且永远 disabled | `_request_room_list(force=true)` 写 `_last_refresh_time` 但未启动协程 | 协程启动逻辑统一到 `_request_room_list` 末尾 + `_update_refresh_btn_label` 按需重启 |
+| 数字键盘竖向不填充 | 按钮固定 `NUMPAD_BTN_H` | 改 `SIZE_EXPAND_FILL` 双向，VBox / 每行 / 每键全部 EXPAND_FILL |
+| ⌫ 退格键改 × 清空 + 移除 `_ _ _ _ _` 占位符 | 用户偏好简化 | 直接改函数行为 |
+| 倒计时按钮无圆角 | `settings_button_styles` 缺 disabled StyleBox | ThemeFactory 补完 |
+| 6 格下方提示破坏排版 | hint Label 和 EXPAND_FILL grid 混挂同 VBox | 删除 grid 后所有 hint |
+| 房主退出仍是房主 | 服务器从未转让 | hub.go 加随机选新房主 + new_host_uuid 字段 |
 
 ---
 

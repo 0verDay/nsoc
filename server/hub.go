@@ -12,6 +12,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"math/rand"
 	"time"
 )
 
@@ -81,12 +82,22 @@ func (h *Hub) handleDisconnect(c *Client) {
 			break
 		}
 	}
+
+	// 若断线的是房主且房间仍有其他玩家，随机转让房主
+	newHostUUID := room.HostUUID
+	if room.HostUUID == c.uuid && len(room.Players) > 0 {
+		newHost := room.Players[rand.Intn(len(room.Players))]
+		room.HostUUID = newHost.uuid
+		newHostUUID = newHost.uuid
+	}
+
 	notify := &Message{
 		Type:   "disconnect/notify",
 		RoomID: room.ID,
 		Payload: jsonRaw(map[string]any{
-			"uuid":     c.uuid,
-			"nickname": c.nickname,
+			"uuid":          c.uuid,
+			"nickname":      c.nickname,
+			"new_host_uuid": newHostUUID,
 		}),
 	}
 	h.broadcast(room, notify, "")
@@ -217,10 +228,23 @@ func (h *Hub) handleLeave(c *Client, _ *Message) {
 	}
 	old := c.roomID
 	c.roomID = ""
+
+	// 若离开的是房主且房间仍有其他玩家，随机转让房主
+	newHostUUID := room.HostUUID
+	if room.HostUUID == c.uuid && len(room.Players) > 0 {
+		newHost := room.Players[rand.Intn(len(room.Players))]
+		room.HostUUID = newHost.uuid
+		newHostUUID = newHost.uuid
+	}
+
 	h.broadcast(room, &Message{
-		Type:    "room/left",
-		RoomID:  old,
-		Payload: jsonRaw(map[string]any{"uuid": c.uuid, "nickname": c.nickname}),
+		Type:   "room/left",
+		RoomID: old,
+		Payload: jsonRaw(map[string]any{
+			"uuid":          c.uuid,
+			"nickname":      c.nickname,
+			"new_host_uuid": newHostUUID,
+		}),
 	}, "")
 	if len(room.Players) == 0 {
 		delete(h.rooms, old)
