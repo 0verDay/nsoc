@@ -20,6 +20,8 @@ func run(params: Dictionary, _ctx: Dictionary) -> void:
 
 	var faction: int = int(params.get("faction", 1))
 	var is_enemy: bool = faction == 1
+	# 本端队伍（1v3 用 team_id 判断；PVE 回退 is_enemy 字段）
+	var local_team: String = Game.team_of_player(Game.local_player_id)
 	# 遍历全场所有棋盘，含已跨入友方盘的敌方单位
 	for slot in Game.registry.slots:
 		if slot.board == null:
@@ -27,14 +29,16 @@ func run(params: Dictionary, _ctx: Dictionary) -> void:
 		for cell in slot.board.grid_cells.values():
 			if not is_instance_valid(cell) or not cell.has_card:
 				continue
-			if cell.is_enemy != is_enemy:
+			# 1v3：is_enemy=true 表示目标是敌方，用 is_hostile_to；PVE 回退 is_enemy 字段
+			var cell_is_target: bool = cell.is_hostile_to(local_team) if local_team != "" \
+				else cell.is_enemy == is_enemy
+			if not cell_is_target:
 				continue
 			if not cell.effects.has("soaked"):
 				cell.effects.append("soaked")
 			if cell.has_node("InnerPanel"):
 				var inner = cell.get_node("InnerPanel")
 				EffectBadgeFactory.refresh(inner.get_node_or_null("EffectBadges"), cell.effects)
-			# effects_changed：只刷新已开面板，不弹出
 			cell.effects_changed.emit({
 				"name": cell.card_name, "attack": cell.attack,
 				"health": cell.health, "effects": cell.effects,

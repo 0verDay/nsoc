@@ -97,6 +97,9 @@ var _auto_create_pending: bool = false   # 连上服务器后自动 room/create 
 var _player_ready: Dictionary = {}   # uuid → bool（所有玩家的准备状态）
 var _is_local_ready: bool = false    # 本地玩家当前准备状态
 
+# 游戏模式（仅房主可设置）
+var _match_type: String = "1v1"     # "1v1" / "1v3"
+
 # 各玩家已上报的牌组名列表（uuid/session_id → Array[String]）
 # 由 room/deck_ready 消息填入；房主开始游戏时合并到 per_player_decks
 var _player_decks: Dictionary = {}
@@ -232,10 +235,10 @@ func _ensure_connected_then(auto_create: bool) -> void:
 # 连接已就绪后的统一入口（首次连成功 / 已连接进入新模式时调用）。
 func _on_ready_after_connect() -> void:
 	if _selected_idx == 0:
-		# 我的房间：若尚未在房间内，则发 room/create
+		# 我的房间：若尚未在房间内，则发 room/create（附带当前 match_type）
 		if _room_id == "" and _auto_create_pending:
 			_auto_create_pending = false
-			Net.send({"type": "room/create"})
+			Net.send({"type": "room/create", "payload": {"match_type": _match_type}})
 		_refresh_left_content()
 	elif _selected_idx == 1:
 		# 加入房间：拉一次房间列表（受冷却保护）
@@ -261,7 +264,9 @@ func _refresh_left_content() -> void:
 	left_content_pnl.add_child(holder)
 
 	match _selected_idx:
-		0: _build_my_room(holder)
+		0:
+			print("[SparringPanel] _refresh_left_content → _build_my_room, _match_type=", _match_type)
+			_build_my_room(holder)
 		1: _build_join_room(holder)
 		2: _build_placeholder(holder, MODE_NAMES[2])
 		3: _build_placeholder(holder, MODE_NAMES[3])
@@ -322,12 +327,21 @@ func _build_my_room(holder: Control) -> void:
 		FONT_SIZE_SMALL, TEXT_MUTED))
 	left_col.add_child(_make_spacer(8))
 
-	# ── 玩家格：2行×3列，竖向填充 ──────────────────────────────────────
-	# 开放位置：上方中央(row=0,col=1)→slot 0  下方中央(row=1,col=1)→slot 1
-	# 锁定位置：其余 4 格（显示 ×）
-	const OPEN_CELLS: Array = [1, 4]       # 展平索引：row*3+col
-	const SLOT_MAP: Dictionary = {1: 0, 4: 1}
+	# ── 玩家格：2行×3列，按模式决定开放/锁定 ──────────────────────────────
+	# 1v1：上中(flat=1)→slot 0，下中(flat=4)→slot 1，其余锁定
+	# 1v3：上左(flat=0)→slot 1，上中(flat=1)→slot 2，上右(flat=2)→slot 3（攻方）
+	#       下中(flat=4)→slot 0（守方/房主），下左(flat=3)下右(flat=5)仍锁定
 	const CELL_MIN_H: float = 110.0
+
+	var open_cells: Array
+	var slot_map: Dictionary
+	print("[SparringPanel] _build_my_room grid: _match_type=", _match_type, " _room_id=", _room_id, " is_host=", is_host)
+	if _match_type == "1v3":
+		open_cells = [0, 1, 2, 4]
+		slot_map   = {0: 1, 1: 2, 2: 3, 4: 0}
+	else:
+		open_cells = [1, 4]
+		slot_map   = {1: 0, 4: 1}
 
 	var slot_to_player: Dictionary = {}
 	for p in _players:
@@ -362,8 +376,12 @@ func _build_my_room(holder: Control) -> void:
 		cell_vbox.add_theme_constant_override("separation", 4)
 		cell_center.add_child(cell_vbox)
 
-		if OPEN_CELLS.has(flat_idx):
-			var slot_id: int = SLOT_MAP[flat_idx]
+		if open_cells.has(flat_idx):
+			var slot_id: int = slot_map[flat_idx]
+			# 1v3 守方格（slot 0 / flat=4）：附加"守方"角色标注
+			var role_tag: String = ""
+			if _match_type == "1v3":
+				role_tag = "〔守〕" if slot_id == 0 else "〔攻〕"
 			if slot_to_player.has(slot_id):
 				var p = slot_to_player[slot_id]
 				var ready_mark: String = " ✓" if bool(_player_ready.get(p.uuid, false)) else ""
@@ -374,10 +392,15 @@ func _build_my_room(holder: Control) -> void:
 					var host_lbl := _make_label("【host】", FONT_SIZE_SMALL - 4, ACCENT)
 					host_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 					cell_vbox.add_child(host_lbl)
+				if role_tag != "":
+					var role_lbl := _make_label(role_tag, FONT_SIZE_SMALL - 4,
+						Color("#e67700") if slot_id == 0 else Color("#2b8a3e"))
+					role_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+					cell_vbox.add_child(role_lbl)
 				cell_panel.add_theme_stylebox_override("panel", ThemeFactory.panel(
 					Color.WHITE, Color("#96c0f5"), 2, 12, false))
 			else:
-				var wait_lbl := _make_label("…", FONT_SIZE_BODY, TEXT_MUTED)
+				var wait_lbl := _make_label(role_tag if role_tag != "" else "…", FONT_SIZE_BODY, TEXT_MUTED)
 				wait_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 				cell_vbox.add_child(wait_lbl)
 				cell_panel.add_theme_stylebox_override("panel", ThemeFactory.panel(
@@ -412,15 +435,29 @@ func _build_my_room(holder: Control) -> void:
 	right_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right_margin.add_child(right_vbox)
 
+	# ── 当前游戏模式（所有人可见）────────────────────────────────────────
+	var mode_tag_lbl := _make_label("游戏模式", FONT_SIZE_SMALL - 2, TEXT_MUTED)
+	mode_tag_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	right_vbox.add_child(mode_tag_lbl)
+
+	var mode_val_lbl := _make_label(_match_type, FONT_SIZE_BODY, ACCENT)
+	mode_val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	right_vbox.add_child(mode_val_lbl)
+
+	right_vbox.add_child(_make_spacer(4))
+
 	# 顶部弹性空白，把按钮推到底部
 	var spacer_top := Control.new()
 	spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right_vbox.add_child(spacer_top)
 
 	if is_host:
+		# ── 游戏模式选择（仅房主显示）─────────────────────────────────
+		_build_match_type_row(right_vbox)
 		# 房主：「开始」按钮（所有非房主玩家都准备后才启用）
 		var all_ready := _all_non_host_ready()
-		var can_start := _players.size() >= 2 and all_ready
+		var min_players: int = 4 if _match_type == "1v3" else 2
+		var can_start := _players.size() >= min_players and all_ready
 		var start_btn := _make_primary_btn("开始")
 		start_btn.custom_minimum_size = Vector2(0, BTN_HEIGHT + 24)
 		start_btn.add_theme_font_size_override("font_size", FONT_SIZE_BODY + 6)
@@ -446,6 +483,108 @@ func _build_my_room(holder: Control) -> void:
 		ready_btn.add_theme_font_size_override("font_size", FONT_SIZE_BODY + 6)
 		right_vbox.add_child(ready_btn)
 		ready_btn.pressed.connect(_on_toggle_ready)
+
+
+# ── 游戏模式选择器（房主专用）────────────────────────────────────────────────
+func _build_match_type_row(parent_vbox: VBoxContainer) -> void:
+	var sep := _make_spacer(8)
+	parent_vbox.add_child(sep)
+
+	var mode_lbl := _make_label("游戏模式", FONT_SIZE_SMALL, TEXT_MUTED)
+	mode_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	parent_vbox.add_child(mode_lbl)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent_vbox.add_child(row)
+
+	for mt in ["1v1", "1v3"]:
+		var btn := Button.new()
+		btn.text = mt
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.add_theme_font_size_override("font_size", FONT_SIZE_SMALL)
+		btn.add_theme_color_override("font_color",         Color.WHITE)
+		btn.add_theme_color_override("font_hover_color",   Color.WHITE)
+		btn.add_theme_color_override("font_pressed_color", Color.WHITE)
+		var is_sel: bool = (_match_type == mt)
+		ThemeFactory.apply_button_styles(btn, _selected_style() if is_sel else _unselected_style())
+		var captured_mt: String = mt
+		btn.pressed.connect(func():
+			_match_type = captured_mt
+			# 通知服务端更新 MatchType / MaxPlayers，服务端再广播 room/config_updated
+			if _room_id != "" and has_node("/root/Net"):
+				Net.send_to_room("room/update_config", _room_id,
+					{"match_type": _match_type})
+			_refresh_left_content()
+		)
+		row.add_child(btn)
+
+	var sep2 := _make_spacer(4)
+	parent_vbox.add_child(sep2)
+
+
+# ── 右侧固定面板：游戏模式选择器（始终可见，进房前就能选）────────────────────
+# 插在 ModeBtn0「我的房间」与其他模式按钮之间。
+var _right_mode_btns: Dictionary = {}  # mt → Button
+
+func _build_right_mode_selector(vbox: VBoxContainer) -> void:
+	# 分隔线
+	var sep := HSeparator.new()
+	sep.add_theme_color_override("color", Color("#dee2e6"))
+	vbox.add_child(sep)
+	vbox.move_child(sep, 1)   # 插在 ModeBtn0 (index=0) 后面
+
+	# 标题
+	var lbl := Label.new()
+	lbl.text = "对战模式"
+	lbl.add_theme_font_size_override("font_size", FONT_SIZE_SMALL - 2)
+	lbl.add_theme_color_override("font_color", Color.WHITE)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(lbl)
+	vbox.move_child(lbl, 2)
+
+	# 1v1 / 1v3 按钮行
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	vbox.add_child(row)
+	vbox.move_child(row, 3)
+
+	for mt in ["1v1", "1v3"]:
+		var btn := Button.new()
+		btn.text = mt
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.add_theme_font_size_override("font_size", FONT_SIZE_SMALL - 2)
+		btn.add_theme_color_override("font_color",         Color.WHITE)
+		btn.add_theme_color_override("font_hover_color",   Color.WHITE)
+		btn.add_theme_color_override("font_pressed_color", Color.WHITE)
+		_right_mode_btns[mt] = btn
+		var captured_mt: String = mt
+		btn.pressed.connect(func():
+			_match_type = captured_mt
+			_refresh_right_mode_selector()
+			if _room_id != "" and has_node("/root/Net"):
+				var is_h: bool = (_host_uuid == Net.get_session_id())
+				if is_h:
+					# 同步更新服务端房间配置（MaxPlayers 随之变化）
+					Net.send_to_room("room/update_config", _room_id,
+						{"match_type": _match_type})
+			if _selected_idx == 0:
+				_refresh_left_content()
+		)
+		row.add_child(btn)
+
+	_refresh_right_mode_selector()
+
+func _refresh_right_mode_selector() -> void:
+	for mt in _right_mode_btns.keys():
+		var btn: Button = _right_mode_btns[mt]
+		if not is_instance_valid(btn):
+			continue
+		if mt == _match_type:
+			ThemeFactory.apply_button_styles(btn, _selected_style())
+		else:
+			ThemeFactory.apply_button_styles(btn, _unselected_style())
 
 
 # ── 房间号输入状态（数字键盘面板） ──────────────────────────────────────────
@@ -496,7 +635,7 @@ func _build_join_room(holder: Control) -> void:
 	_refresh_btn_ref = refresh_btn
 	_update_refresh_btn_label()   # 若倒计时进行中恢复文字
 
-	var status_lbl := _make_label("可加入的房间（未开战）", FONT_SIZE_SMALL, TEXT_MUTED)
+	var status_lbl := _make_label("可加入的房间（未开战）  若房主切换了模式，点刷新查看最新", FONT_SIZE_SMALL, TEXT_MUTED)
 	status_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	status_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	refresh_row.add_child(status_lbl)
@@ -554,9 +693,11 @@ func _build_join_room(holder: Control) -> void:
 			row.add_theme_constant_override("separation", 16)
 			row_margin.add_child(row)
 
+			var mt_str: String = String(room.get("match_type", "1v1"))
+			var max_p: int = int(room.get("max_players", 2))
 			var info := _make_label(
-				"房间 %s    房主: %s    人数: %d/6" % [
-					room.id, room.host_nickname, room.player_count],
+				"房间 %s  [%s]  房主: %s  人数: %d/%d" % [
+					room.id, mt_str, room.host_nickname, room.player_count, max_p],
 				FONT_SIZE_BODY, TEXT_DARK)
 			info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			info.vertical_alignment    = VERTICAL_ALIGNMENT_CENTER
@@ -768,9 +909,14 @@ func _on_net_disconnected() -> void:
 
 func _on_net_message(msg: Dictionary) -> void:
 	var type: String = String(msg.get("type", ""))
+	var from: String = String(msg.get("from", ""))
 	var payload = msg.get("payload", {})
 	if typeof(payload) != TYPE_DICTIONARY:
 		payload = {}
+	# 过滤自己发的消息 echo（服务端中继会把 to=all 消息发回给自己）
+	var my_sid: String = Net.get_session_id() if has_node("/root/Net") else ""
+	if from != "" and from == my_sid:
+		return
 	match type:
 		"room/create_ok":
 			_room_id   = String(msg.get("room_id", ""))
@@ -780,7 +926,30 @@ func _on_net_message(msg: Dictionary) -> void:
 			_player_decks.clear()
 			_player_heroes.clear()
 			_is_local_ready = false
+			# 服务端返回 match_type 时以服务端为准；否则保留房主本地选择的 _match_type
+			var confirmed_mt: String = String(payload.get("match_type", ""))
+			if confirmed_mt != "":
+				_match_type = confirmed_mt
+			# 房主创建房间成功，立刻广播当前模式给任何后续加入者
+			# （服务端未传 match_type 时，靠此消息让非房主同步）
 			_refresh_left_content()
+		"room/config_updated":
+			# 服务端确认房间配置更新（MatchType / MaxPlayers 已在服务端修改）
+			var cfg_mt: String = String(payload.get("match_type", ""))
+			if cfg_mt != "" and cfg_mt != _match_type:
+				_match_type = cfg_mt
+				_refresh_right_mode_selector()
+			if _selected_idx == 0:
+				_refresh_left_content()
+		"room/match_type_changed":
+			var new_mt: String = String(payload.get("match_type", ""))
+			print("[SparringPanel] room/match_type_changed recv: new_mt=", new_mt, " cur=", _match_type, " from=", from)
+			if new_mt != "" and new_mt != _match_type:
+				_match_type = new_mt
+				print("[SparringPanel] _match_type updated to ", _match_type)
+				_refresh_right_mode_selector()
+				if _selected_idx == 0:
+					_refresh_left_content()
 		"room/joined":
 			_room_id   = String(msg.get("room_id", ""))
 			_host_uuid = String(payload.get("host_uuid", ""))
@@ -789,6 +958,19 @@ func _on_net_message(msg: Dictionary) -> void:
 			_player_decks.clear()
 			_player_heroes.clear()
 			_is_local_ready = false
+			# 同步房间的 match_type（服务端下发为准；旧服务端无此字段时保留本地值）
+			var jmt: String = String(payload.get("match_type", ""))
+			print("[SparringPanel] room/joined: jmt=", jmt, " cur _match_type=", _match_type, " from=", from, " my_sid=", my_sid)
+			if jmt != "":
+				_match_type = jmt
+				print("[SparringPanel] _match_type updated from room/joined to ", _match_type)
+			# 房主：向最新加入的那个玩家点对点发送当前模式（不走广播避免 echo）
+			if my_sid != "" and my_sid == _host_uuid and _room_id != "":
+				# 找到最新加入的玩家（列表末位，且不是自己）
+				for p in _players:
+					if p.uuid != my_sid:
+						Net.send_to("room/match_type_changed", _room_id, p.uuid,
+							{"match_type": _match_type})
 			# 强制切回 Mode 0 显示房间内容
 			if _selected_idx != 0:
 				_selected_idx = 0
@@ -1081,12 +1263,23 @@ func _open_server_config_dialog() -> void:
 
 func _on_start_game() -> void:
 	# 房主负责：生成行动顺序 + RNG 种子；广播 game/start。
-	# 牌组由每位玩家各自上报（room/ready_deck），此处房主只附上自己的牌组；
-	# 其他玩家的牌组已通过 _player_decks 字典在准备阶段收集。
+	var my_sid: String = Net.get_session_id()
+
+	# 1v3：房主固定为 defender（index=0），其余 3 人随机排序为 attacker
+	# 1v1：随机打乱（不区分队伍）
 	var order: Array = []
-	for p in _players:
-		order.append(p.uuid)
-	order.shuffle()
+	if _match_type == "1v3":
+		order.append(my_sid)   # 房主 = defender（1 方），排在首位
+		var others: Array = []
+		for p in _players:
+			if p.uuid != my_sid:
+				others.append(p.uuid)
+		others.shuffle()
+		order.append_array(others)
+	else:
+		for p in _players:
+			order.append(p.uuid)
+		order.shuffle()
 
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
@@ -1096,8 +1289,6 @@ func _on_start_game() -> void:
 	var per_player_decks: Dictionary = {}
 	for pid in _player_decks.keys():
 		per_player_decks[pid] = _player_decks[pid]
-	# 房主自己的牌组（session_id 为键）
-	var my_sid: String = Net.get_session_id()
 	per_player_decks[my_sid] = _collect_deck_names()
 
 	# 把所有已收集的英雄 key + 自己的英雄合并为 per_player_heroes
@@ -1106,12 +1297,30 @@ func _on_start_game() -> void:
 		per_player_heroes[pid] = _player_heroes[pid]
 	per_player_heroes[my_sid] = DeckStorage.get_selected_hero()
 
-	Net.send_to_room("game/start", _room_id, {
+	# 1v3：构建 slot_layout（服务端纯中继，由房主生成下发）
+	var slot_layout: Array = []
+	if _match_type == "1v3":
+		for i in range(order.size()):
+			var pid: String = String(order[i])
+			slot_layout.append({
+				"slot_id":    "slot_" + pid,
+				"owner_pid":  pid,
+				"team_id":    "defender" if i == 0 else "attacker",
+				"slot_index": i,
+			})
+
+	var start_payload: Dictionary = {
+		"match_type":        _match_type,
 		"action_order":      order,
 		"per_player_decks":  per_player_decks,
 		"per_player_heroes": per_player_heroes,
 		"rng_seed":          seed_value,
-	})
+		"slot_layout":       slot_layout,
+	}
+	Net.send_to_room("game/start", _room_id, start_payload)
+	# 房主自己直接处理进入游戏（不等服务端 echo，echo 会被 from==my_sid 过滤）
+	var fake_msg: Dictionary = {"type": "game/start", "room_id": _room_id, "payload": start_payload}
+	_handle_game_start(fake_msg, start_payload)
 
 
 # 收到 game/start：bootstrap_pvp + 切战斗场景
@@ -1191,8 +1400,19 @@ func _handle_game_start(msg: Dictionary, payload: Dictionary) -> void:
 
 	_unbind_net_signals()
 	Net.set_current_room_id(msg.get("room_id", _room_id))
+
+	# 解析 match_type 和 slot_layout
+	var match_type: String = String(payload.get("match_type", "1v1"))
+	var slot_layout: Array = []
+	var raw_sl = payload.get("slot_layout", [])
+	if typeof(raw_sl) == TYPE_ARRAY:
+		for entry in raw_sl:
+			if typeof(entry) == TYPE_DICTIONARY:
+				slot_layout.append(entry)
+
 	# 用 session_id 作本地玩家标识，确保同机两实例 ID 不同
-	Game.bootstrap_pvp(my_sid, order, per_player_deck_cards, [], rng_seed, per_player_heroes)
+	Game.bootstrap_pvp(my_sid, order, per_player_deck_cards, [], rng_seed,
+		per_player_heroes, match_type, {}, slot_layout)
 	get_tree().change_scene_to_file("res://scenes/TestMain.tscn")
 
 

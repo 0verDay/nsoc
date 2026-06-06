@@ -32,6 +32,20 @@ var slot_id: String = ""
 # 保证单位死亡时入"原属盘"墓地，而非当前位置盘墓地（详见 PlayController.handle_unit_death）。
 # 空串表示尚未注入归属（如 phantom / 初始空格）。
 var owner_slot_id: String = ""
+# PVP 队伍标识，继承自所在 slot.team_id："defender" / "attacker"，PVE 为空串。
+# 用于 is_hostile_to / is_friendly_to，效果/目标选择以此判断敌友，不再依赖 is_enemy 二分。
+var team_id: String = ""
+
+# 返回本单位对 viewer_team 是否为敌方。PVE（team_id==""）降级到 is_enemy 判定。
+func is_hostile_to(viewer_team_id: String) -> bool:
+	if team_id == "" or viewer_team_id == "":
+		return is_enemy   # PVE 兼容路径
+	return team_id != viewer_team_id
+
+func is_friendly_to(viewer_team_id: String) -> bool:
+	if team_id == "" or viewer_team_id == "":
+		return not is_enemy   # PVE 兼容路径
+	return team_id == viewer_team_id
 
 # 单位"出处"枚举：决定死亡时去向。
 #   "hand"    = 玩家手牌部署 → Game.deck.graveyard（不论部署到主盘还是 ally 盘）
@@ -156,6 +170,12 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = [], owner
 	is_enemy = enemy
 	# 归属盘：显式传入则用之（跨盘 move 透传），否则取格子当前所在盘 = 单位起源盘
 	owner_slot_id = owner_id if owner_id != "" else slot_id
+	# team_id 从「归属盘」（owner_slot_id）取，而非当前所在盘（slot_id）
+	# 这样单位跨盘后仍保持原阵营归属（攻方单位在守方棋盘上仍算攻方）
+	var owner_slot_ref: BoardSlot = null
+	if Game.registry != null:
+		owner_slot_ref = Game.registry.get_by_id(owner_slot_id)
+	team_id = owner_slot_ref.team_id if owner_slot_ref != null else ""
 	# 出处：显式传入用之；不传则保留旧值（兼容旧调用，避免覆盖已有 origin）
 	if p_origin != "":
 		origin = p_origin
@@ -163,7 +183,9 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = [], owner
 	atk_lbl.text = str(attack)
 	_update_hp_labels()
 
-	if is_enemy:
+	# 颜色：PVP 模式按本端视角 is_hostile_to 决定；PVE 仍靠 is_enemy。
+	var show_as_enemy: bool = _is_visual_enemy()
+	if show_as_enemy:
 		inner_panel.add_theme_stylebox_override("panel", ThemeFactory.cell_panel(Color("#fff5f5"), Color("#ffc9c9"), 1, 20, true))
 		name_lbl.add_theme_color_override("font_color", Color("#fa5252"))
 	else:
@@ -172,6 +194,15 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = [], owner
 
 	EffectBadgeFactory.refresh(inner_panel.get_node_or_null("EffectBadges"), effects)
 	inner_panel.visible = true
+
+# 视觉上是否显示为"敌方"色。
+# PVP：按本端队伍 is_hostile_to 判断；PVE：直接用 is_enemy。
+func _is_visual_enemy() -> bool:
+	if Game.is_pvp and team_id != "":
+		var local_team: String = Game.team_of_player(Game.local_player_id) if Game.registry != null else ""
+		if local_team != "":
+			return is_hostile_to(local_team)
+	return is_enemy
 
 func _update_hp_labels() -> void:
 	# health 以 side 存储；标签按屏幕绝对方向放置。
@@ -206,6 +237,7 @@ func _do_clear() -> void:
 	is_phantom = false
 	has_charged = false
 	owner_slot_id = ""
+	team_id = ""
 	origin = ""
 	inner_panel.visible = false
 	inner_panel.scale = Vector2.ONE
@@ -215,7 +247,7 @@ func _do_clear() -> void:
 func play_damage_effect() -> void:
 	if active_tween:
 		active_tween.kill()
-	inner_panel.self_modulate = Color("#ffc9c9") if is_enemy else Color("#ffe3e3")
+	inner_panel.self_modulate = Color("#ffc9c9") if _is_visual_enemy() else Color("#ffe3e3")
 	if is_inside_tree():
 		active_tween = get_tree().create_tween()
 		active_tween.tween_property(inner_panel, "self_modulate", Color.WHITE, 0.4)
@@ -264,7 +296,7 @@ func set_drag_hover(hovered: bool) -> void:
 			add_theme_stylebox_override("panel", highlight_style)
 	else:
 		if has_card:
-			if is_enemy:
+			if _is_visual_enemy():
 				inner_panel.add_theme_stylebox_override("panel", ThemeFactory.cell_panel(Color("#fff5f5"), Color("#ffc9c9"), 1, 20, true))
 			else:
 				inner_panel.add_theme_stylebox_override("panel", ThemeFactory.cell_panel(Color.WHITE, Color("#e1e8ed"), 1, 20, true))
@@ -311,6 +343,7 @@ func to_dict() -> Dictionary:
 		"has_card":       has_card,
 		"is_phantom":     is_phantom,
 		"faction":        faction,
+		"team_id":        team_id,
 		"slot_id":        slot_id,
 		"owner_slot_id":  owner_slot_id,
 		"origin":         origin,
@@ -332,6 +365,7 @@ func from_dict(d: Dictionary) -> void:
 	var p_faction:    int    = int(d.get("faction", 0))
 	slot_id        = String(d.get("slot_id", ""))
 	owner_slot_id  = String(d.get("owner_slot_id", ""))
+	team_id        = String(d.get("team_id", ""))
 	origin         = String(d.get("origin", ""))
 	has_attacked   = bool(d.get("has_attacked", false))
 	has_charged    = bool(d.get("has_charged", false))
@@ -365,7 +399,8 @@ func from_dict(d: Dictionary) -> void:
 	name_lbl.text = p_card_name
 	atk_lbl.text  = str(p_attack)
 	_update_hp_labels()
-	if is_enemy:
+	var show_as_enemy: bool = _is_visual_enemy()
+	if show_as_enemy:
 		inner_panel.add_theme_stylebox_override("panel",
 			ThemeFactory.cell_panel(Color("#fff5f5"), Color("#ffc9c9"), 1, 20, true))
 		name_lbl.add_theme_color_override("font_color", Color("#fa5252"))

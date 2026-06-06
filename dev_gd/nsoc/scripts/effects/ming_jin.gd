@@ -19,7 +19,9 @@ func target() -> String:
 
 func on_play(card_data, ctx) -> bool:
 	var cell = ctx.target_cell
-	if cell == null or not cell.has_card or cell.is_enemy:
+	var local_team: String = ctx.game.team_of_player(ctx.game.local_player_id) \
+		if ctx.game != null else ""
+	if cell == null or not cell.has_card or cell.is_hostile_to(local_team):
 		return true
 
 	# 查找对应卡牌原型
@@ -28,7 +30,6 @@ func on_play(card_data, ctx) -> bool:
 		return true
 
 	# 将单位放回牌库顶（玩家下次会抽到它）
-	# 使用 add_to_draw_pile 追加到抽牌堆末尾（pop_back 抽的是末尾，等价于放在最顶端）
 	if ctx.game.deck != null:
 		ctx.game.deck.add_to_draw_pile(cdata)
 	# 清除格子（不走死亡/墓地流程）

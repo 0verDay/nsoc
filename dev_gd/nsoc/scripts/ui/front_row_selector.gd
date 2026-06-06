@@ -151,20 +151,30 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 	if slot == null or not is_instance_valid(slot.board):
 		return {"handled": false}
 	var board_model: BoardModel = slot.board
-	# 跨盘目标盘的 front_row：玩家单位跨过去落在敌方盘的 front_row（朝玩家那侧 = row 2）
-	var enemy_front_row: int = BoardModel.front_row_of(slot.faction)
-	var front_enemy = board_model.get_cell(Vector2(enemy_front_row, cell.col))
-	# 只有真正的敌方单位才触发攻击；友军单位不攻击（格子被占则回退本棋盘默认逻辑）
+	# 落点列：1v3 用镜像（拥有者视觉同列）；PVE/1v1 保持同列
+	var dst_col: int
+	if cell.team_id != "" and slot.team_id != "":
+		dst_col = BoardModel.COLS - 1 - cell.col
+	else:
+		dst_col = cell.col
+	# 跨盘目标盘的 front_row：玩家单位跨过去落在敌方盘的 front_row
+	# 1v3：defender 盘 front=0，attacker 盘 front=2；PVE/1v1：FACTION_ENEMY front=2
+	var enemy_front_row: int = BoardModel.front_row_of_slot(slot)
+	var front_enemy = board_model.get_cell(Vector2(enemy_front_row, dst_col))
+	# 1v3：用 is_hostile_to(local_team) 判断；PVE/1v1 回退 is_enemy
+	var local_team: String = Game.team_of_player(Game.local_player_id)
 	var has_enemy: bool = is_instance_valid(front_enemy) \
-		and front_enemy.has_card and front_enemy.is_enemy
+		and front_enemy.has_card \
+		and front_enemy.is_hostile_to(local_team)
 
 	if has_enemy:
 		# 若冲锋单位尚未到达玩家前排，先冲过去再攻击
 		var attacker = cell
-		var player_front_row: int = BoardModel.front_row_of(BoardSlot.FACTION_PLAYER)
+		var player_slot: BoardSlot = Game.registry.get_by_id(cell.slot_id) \
+			if Game.registry != null else null
+		var player_front_row: int = BoardModel.front_row_of_slot(player_slot) \
+			if player_slot != null else BoardModel.front_row_of(BoardSlot.FACTION_PLAYER)
 		if cell.row != player_front_row:
-			var player_slot: BoardSlot = Game.registry.get_by_id(cell.slot_id) \
-				if Game.registry != null else null
 			if player_slot != null and is_instance_valid(player_slot.board):
 				var front_cell = player_slot.board.get_cell(
 					Vector2(player_front_row, cell.col))
@@ -186,8 +196,8 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 		}])
 		return {"handled": true}
 
-	# 同列前排无敌 → 移动到目标棋盘前排（同列 row=front_row）
-	var target_cell = board_model.get_cell(Vector2(enemy_front_row, cell.col))
+	# 同列前排无敌 → 移动到目标棋盘前排（镜像列 row=front_row）
+	var target_cell = board_model.get_cell(Vector2(enemy_front_row, dst_col))
 	if not is_instance_valid(target_cell) or target_cell.has_card:
 		return {"handled": false}
 
@@ -215,12 +225,24 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 	# 普通单位跨盘：返回落点信息，供调用方触发 vigilance
 	return {"handled": true, "landed_cell": target_cell, "board_model": board_model}
 
-# 当前所有有 bg_panel 的 ENEMY slot
+# 当前有 bg_panel 的敌队 slot。
+# 1v3：按本端玩家 team_id 取对立队伍的盘；PVE/1v1：取 FACTION_ENEMY 盘。
 func _enemy_slots_with_panel() -> Array:
 	var out: Array = []
 	if Game.registry == null:
 		return out
-	for slot in Game.registry.enemy_targets():
+	var local_pid: String = Game.local_player_id
+	var local_team: String = Game.team_of_player(local_pid)
+	var candidates: Array
+	if local_team != "":
+		# 1v3：从 registry 取对立队伍的所有盘（adjacent_enemy_slots 不限列）
+		candidates = []
+		for slot in Game.registry.slots:
+			if slot.team_id != "" and slot.team_id != local_team:
+				candidates.append(slot)
+	else:
+		candidates = Game.registry.enemy_targets()
+	for slot in candidates:
 		if is_instance_valid(slot.bg_panel):
 			out.append(slot)
 	return out

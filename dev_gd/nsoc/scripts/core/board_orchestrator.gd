@@ -57,6 +57,9 @@ var _main_ui: Dictionary = {}
 # 主棋盘不进入此表（其 UI 由场景树持有，不可销毁）
 var _side_ui: Dictionary = {}
 
+# 1v3 布局解析器（PVP 时注入；PVE/1v1 为 null）
+var _resolver: BoardLayoutResolver = null
+
 # 附盘的"墓地/除外"面板控制器：id → EnemySidePanelManager
 # 仅 ENEMY 阵营附盘存在（玩家附盘不需要敌方记录面板）
 var _side_panels: Dictionary = {}
@@ -111,6 +114,7 @@ func setup(deps: Dictionary) -> void:
 	_main_center_x    = float(deps.get("main_center_x", 0.0))
 	_side_gap_x       = float(deps.get("side_gap_x", 500.0))
 	_main_ui          = deps.get("main_ui", {})
+	_resolver         = deps.get("resolver", null)
 
 # 启动期：遍历 level_data.boards 创建需要在游戏开始时显示的棋盘。
 # 主棋盘（player_main / enemy_main）无条件创建；
@@ -126,21 +130,44 @@ func boot() -> void:
 	if has_node("/root/Events"):
 		Events.set_orchestrator(self)
 	var boards: Dictionary = Game.level_data.get("boards", {})
-	var ordered_ids: Array = ["player_main", "enemy_main"]
-	for id in boards.keys():
-		if id == "player_main" or id == "enemy_main":
-			continue
-		ordered_ids.append(id)
+	# 决定哪些盘是"主盘"（使用 _main_ui 中已有的 UI 节点）
+	# 1v3：local_slot_id → bottom_grid, top_slot_id → top_grid（_main_ui 中已注入）
+	# PVE/1v1：player_main / enemy_main
+	var ordered_ids: Array = []
+	if _resolver != null:
+		# 1v3：先装本端盘和主对手盘（使用 scene tree UI），再装其余盘
+		if _resolver.local_slot_id != "":
+			ordered_ids.append(_resolver.local_slot_id)
+		if _resolver.top_slot_id != "":
+			ordered_ids.append(_resolver.top_slot_id)
+		for extra_id in _resolver.extra_top_ids:
+			if extra_id != "":
+				ordered_ids.append(extra_id)
+		for side_id in _resolver.side_slot_ids:
+			if side_id != "":
+				ordered_ids.append(side_id)
+		# 确保 boards 里所有 id 都进入（容错）
+		for id in boards.keys():
+			if not id in ordered_ids:
+				ordered_ids.append(id)
+	else:
+		ordered_ids = ["player_main", "enemy_main"]
+		for id in boards.keys():
+			if id == "player_main" or id == "enemy_main":
+				continue
+			ordered_ids.append(id)
 	for id in ordered_ids:
 		if not boards.has(id):
 			continue
 		var meta: Dictionary = boards[id]
-		var is_main: bool = (id == "player_main" or id == "enemy_main")
+		var is_main: bool = _main_ui.has(id)
 		# 附盘：只看 enabled 标志。initial_units/spawners 决定内容，不决定何时创建。
 		if not is_main and not bool(meta.get("enabled", false)):
-			continue
+			# 1v3：所有盘都要创建（extra_top_ids / side_slot_ids 无 enabled 标志）
+			if _resolver == null:
+				continue
+			# 1v3 中所有来自 slot_layout 的盘都强制创建
 		_create_slot(id, meta, false)
-		# boot 期不播动画，由 setup_intro_nodes() 统一交给场景入场 tween 处理
 
 # ── 局内棋盘事件 ──────────────────────────────────────────────────────
 # 每回合开始时由 turn_started 信号触发，读取 level_data["board_events"] 执行增减盘。
@@ -281,6 +308,8 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 	var faction: int = int(meta.get("faction", 1))
 	var role: int = _parse_role(String(meta.get("role", "enemy")))
 	var slot_index: int = int(meta.get("slot_index", -1))
+	var team_id: String = String(meta.get("team_id", ""))
+	var owner_player_id: String = String(meta.get("owner_player_id", ""))
 
 	var grid: Node = null
 	var bg: Panel = null
@@ -296,8 +325,15 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 	else:
 		# 附盘：动态构造 UI
 		var center_x: float = _side_center_x_for(id)
-		var side_top: bool = (faction == BoardSlot.FACTION_ENEMY)
-		var show_pile: bool = true   # 敌方和友军附盘均显示墓地/除外按钮
+		# 1v3：用 team_id 判断上/下位置：与本端不同队的盘放上方，同队（队友）盘放下方侧边
+		# PVE/1v1：回退到 faction 判断
+		var side_top: bool
+		var local_team: String = Game.team_of_player(Game.local_player_id) if Game.registry != null else ""
+		if team_id != "" and local_team != "":
+			side_top = (team_id != local_team)
+		else:
+			side_top = (faction == BoardSlot.FACTION_ENEMY)
+		var show_pile: bool = true
 		side_ui_dict = SideBoardUiScript.build(_parent, center_x, side_top,
 			"_" + id, show_pile)
 		grid = side_ui_dict["grid"]
@@ -330,6 +366,20 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 		return null
 	if slot_index >= 0:
 		slot.slot_index = slot_index
+	# 1v3 多人扩展：写入 team_id / owner_player_id
+	if team_id != "":
+		slot.team_id = team_id
+	if owner_player_id != "":
+		slot.owner_player_id = owner_player_id
+
+	# ── 视觉翻转：对手棋盘从己方视角观看时，行列均需逆序显示 ────────────────
+	# 原理：所有棋盘的 row=0 均为前排（朝对面）。从"对面"看时，需把 row=0 显示在视觉底部，
+	# 这样自家放在 row=2（右下角）的单位，对方看到的是左上角，与 1v1 行为一致。
+	# 仅在 PVP 1v3 模式下，且当前盘不是本端所在队伍时触发；PVE/1v1 不触发。
+	if Game.pvp_match_type == "1v3" and team_id != "":
+		var local_team: String = Game.team_of_player(Game.local_player_id)
+		if local_team != "" and local_team != team_id and slot.grid_node != null:
+			_reverse_grid_cells(slot.grid_node)
 
 	# 附盘：bg 已显示，但需要：1) hp 标签连血量；2) hp 面板长按详情
 	if not _main_ui.has(id) and side_ui_dict.has("hp_label"):
@@ -407,7 +457,35 @@ func _side_center_x_for(id: String) -> float:
 			return _main_center_x - _side_gap_x
 		"ally_right", "enemy_right":
 			return _main_center_x + _side_gap_x
+	# 1v3：slot_<pid> 格式，按 extra_top_ids 位置映射（第 0 个=左，第 2 个=右）
+	if id.begins_with("slot_") and _resolver != null:
+		var extras: Array = _resolver.extra_top_ids
+		if extras.size() >= 2:
+			if id == extras[0]:
+				return _main_center_x - _side_gap_x
+			if id == extras[1]:
+				return _main_center_x + _side_gap_x
+		var sides: Array = _resolver.side_slot_ids
+		if sides.size() >= 1 and id == sides[0]:
+			return _main_center_x - _side_gap_x
+		if sides.size() >= 2 and id == sides[1]:
+			return _main_center_x + _side_gap_x
 	return _main_center_x
+
+# 将 GridContainer 中的子节点顺序完全倒置。
+# 视觉效果：(row=0,col=0) 显示在右下，(row=ROWS-1,col=COLS-1) 显示在左上。
+# 数据不变，格子自身的 row/col 属性不受影响，游戏逻辑坐标不改变。
+static func _reverse_grid_cells(grid_node: Node) -> void:
+	if grid_node == null:
+		return
+	var children: Array = grid_node.get_children()
+	if children.is_empty():
+		return
+	for child in children:
+		grid_node.remove_child(child)
+	children.reverse()
+	for child in children:
+		grid_node.add_child(child)
 
 static func _parse_role(role_str: String) -> int:
 	match role_str:

@@ -80,3 +80,34 @@ func sorted_by_x() -> Array:
 func clear() -> void:
 	for s in slots.duplicate():
 		remove(s.id)
+
+# ── 多队伍扩展（1v3 / 3v3）──────────────────────────────────────────
+
+# 取指定 team_id 的全部 slot
+func by_team(team_id: String) -> Array:
+	var out: Array = []
+	for s in slots:
+		if s.team_id == team_id:
+			out.append(s)
+	return out
+
+# 按玩家 uuid 取其所属 slot（1v3 每人一盘）
+func by_owner(player_id: String) -> BoardSlot:
+	for s in slots:
+		if s.owner_player_id == player_id:
+			return s
+	return null
+
+# 取 viewer_pid 对面（敌队）中与给定列对齐的所有 slot。
+# 同列跨盘攻击候选：守方→返回 3 攻方盘；攻方→返回 1 守方盘。
+# 若 team_id 为空（PVE）回退到旧 FACTION_ENEMY 逻辑。
+func adjacent_enemy_slots(viewer_pid: String, _col: int) -> Array:
+	var viewer_team: String = Game.team_of_player(viewer_pid)
+	if viewer_team == "":
+		# PVE 兼容：返回全部 FACTION_ENEMY 盘
+		return by_faction(BoardSlot.FACTION_ENEMY)
+	var out: Array = []
+	for s in slots:
+		if s.team_id != "" and s.team_id != viewer_team:
+			out.append(s)
+	return out
