@@ -38,11 +38,12 @@ func on_activate(ctx) -> void:
 	var board: BoardModel = slot.board
 
 	# ── 1. 收集"我方半场"所有敌方单位 ────────────────────────────
+	var local_team: String = ctx.game.team_of_player(ctx.game.local_player_id)
 	var enemies: Array = []
 	for cell in board.grid_cells.values():
 		if not is_instance_valid(cell):
 			continue
-		if cell.has_card and cell.is_enemy:
+		if cell.has_card and cell.is_hostile_to(local_team):
 			enemies.append(cell)
 
 	# ── 2. 消灭流程（仿 destroy_unit）──────────────────────────

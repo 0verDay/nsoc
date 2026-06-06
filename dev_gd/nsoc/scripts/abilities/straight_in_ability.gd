@@ -26,8 +26,9 @@ static func trigger_start(game_node: Node) -> void:
 	for slot in game_node.registry.slots:
 		if slot.board == null:
 			continue
+		var local_team: String = game_node.team_of_player(game_node.local_player_id)
 		for cell in slot.board.grid_cells.values():
-			if not is_instance_valid(cell) or not cell.has_card or not cell.is_enemy:
+			if not is_instance_valid(cell) or not cell.has_card or not cell.is_hostile_to(local_team):
 				continue
 			if cell.effects.has("steadfast"):
 				continue

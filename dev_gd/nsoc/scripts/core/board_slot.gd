@@ -24,6 +24,9 @@ var id: String = ""
 var faction: int = FACTION_PLAYER
 var role: int = ROLE_MAIN_PLAYER
 var slot_index: int = 0           # 屏幕水平槽位 0..N-1，用于排序与布局
+# PVP 队伍标识："defender" / "attacker"；PVE 为空串。
+# 用于效果/目标选择的友敌判定（is_hostile_to / is_friendly_to）。
+var team_id: String = ""
 
 # 该盘归属玩家 uuid（PVP 用）。
 # PVE 默认空串 → 由 Game.local_player_id 兜底；PVP 装配时显式填入。
@@ -89,8 +92,19 @@ func setup(p_id: String, p_faction: int, p_role: int,
 		hero.died.connect(_on_hero_died)
 
 # 英雄死亡时回调：通知 ScriptedEvents，触发 hero_died trigger。
+# PVP 1v3：任意 slot 英雄死亡均触发胜负广播。
 func _on_hero_died() -> void:
-	# 主玩家英雄死亡不走 trigger（由 main/test_main 的 _on_hero_died 处理胜负）
+	# PVP 1v3：按 team_id 判断胜负，广播 game/end
+	var g: Node = Engine.get_main_loop().root.get_node_or_null("/root/Game") \
+		if Engine.get_main_loop() != null else null
+	if g != null and g.is_pvp and g.pvp_match_type == "1v3" and team_id != "":
+		g.mark_player_dead(owner_player_id)
+		# 任一方死亡即判定对方获胜（测试期简化规则）
+		var loser_team: String = team_id
+		var winner_team: String = "attacker" if loser_team == "defender" else "defender"
+		g.pvp_end_game(winner_team, owner_player_id)
+		return
+	# 主玩家英雄死亡不走 trigger（由 test_main 的 _on_player_hero_died 处理 PVE/1v1 胜负）
 	if role == ROLE_MAIN_PLAYER:
 		return
 	var snap := {"slot_id": id, "hero_name": hero.name_short if hero != null else ""}
@@ -152,6 +166,7 @@ func to_dict() -> Dictionary:
 		"faction":     faction,
 		"role":        role,
 		"slot_index":  slot_index,
+		"team_id":     team_id,
 		"owner_player_id":     owner_player_id,
 		"allow_player_deploy": allow_player_deploy,
 		"graveyard":   _names_of(graveyard),
@@ -168,6 +183,7 @@ func from_dict(d: Dictionary) -> void:
 	faction     = int(d.get("faction", faction))
 	role        = int(d.get("role", role))
 	slot_index  = int(d.get("slot_index", slot_index))
+	team_id     = String(d.get("team_id", team_id))
 	owner_player_id     = String(d.get("owner_player_id", owner_player_id))
 	allow_player_deploy = bool(d.get("allow_player_deploy", allow_player_deploy))
 	if d.has("board") and board != null:

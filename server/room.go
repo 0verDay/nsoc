@@ -1,13 +1,6 @@
 package main
 
 // Room —— 内存中的房间状态。无持久化，重启即清空。
-//
-// 决策（multiplay_dev_list_skills.md 1.1）：
-//   - 房号 5 位纯数字，由服务器随机生成 + 冲突重试
-//   - 创建后无活跃 60 分钟自动销毁
-//   - 战斗启动后拒绝新玩家加入（Started=true）
-//   - 服务器不做反作弊，完全信任房主
-//   - 不限房间数（原型期）
 
 import (
 	"math/rand"
@@ -26,6 +19,8 @@ type Room struct {
 	HostUUID   string
 	Players    []*Client
 	Started    bool
+	MatchType  string    // "1v1" / "1v3"（默认 "1v1"）
+	MaxPlayers int       // 按 MatchType 决定：1v1=2, 1v3=4
 	CreatedAt  time.Time
 	LastActive time.Time
 }
@@ -36,6 +31,14 @@ func (r *Room) PlayerList() []RoomPlayer {
 		out = append(out, RoomPlayer{UUID: c.uuid, Nickname: c.nickname, Slot: i})
 	}
 	return out
+}
+
+// MaxPlayersForType 按 match_type 返回最大玩家数
+func MaxPlayersForType(matchType string) int {
+	if matchType == "1v3" {
+		return 4
+	}
+	return 2 // 默认 1v1
 }
 
 // generateRoomID 生成不与现存房间冲突的 5 位数字房号。

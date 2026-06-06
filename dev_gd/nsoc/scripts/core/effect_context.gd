@@ -77,26 +77,27 @@ func get_adjacent_enemies(cell) -> Array:
 	var out: Array = []
 	if cell == null:
 		return out
+	var local_team: String = game.team_of_player(game.local_player_id) if game != null else ""
 	for c in get_adjacent_occupied(cell):
-		if c.is_enemy != cell.is_enemy:
+		if c.is_hostile_to(cell.team_id if cell.team_id != "" else local_team):
 			out.append(c)
 	return out
 
 # 警戒哨反应：扫 entered_cell 四邻含 "vigilance" 的敌方单位，依次对其攻击。
-# 与 TurnSystem._trigger_vigilance 同语义，供效果脚本（如冲阵移动后）复用。
 func trigger_vigilance(entered_cell) -> void:
 	if entered_cell == null or not entered_cell.has_card:
 		return
 	var b: BoardModel = board_of(entered_cell)
 	if b == null:
 		return
-	var mover_for_enemy: bool = entered_cell.is_enemy
+	var mover_team: String = entered_cell.team_id
 	for d in BoardModel.DIRECTIONS:
 		var p: Vector2 = Vector2(entered_cell.row, entered_cell.col) + d.offset
 		var sentinel = b.get_cell(p)
 		if sentinel == null or not sentinel.has_card:
 			continue
-		if sentinel.is_enemy == mover_for_enemy:
+		# 警戒只对敌方单位反应（进入者与哨兵敌对）
+		if not sentinel.is_hostile_to(mover_team):
 			continue
 		if not sentinel.effects.has("vigilance"):
 			continue
@@ -119,40 +120,39 @@ func trigger_vigilance(entered_cell) -> void:
 # 兜底：target_cell 为空时按旧 dying_is_enemy 路由（玩家→deck，敌方→原属盘）。
 func banish_card(card_data) -> void:
 	if target_cell != null and target_cell.origin == "hand":
-		if game.is_pvp and target_cell.is_enemy:
-			# PVP：對手單位除外入 enemy_main slot
-			var e_slots: Array = game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY) \
-				if game.registry != null else []
-			if e_slots.size() > 0:
-				e_slots[0].banish(card_data)
-		else:
-			game.deck.banish(card_data)
+		# "hand" 来源：入单位归属玩家的 deck.banished
+		var owner_slot: BoardSlot = _owner_slot_of(target_cell)
+		if owner_slot != null and owner_slot.owner_player_id != "":
+			var d: DeckManager = game.decks.get(owner_slot.owner_player_id)
+			if d != null:
+				d.banish(card_data)
+				return
+		game.deck.banish(card_data)
 		return
 	if target_cell != null:
 		var slot: BoardSlot = _owner_slot_of(target_cell)
 		if slot != null:
 			slot.banish(card_data)
 		return
-	# 无 target_cell 兜底
 	game.deck.banish(card_data)
 
 func send_to_graveyard(card_data) -> void:
 	if target_cell != null and target_cell.origin == "hand":
-		if game.is_pvp and target_cell.is_enemy:
-			# PVP：對手單位入 enemy_main slot 墓地
-			var e_slots: Array = game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY) \
-				if game.registry != null else []
-			if e_slots.size() > 0:
-				e_slots[0].send_to_graveyard(card_data)
-		else:
-			game.deck.send_to_graveyard(card_data)
+		# "hand" 来源：入单位归属玩家的 deck.graveyard
+		var owner_slot: BoardSlot = _owner_slot_of(target_cell)
+		if owner_slot != null and owner_slot.owner_player_id != "":
+			var d: DeckManager = game.decks.get(owner_slot.owner_player_id)
+			if d != null:
+				d.send_to_graveyard(card_data)
+				return
+		game.deck.send_to_graveyard(card_data)
 		return
 	if target_cell != null:
 		var slot: BoardSlot = _owner_slot_of(target_cell)
 		if slot != null:
 			slot.send_to_graveyard(card_data)
 		return
-	# 无 target_cell 兜底（理论上 on_death 必有 target_cell）
+	# 无 target_cell 兜底
 	game.deck.send_to_graveyard(card_data)
 
 # ---- 英雄伤害 ----
