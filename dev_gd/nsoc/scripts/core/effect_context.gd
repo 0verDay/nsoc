@@ -73,13 +73,20 @@ func get_adjacent_occupied(cell) -> Array:
 	return out
 
 # 返回 cell 四邻处于敌对阵营且有牌的 cell 数组。
+# 友敌判定相对于"被查询 cell"，而非本端玩家视角，避免对手刚下的
+# 单位（cell.is_enemy=true）在本端 on_play 时把"本端己方邻居"漏判为非敌。
+# 1v3：按 team_id 比较；PVE/1v1：按 is_enemy 二分（c.is_enemy 与 cell.is_enemy 取反即敌对）。
 func get_adjacent_enemies(cell) -> Array:
 	var out: Array = []
 	if cell == null:
 		return out
-	var local_team: String = game.team_of_player(game.local_player_id) if game != null else ""
 	for c in get_adjacent_occupied(cell):
-		if c.is_hostile_to(cell.team_id if cell.team_id != "" else local_team):
+		var is_hostile: bool
+		if cell.team_id != "" and c.team_id != "":
+			is_hostile = (c.team_id != cell.team_id)
+		else:
+			is_hostile = (c.is_enemy != cell.is_enemy)
+		if is_hostile:
 			out.append(c)
 	return out
 
