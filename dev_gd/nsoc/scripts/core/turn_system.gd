@@ -24,6 +24,8 @@ signal phase_ended(faction: int)
 # 玩家前排棋子即将行动：等待外部调用 resolve_front_row_selection(target_id) 后继续。
 # target_id: "" = 本棋盘（走默认逻辑），其他字符串 = 外部注册的棋盘标识。
 signal front_row_action_requested(cell: Node)
+# 行动顺序指示器：当前正在处理的 slot 切换时发出（每 slot 第一个有效单位时 emit）。
+signal slot_action_started(slot: BoardSlot)
 
 const PLAYER: int = 0
 const ENEMY: int = 1
@@ -39,6 +41,9 @@ var _card_resolver: Callable
 var _front_row_resolve: Callable = Callable()
 var _front_row_result: String = ""
 var _front_row_resolved: bool = false
+
+# 行动顺序指示器：缓存上一次 emit 的 slot，避免同盘连续多格重复 emit。
+var _last_active_slot: BoardSlot = null
 
 func _registry() -> BoardRegistry:
 	if has_node("/root/Game"):
@@ -203,6 +208,7 @@ func run_pvp_phase_for_slot(slot_id: String) -> void:
 	is_running = false
 
 func _run_phase_for_slot(slot: BoardSlot) -> void:
+	_last_active_slot = null
 	phase_started.emit(slot.faction)
 	for entry in _iter_phase_cells_of_slot(slot):
 		if _combat == null or _combat.aborted:
@@ -256,6 +262,7 @@ func _iter_phase_cells_of_slot(slot: BoardSlot) -> Array:
 	return out
 
 func _run_phase(faction: int) -> void:
+	_last_active_slot = null
 	phase_started.emit(faction)
 	# 敌方阶段开始时，推进所有盘的法术施放器（在单位行动前）
 	if faction == ENEMY:
@@ -385,6 +392,11 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		is_my_unit = (cell.is_enemy == for_enemy)
 	if not is_my_unit:
 		return
+
+	# 行动顺序指示器：slot 切换时 emit（同盘连续多格只 emit 一次）
+	if slot != _last_active_slot:
+		_last_active_slot = slot
+		slot_action_started.emit(slot)
 
 	var unit_faction: int = BoardSlot.FACTION_ENEMY if cell.is_enemy else BoardSlot.FACTION_PLAYER
 	var on_home_board: bool = (slot.faction == unit_faction)

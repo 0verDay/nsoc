@@ -1328,3 +1328,5 @@ func _update_pvp_turn_ui() -> void:
 	# 刷新行动顺序指示器
 	if is_instance_valid(_action_order_bar):
 		_action_order_bar.refresh()
+	if is_instance_valid(board_orchestrator):
+		board_orchestrator.preview_active_pvp_slots()

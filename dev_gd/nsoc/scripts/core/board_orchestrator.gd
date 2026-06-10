@@ -72,6 +72,9 @@ signal side_panel_long_press_canceled
 # 缓存当前已创建的 slot id 集合
 var _active: Dictionary = {}
 
+# 行动顺序指示器：slot_id → TurnOrderIndicator
+var _indicators: Dictionary = {}
+
 # 退场清理：场景被释放时回收所有 slot（board/spawners/hero/slot 挂在 Game autoload
 # 下不会自动 free），避免下次进入时 registry 残留旧引用。
 func _exit_tree() -> void:
@@ -92,6 +95,10 @@ func _cleanup_all() -> void:
 	_side_panels.clear()
 	_side_ui.clear()
 	_active.clear()
+	for ind in _indicators.values():
+		if is_instance_valid(ind):
+			ind.queue_free()
+	_indicators.clear()
 	# 清空对话队列，防止残留气泡出现在主菜单
 	if has_node("/root/Dialogue"):
 		Dialogue.clear_queue()
@@ -168,6 +175,8 @@ func boot() -> void:
 				continue
 			# 1v3 中所有来自 slot_layout 的盘都强制创建
 		_create_slot(id, meta, false)
+	# 所有盘装配完成后刷新行动序号（延一帧等 visual_x 就绪）
+	call_deferred("refresh_indicator_orders")
 
 # ── 局内棋盘事件 ──────────────────────────────────────────────────────
 # 每回合开始时由 turn_started 信号触发，读取 level_data["board_events"] 执行增减盘。
@@ -262,6 +271,7 @@ func add_board(id: String) -> BoardSlot:
 	# 滑入动画（仅附盘）
 	if slot != null and _side_ui.has(id):
 		await _animate_slide_in(_side_ui[id], slot.faction)
+	refresh_indicator_orders()
 	return slot
 
 # 运行时移除附盘（含滑出动画）。
@@ -276,6 +286,12 @@ func remove_board(id: String) -> void:
 	if _side_ui.has(id):
 		await _animate_slide_out(_side_ui[id], slot.faction)
 	board_removed.emit(slot)
+	# 销毁该盘的行动顺序指示器
+	if _indicators.has(id):
+		var ind: Control = _indicators[id]
+		if is_instance_valid(ind):
+			ind.queue_free()
+		_indicators.erase(id)
 	BoardSlotFactory.destroy(slot)
 	# 销毁附盘面板管理器及其 clip 节点（clip 挂在 _parent 下，不随 mgr.queue_free 自动释放）
 	if _side_panels.has(id):
@@ -295,6 +311,7 @@ func remove_board(id: String) -> void:
 				n.queue_free()
 		_side_ui.erase(id)
 	_active.erase(id)
+	refresh_indicator_orders()
 
 # 切换：未存在则添加，已存在则移除（test_main 4 个 toggle 按钮直调）。
 func toggle(id: String) -> void:
@@ -405,6 +422,13 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 
 	_active[id] = slot
 	board_added.emit(slot)
+	# 在 bg_panel 内创建行动顺序指示器
+	if is_instance_valid(bg):
+		var ind := TurnOrderIndicator.new()
+		ind.name = "TurnOrderIndicator"
+		bg.add_child(ind)
+		ind.setup(slot)
+		_indicators[id] = ind
 	return slot
 
 # 为 ENEMY 附盘创建独立 EnemySidePanelManager 并接 grave/banished 按钮
@@ -486,6 +510,66 @@ static func _reverse_grid_cells(grid_node: Node) -> void:
 	children.reverse()
 	for child in children:
 		grid_node.add_child(child)
+
+# ── 行动顺序指示器公开 API ────────────────────────────────────────────
+
+# 重新计算并刷新所有 slot 的序号与颜色。
+# 在 boot/add_board/remove_board 后自动调用；外部也可手动触发。
+func refresh_indicator_orders() -> void:
+	if not has_node("/root/Game") or Game.registry == null:
+		return
+	var orders: Dictionary = _compute_slot_orders()
+	for id in _indicators.keys():
+		var ind: TurnOrderIndicator = _indicators.get(id)
+		if is_instance_valid(ind):
+			ind.set_order(int(orders.get(id, 0)))
+			ind.refresh_color()
+	# PVP 模式：序号刷新后同步预亮当前活跃玩家盘
+	if has_node("/root/Game") and Game.is_pvp:
+		preview_active_pvp_slots()
+
+# PVP 阶段切换间隙（run_pvp_phase 尚未启动时）：
+# 按 pvp_active_player_id 预亮对应 slot 的光环，避免视觉空档。
+func preview_active_pvp_slots() -> void:
+	if not has_node("/root/Game") or not Game.is_pvp or Game.registry == null:
+		return
+	var active_pid: String = Game.pvp_active_player_id()
+	for id in _indicators.keys():
+		var slot: BoardSlot = _active.get(id)
+		var ind: TurnOrderIndicator = _indicators.get(id)
+		if slot != null and is_instance_valid(ind):
+			ind.set_active(slot.owner_player_id == active_pid)
+
+# ── 序号计算 ──────────────────────────────────────────────────────────
+
+func _compute_slot_orders() -> Dictionary:
+	var out: Dictionary = {}
+	if not has_node("/root/Game") or Game.registry == null:
+		return out
+	if Game.is_pvp and Game.pvp_action_order.size() > 0:
+		# PVP：按 pvp_action_order 全局顺序，slot 对应 owner_player_id 的下标 +1
+		for slot in Game.registry.slots:
+			var idx: int = Game.pvp_action_order.find(slot.owner_player_id)
+			out[slot.id] = idx + 1 if idx >= 0 else 0
+	else:
+		# PVE / 离线：PLAYER 阵营 (visual_x 升序) = 1..N；ENEMY 阵营 (visual_x 降序) = N+1..M
+		var player_slots: Array = []
+		var enemy_slots:  Array = []
+		for slot in Game.registry.slots:
+			if slot.faction == BoardSlot.FACTION_PLAYER:
+				player_slots.append(slot)
+			else:
+				enemy_slots.append(slot)
+		player_slots.sort_custom(func(a, b): return a.visual_x() < b.visual_x())
+		enemy_slots.sort_custom(func(a, b): return a.visual_x() > b.visual_x())
+		var n: int = 1
+		for slot in player_slots:
+			out[slot.id] = n
+			n += 1
+		for slot in enemy_slots:
+			out[slot.id] = n
+			n += 1
+	return out
 
 static func _parse_role(role_str: String) -> int:
 	match role_str:
