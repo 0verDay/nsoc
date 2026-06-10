@@ -620,7 +620,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-`DeckManager` 管理玩家牌堆 3 个数组：draw_pile / graveyard / banished。`pile_changed` 信号驱动 UI 刷新。
+`DeckManager` 管理玩家牌堆 3 个数组：draw_pile / graveyard / banished。`pile_changed` 信号驱动 UI 刷新。新增 `signal reshuffled`（非首次 `reshuffle(false)` 末尾发射），用于 PVP 跨端镜像重洗（详见 §14.8）。`_rng_base_seed + _reshuffle_count` 决定每次重洗的确定性洗牌种子。
 
 
 
@@ -630,7 +630,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-敌方阵营每个 `BoardSlot` 自持 graveyard / banished，敌方死亡牌入对应 slot 的 graveyard，`terrify` 再转入 slot.banished。`EnemySidePanelManager` / `AllySidePanelManager` 绑定具体 slot 实例展示。
+敌方阵营每个 `BoardSlot` 自持 graveyard / banished，敌方死亡牌入对应 slot 的 graveyard，`terrify` 再转入 slot.banished。`EnemySidePanelManager` / `AllySidePanelManager` 绑定具体 slot 实例并同时订阅 `Game.get_deck(slot.owner_player_id).pile_changed`，`_refresh_content` 取并集 `slot.graveyard ∪ owner_deck.graveyard` 展示，保证 hand-origin（写入 deck）和 spawner-origin（写入 slot）单位都能在跨端面板上完整可见。**当前 UI 入口已全面移除（§14.9）**，类与订阅链保留供将来恢复。
 
 
 
@@ -640,7 +640,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-**装备牌生命周期**：玩家拖拽装备牌到英雄面板 → `PlayController.handle_equip` 扣费 → `Equipments.equip(card_data)` 建 `EquipmentInstance`，**装备卡本体不入墓** → 耐久归零时 `EquipmentManager._on_inst_changed` 自动调 `Game.deck.send_to_graveyard` 并 `unequip`。
+**装备牌生命周期**：玩家拖拽装备牌到英雄面板 → `PlayController.handle_equip` 扣费 → `Equipments.equip(card_data)` 建 `EquipmentInstance`，**装备卡本体不入墓** → 耐久归零时 `EquipmentManager._on_inst_changed` 自动调 `Game.deck.send_to_graveyard` 并 `unequip`；PVP 中同时广播 `action/equip_broken`，远端 `Game.decks[from].send_to_graveyard` 同步入墓 + 移除 `_remote_equip_insts[from]` 中的破损 inst。
 
 
 
@@ -825,12 +825,17 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-| 攻方双向 | "attacker" | 任意 | `_enemy_auto_cross` 自动跨守方盘（单一目标，无 UI 无广播） |
+| 攻方双向 | "attacker" | 任意 | `_enemy_auto_cross` 自动跨守方盘（`_can_cross_board` 覆盖"到达 front_row"和"冲锋提前到达"） |
 
 
 
 
-| PVE/1v1 | "" | — | 原 UI / auto-cross 同列规则 |
+| PVE/1v1 PLAYER | "" | PLAYER | `_run_front_row_selection` UI 选盘 |
+
+
+
+
+| PVE/1v1 ENEMY | "" | ENEMY | `_enemy_auto_cross`（修正：用 `_can_cross_board` 替代 `cell.row == front_row`；让 charge 单位在路径全空时也能跨盘，修复"对手视角下冲锋单位只移到自家前排不跨盘"的 PVP 锁步 desync） |
 
 
 
@@ -930,17 +935,22 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-- `SidePanelManager(center_x_offset)` — 玩家牌堆/墓地/除外，支持水平定位
+- `SidePanelManager(center_x_offset)` — 玩家牌堆/墓地/除外（本端三按钮：牌库 / 墓地 / 除外），支持水平定位
 
 
 
 
-- `EnemySidePanelManager(center_x_offset)` — 绑定 BoardSlot 展示敌方墓地/除外，支持 `update_clip_center_x()` 动态跟随棋盘移动
+- `EnemySidePanelManager(center_x_offset)` — 绑定 BoardSlot 展示敌方墓地/除外面板。**当前 UI 入口已全面移除**（主敌方按钮在 `main.gd` / `test_main.gd._create_enemy_pile_buttons` 中删除，附盘按钮在 `board_orchestrator._create_slot` 把 `show_pile=false` 传给 `SideBoardUi.build`）。类与 `set_slot` 数据订阅链保留：在 `set_slot` 中同时监听 `slot.pile_changed` 与 `Game.get_deck(slot.owner_player_id).pile_changed`；`_refresh_content` 取并集 `slot.graveyard ∪ owner_deck.graveyard`。`PILE_TO_PANEL` 同时认 BoardSlot 的 `"banished"` 与 DeckManager 的 `"banish"`。`update_clip_center_x()` 动态跟随棋盘移动。
 
 
 
 
-- `AllySidePanelManager(center_x_offset)` — 绑定 BoardSlot 展示友军墓地/除外，从底部滑入；`set_slot(slot)` 运行时切换数据源
+- `AllySidePanelManager(center_x_offset)` — 友军盘对应 manager，从底部上拉。语义/订阅与 `EnemySidePanelManager` 对称，UI 入口同样已移除。
+
+
+
+
+- 附盘 hp 面板（`SideBoardUi.build`）水平拉伸至整盘宽度（`BOARD_HALF_W * 2 = 460`），与主敌方 `EnemyHpPnl` 拉伸后的布局保持一致。
 
 
 
@@ -1500,7 +1510,17 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-- 附盘 ENEMY：自动挂 `EnemySidePanelManager`；附盘 ALLY：自动挂 `AllySidePanelManager`
+- 附盘墓地/除外面板：UI 按钮已全面取消（`show_pile=false` 传给 `SideBoardUi.build`，`grave_btn` / `banished_btn` 在 dict 中为 null）；`_create_slot` 内的 `_setup_side_enemy_panel` / `_setup_side_ally_panel` 入口条件改为 `side_ui_dict.get("grave_btn") != null`，按钮 null → 跳过 panel manager 创建。`_side_panels` dict 长期为空，`is_pile_button_hit` / `any_side_panel_open` / `is_side_panel_hit` 全部 no-op。
+
+
+
+
+- 附盘 hp 面板水平拉伸至整盘宽度（`BOARD_HALF_W * 2`），与主敌方 hp 面板对齐。
+
+
+
+
+- 面板管理器选择（保留为将来恢复 UI 入口的占位）：原按 `slot.faction` 区分，已改为按"上下位置"判定（与 `side_top` 同语义）。多队伍 PVP 用 `team_id == local_team` 判定（队友 → AllySidePanelManager 底部上拉），PVE/1v1 回退 `slot.faction`；修复 3v3 队友盘 `faction=ENEMY` 但视觉位于底部时面板会错配到顶部下拉的 bug。
 
 
 
@@ -2140,7 +2160,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `autophagy` | 自噬 | on_play：对己方英雄造成累计伤害 |
+| `autophagy` | 自噬 | on_play：对己方英雄造成累计伤害（`damage_player_hero` 解析 `target_cell.owner_slot_id` 对应盘的 hero，跨端一致；不再用 viewer-relative 的 `Game.main_player_slot()`） |
 
 
 
@@ -2185,7 +2205,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `terrify` | 破胆 | on_kill：击杀目标送入除外 |
+| `terrify` | 破胆 | on_kill：击杀目标送入除外。受害者按 `v_owner_id → owner_player_id` 取对应玩家 deck（`Game.get_deck(pid)`）做 `erase + banish`，与 `handle_unit_death` 入墓路径一致；旧路径写死 `ctx.game.deck`（caster 本地）会让 PVP 中击杀对方手牌部署单位时除外去向错乱 |
 
 
 
@@ -2245,7 +2265,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `ming_jin` | 鸣金 | on_play：选一个友方单位放回牌库顶（调 `deck.add_to_draw_pile`，不走墓地），并设 `counters["ming_jin_used"] += 1`；TurnSystem 回合开始抽牌时检查此计数跳过抽牌 |
+| `ming_jin` | 鸣金 | on_play：选一个友方单位放回牌库顶（按 `cell.owner_slot_id → owner_player_id` 反查 `Game.get_deck(pid).add_to_draw_pile`，3v3 中正确写到目标单位拥有者 deck 而非 caster 本地 deck），并设 `counters["ming_jin_used"] += 1`（当前无消费方，保留语义） |
 
 
 
@@ -3695,22 +3715,27 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-2. `BoardOrchestrator.boot()` — 装配两块棋盘
+2. `_wire_pvp_deck_reshuffle_sync()` — 连 `Game.deck.reshuffled` → `_on_local_deck_reshuffled` 广播 `action/deck_reshuffle`；让远端代理 deck 同步重洗，避免代理 graveyard 永不清空
 
 
 
 
-3. `_setup_pvp_slots()` — 按 session_id 为 player_main / enemy_main 注入 `owner_player_id`
+3. `BoardOrchestrator.boot()` — 装配两块棋盘
 
 
 
 
-4. `Net.message_received.connect(_on_pvp_message)` — 接入战斗消息
+4. `_setup_pvp_slots()` — 按 session_id 为 player_main / enemy_main 注入 `owner_player_id`
 
 
 
 
-5. `_update_pvp_turn_ui()` — 按 `Game.pvp_is_my_turn()` 设置按钮初始状态
+5. `Net.message_received.connect(_on_pvp_message)` — 接入战斗消息
+
+
+
+
+6. `_update_pvp_turn_ui()` — 按 `Game.pvp_is_my_turn()` 设置按钮初始状态
 
 
 
@@ -3750,12 +3775,12 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `action/play_card` | `play_controller.handle_remote_play_card(payload)` |
+| `action/play_card` | `play_controller.handle_remote_play_card(payload, from)` —— 法术分支末尾按 `from` 路由到 `Game.decks[caster_pid].send_to_graveyard / banish` 同步代理 deck（`Effects.resolve_destination` 与本端一致） |
 
 
 
 
-| `action/play_equip` | 追加 `EquipmentInstance` 到 `_remote_equip_insts` |
+| `action/play_equip` | 追加 `EquipmentInstance` 到 `_remote_equip_insts[from]` |
 
 
 
@@ -3765,15 +3790,27 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `action/cross_board` | 1v3 守方跨盘选择 → `Game.turn.enqueue_cross_choice(payload)` 入队；end_turn 触发回放阶段消费 |
-
-
-| `action/end_turn` | `_on_remote_end_turn` → `run_pvp_phase` + `pvp_advance_turn` |
+| `action/equip_broken` | `Game.decks[from].send_to_graveyard(card)` 同步入墓 + 从 `_remote_equip_insts[from]` 移除破损 inst |
 
 
 
 
-| `action/activate_hero` | `_handle_remote_activate_hero`（仅 restart 有视觉镜像） |
+| `action/cross_board` | 1v3 守方 / 3v3 owner 跨盘选择 → `Game.turn.enqueue_cross_choice(payload)` 入队；end_turn 触发回放阶段消费 |
+
+
+
+
+| `action/end_turn` | `_on_remote_end_turn` → `run_pvp_phase`（1v1）或 `run_pvp_phase_for_slot`（多队伍）+ `pvp_advance_turn(_skip_dead)` |
+
+
+
+
+| `action/deck_reshuffle` | `Game.decks[player_id].reshuffle(false)` 同步代理 graveyard 清空（双端 `_reshuffle_count` 确定性递增） |
+
+
+
+
+| `action/activate_hero` | `_handle_remote_activate_hero(payload, from)`：`restart` / `test_discard` 把弃牌路由到 `Game.decks[from].send_to_graveyard`（与法术/单位入墓走同一 proxy deck，重洗时一并清空） |
 
 
 
@@ -3783,7 +3820,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `game/end` | 未显示胜负时按 winner_id 显示胜利/退出 |
+| `game/end` | 未显示胜负时按 `winning_team`（多队伍）/ `winner_id`（1v1 旧字段）显示胜利或退出 |
 
 
 
@@ -4043,22 +4080,27 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `action/play_card` | 房主 → 对手 | 出牌，含 card_name / slot_id / cell 等 |
+| `action/play_card` | 任一 → all/对手 | 出牌，含 card_name / slot_id / cell；法术含 `result_atk` / `result_health` / `result_cleared`（ming_jin 等放回手牌型） |
 
 
 
 
-| `action/play_equip` | 房主 → 对手 | 出装备，含 card_name |
+| `action/play_equip` | 任一 → 对手 | 出装备，含 card_name |
 
 
 
 
-| `action/activate_equip` | 房主 → 对手 | 激活装备，含 equip_name + 效果参数 |
+| `action/activate_equip` | 任一 → 对手 | 激活装备（仅白名单 effect，如 `destroy_unit`），含 equip_name + 效果参数 |
 
 
 
 
-| `action/activate_hero` | 任一 → 对手 | 激活英雄技能，含 ability_id + 相关参数 |
+| `action/equip_broken` | 任一 → all | 装备耐久归零广播；远端 `Game.decks[from].send_to_graveyard` + 移除 `_remote_equip_insts` 中破损 inst（与 caster 本端 `_on_inst_changed` 入墓配对） |
+
+
+
+
+| `action/activate_hero` | 任一 → 对手 | 激活英雄技能，含 ability_id + 相关参数（`restart` / `test_discard` 含 `discarded` 列表，远端按 `from` 路由到 caster 的 proxy `Game.decks[from].graveyard`） |
 
 
 
@@ -4068,7 +4110,17 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `game/end` | 房主 → all | 战斗结束，含 winner_id / reason |
+| `action/cross_board` | 任一 → all | 多队伍 PVP 跨盘选择广播；其余端入 `_pending_cross_choices` 队列，`run_pvp_phase_for_slot` 期间 FIFO consume |
+
+
+
+
+| `action/deck_reshuffle` | 任一 → all | 本地 `Game.deck.reshuffle(false)` 后由 `signal reshuffled` 触发广播；远端 `Game.decks[player_id].reshuffle(false)` 同步代理 graveyard 清空（`_reshuffle_count` 双端确定性递增） |
+
+
+
+
+| `game/end` | 任一 → all | 战斗结束，含 `winning_team`（多队伍 PVP）/ `winner_id`（1v1 旧字段兼容） |
 
 
 
@@ -4169,11 +4221,14 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 | 1v3 守方远端 | `"defender"` + ENEMY faction | `consume_cross_choice` 取队列 |
 | 1v3 攻方 | `"attacker"` | `_enemy_auto_cross`（确定性，单一目标=守方盘） |
 | 3v3 所有玩家 | `"team_a"` / `"team_b"` | UI 选盘（owner）→ 广播；远端消费队列 |
-| PVE/1v1 | `team_id == ""` | 旧逻辑不变 |
+| PVE/1v1 PLAYER | `team_id == ""` + PLAYER | UI 选盘 |
+| PVE/1v1 ENEMY | `team_id == ""` + ENEMY | `_enemy_auto_cross`（修正：用 `_can_cross_board` 替代 `cell.row == front_row`，与 attacker 分支一致，让 charge 单位在路径全空时也能跨盘，修复"对手视角下冲锋单位只移到自家前排"的锁步 desync） |
 
 **镜像列**：`dst_col = COLS - 1 - src_col`（`cell.team_id != ""` 时启用）
 
-**`_iter_phase_cells_of_slot`**：`slot.team_id != ""` 时统一 row 0→ROWS-1（前排先走）
+**`_iter_phase_cells_of_slot`**：`slot.team_id != ""` 时统一 row 0→ROWS-1（前排先走）。**主盘分支已加 `owner_slot_id` 过滤**（`cell.owner_slot_id != "" and != slot.id` 时跳过），避免对方"跨入到本盘"的单位被误归入本端 phase；与 cross-board 分支的 `owner_slot_id == slot.id` 共同保证迭代器输出严格属于 phase slot。
+
+**`_process_cell` 多队伍跨盘分支**（`team_id != ""` 路径）：跨盘单位 `is_my_unit` 直接置 `true`（信任迭代器过滤），不再依赖 `cell.is_enemy == for_enemy`——后者在不同 viewer 视角下是 viewer-relative，会导致同队队友视角误判 `is_enemy=false / for_enemy=true` 不匹配，单位拒绝行动。
 
 ### 14.4 跨盘选择同步（action/cross_board）
 
@@ -4206,8 +4261,38 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 | 1v3 | 4 | 4 格（守/攻标注） | 房主=defender，其余随机 attacker |
 | 3v3 | 6 | 6 格（A/B 队标注） | 随机分两队；A1→B1→A2→B2→A3→B3 |
 
-### 14.8 待完成（P1）
+### 14.8 跨端墓地与卡牌数据同步
+
+PVP 锁步下每端各跑一套 `Game.decks[pid]` / 各盘 `slot.graveyard`，必须保证多端最终一致。当前同步路径：
+
+| 入墓来源 | caster 本端 | 远端镜像路径 |
+|---|---|---|
+| 单位（origin="hand"）死亡 | `Game.decks[owner_pid].graveyard`（`PlayController.handle_unit_death`） | 锁步同步：每端 `handle_unit_death` 都按 `cell.owner_slot_id → owner_player_id` 路由到对应 proxy `Game.decks[pid]` |
+| 单位（spawner / initial / ability）死亡 | `slot.graveyard`（按 `_resolve_owner_slot`） | 同左，`slot.id` 跨端一致 |
+| 法术（spell）打出 | `Game.deck.send_to_graveyard(spell)`（`_play_spell` 末尾） | `handle_remote_play_card` 法术分支末尾追加 `Game.get_deck(caster_pid).send_to_graveyard(card)`，destination 走 `Effects.resolve_destination` 与本端一致 |
+| 装备耐久归零 | `Game.deck.send_to_graveyard(card_data)`（`equipment_manager._on_inst_changed`） | caster 广播 `action/equip_broken { equip_name }` → 远端 `Game.decks[from].send_to_graveyard` + 从 `_remote_equip_insts[from]` 移除破损 inst |
+| 再起 / test_discard 弃牌 | `hand_view.discard_*` 调 `Game.deck.send_to_graveyard` | `_handle_remote_activate_hero` restart/test_discard 分支按 `from`（caster pid）路由 `Game.decks[from].send_to_graveyard(c)`，与法术/单位入墓走同一 proxy deck，重洗时一并清空 |
+| Deck 重洗（draw_pile 空时触发） | `Game.deck.reshuffle(false)` 内部清空 graveyard | 新增 `signal reshuffled` 由本地 deck 发射 → `_on_local_deck_reshuffled` 广播 `action/deck_reshuffle { player_id }` → 远端 `Game.decks[player_id].reshuffle(false)`，proxy graveyard 同步清空 |
+| terrify on_kill 除外受害者 | 按 `v_owner_id → owner_player_id` 取受害者 deck | 锁步：每端取自家对应 proxy deck `erase` + `banish`，保证除外结果一致（修复前 caster 错改本地 deck） |
+| ming_jin 单位回牌库顶 | 按 `cell.owner_slot_id` 取目标单位 owner deck `add_to_draw_pile` | 锁步：每端各取对应 proxy deck（修复前 3v3 队友单位会被错放回 caster 本地 deck） |
+| autophagy 自噬伤害己方英雄 | `damage_player_hero(amount)` → 解析 `target_cell.owner_slot_id` 对应盘的 hero | 锁步：每端用同一 slot id 解析 hero，保证伤害落点一致（修复前用 `Game.main_player_slot()` 是 viewer-relative） |
+
+**展示层**：`EnemySidePanelManager` / `AllySidePanelManager` 在 `set_slot` 同时订阅 `slot.pile_changed` 和 `Game.get_deck(slot.owner_player_id).pile_changed`，`_refresh_content` 取 `slot.graveyard ∪ owner_deck.graveyard` 并集，避免 spawner-origin 与 hand-origin 单位分别落在两处导致单端只见其一。`PILE_TO_PANEL` 同时认 BoardSlot 的 `"banished"` 与 DeckManager 的 `"banish"` 两种 pile 名拼写。
+
+**附盘墓地/除外面板归属**（之前的 viewer-relative bug）：`_create_slot` 选择 `EnemySidePanelManager`(顶部下拉) 或 `AllySidePanelManager`(底部上拉) 不再按 `slot.faction`，改为与 `side_top` 同语义（多队伍 PVP 用 `team_id == local_team` 判定，PVE/1v1 回退 `slot.faction`）。修复前 3v3 队友盘 `faction=ENEMY` 但视觉位于底部，会错配到顶部下拉面板。
+
+### 14.9 UI 简化（已完成）
+
+- 移除主敌方"墓地 / 除外"按钮（`main.gd` / `test_main.gd`）；`EnemyHpPnl` 横向拉伸至整盘宽度（`BOARD_HALF_W * 2`）。
+- 移除全部附盘"墓地 / 除外"按钮（`board_orchestrator._create_slot` 把 `show_pile = false` 传给 `SideBoardUi.build`）；附盘 hp 面板同样横向拉伸至整盘宽度。
+- `_setup_side_enemy_panel` / `_setup_side_ally_panel` 入口条件改为 `side_ui_dict.get("grave_btn") != null`（按钮 null → 跳过 panel mgr 创建，避免无入口的孤儿 UI）。
+- `EnemySidePanelManager` / `AllySidePanelManager` 类与 `set_slot` 数据订阅逻辑保留，未来如恢复 UI 入口可直接复用；当前数据同步链不依赖这些面板存在。
+
+### 14.10 待完成（P1）
 
 - [ ] `TeammateSidePanel`：队友公开信息面板（1v3 / 3v3 均未建）
 - [ ] 含 await 效果加 result 字段广播（`destroy_unit` / `weaken` / `flood_strategy_hero`）
 - [ ] `assault_charge` 迁移 `is_hostile_to`（当前仍用 `is_enemy`，3v3 同队相邻可能误判）
+- [ ] 法术 payload 增补 `effects` 数组（当前 PVP 法术不修改 effects，将来防御）
+- [ ] 装备非白名单激活也广播 `action/activate_equip`（让远端 `_remote_equip_insts` 耐久也能逐次同步，目前仅 broken 时点同步）
+- [ ] 主动英雄技能（`yi_yong_jun` / 等）远端 mirror 协议设计
