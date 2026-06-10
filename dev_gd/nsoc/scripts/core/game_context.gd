@@ -41,6 +41,14 @@ var pvp_room_id:      String = ""
 # 双方用相同种子初始化各自的 DeckManager，保证洗牌顺序一致。
 var pvp_rng_seed:     int    = 0
 
+# ── 1v3 / 多队伍扩展字段 ─────────────────────────────────────────────
+# 当前对局类型："1v1" / "1v3"；空串 = PVE。
+var pvp_match_type: String = ""
+# 队伍映射：{ team_id: [player_id, ...] }，如 {"defender": [pid1], "attacker": [pid2, pid3, pid4]}
+var pvp_teams: Dictionary = {}
+# 本局已阵亡玩家 uuid 列表（阵亡即加入，pvp_advance_turn 跳过，game/end 后可查）
+var pvp_dead_players: Array = []
+
 func pvp_active_player_id() -> String:
 	if pvp_action_order.is_empty():
 		return local_player_id
@@ -53,6 +61,52 @@ func pvp_advance_turn() -> void:
 	if pvp_action_order.is_empty():
 		return
 	pvp_active_idx = (pvp_active_idx + 1) % pvp_action_order.size()
+
+# 1v3+：跳过已阵亡玩家找到下一个存活玩家。
+# 若全部阵亡（不应到此，game/end 应先发），循环后停止。
+func pvp_advance_turn_skip_dead() -> void:
+	if pvp_action_order.is_empty():
+		return
+	var n: int = pvp_action_order.size()
+	for _i in range(n):
+		pvp_active_idx = (pvp_active_idx + 1) % n
+		if not pvp_dead_players.has(pvp_action_order[pvp_active_idx]):
+			return
+
+# 当前活跃玩家是否完成一整轮（即刚回到 index=0）。
+# 用于判断 turn_number 是否该 +1（一轮 = 全部存活玩家走完一次）。
+func is_round_complete() -> bool:
+	return pvp_active_idx == 0
+
+# ── 队伍工具方法 ─────────────────────────────────────────────────────
+func team_of_player(pid: String) -> String:
+	for tid in pvp_teams.keys():
+		var members: Array = pvp_teams[tid]
+		if members.has(pid):
+			return tid
+	return ""
+
+func players_of_team(team_id: String) -> Array:
+	return pvp_teams.get(team_id, [])
+
+func is_player_alive(pid: String) -> bool:
+	return not pvp_dead_players.has(pid)
+
+func mark_player_dead(pid: String) -> void:
+	if not pvp_dead_players.has(pid):
+		pvp_dead_players.append(pid)
+
+# ── 胜负广播 ────────────────────────────────────────────────────────
+# 房主调用：广播 game/end 并本端转结算 UI。
+# winning_team: "defender" / "attacker" / pid（1v1 兼容时传 winner pid）
+# loser_pid:    触发结算的阵亡玩家 uuid
+func pvp_end_game(winning_team: String, loser_pid: String) -> void:
+	if not is_pvp:
+		return
+	Net.send_to_room("game/end", pvp_room_id, {
+		"winning_team": winning_team,
+		"loser_pid": loser_pid,
+	}, "all")
 
 # 关卡数据：DataLoader.load_level 解析后的多棋盘结构。
 # {"boards": {<id>: {initial_units, spawners}}, "initial_units":[...], "spawners":[...]}
@@ -345,7 +399,10 @@ func bootstrap() -> void:
 func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 		per_player_deck_cards,  # Dictionary { pid: Array[CardBase] } 或 Array（向后兼容）
 		all_cards_db: Array = [], rng_seed: int = 0,
-		per_player_heroes: Dictionary = {}) -> void:  # { pid: hero_key }，缺失时回退本地选中
+		per_player_heroes: Dictionary = {},   # { pid: hero_key }，缺失时回退本地选中
+		match_type: String = "1v1",           # "1v1" / "1v3"
+		teams_map: Dictionary = {},           # { team_id: [pid,...] }，空=自动推断
+		slot_layout: Array = []) -> void:     # [{ slot_id, owner_pid, team_id, slot_index }]
 	is_pvp = true
 	local_player_id = p_local_pid
 
@@ -438,9 +495,33 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 	# pvp_room_id 由 pvp_lobby 在切场景前单独注入 Net，这里取回做镜像
 	pvp_room_id = Net.get_current_room_id()
 
+	# ── 1v3 多人字段初始化 ────────────────────────────────────────────
+	pvp_match_type = match_type
+	pvp_dead_players = []
+
+	# teams_map：优先用外部传入；否则按 1v1 / 1v3 默认推断
+	if not teams_map.is_empty():
+		pvp_teams = teams_map.duplicate()
+	elif match_type == "1v3" and all_player_ids.size() >= 4:
+		pvp_teams = {
+			"defender": [String(all_player_ids[0])],
+			"attacker":  [String(all_player_ids[1]), String(all_player_ids[2]), String(all_player_ids[3])],
+		}
+	elif match_type == "1v1" and all_player_ids.size() == 2:
+		pvp_teams = {}   # 1v1 不使用 team_id 判断，保留兼容
+	else:
+		pvp_teams = {}
+
+	# slot_layout：存入 level_data 供 _inject_pvp_level_data 装配时读取
+	# 格式：[{ "slot_id": str, "owner_pid": str, "team_id": str, "slot_index": int }]
+	if not slot_layout.is_empty():
+		level_data = {"pvp_slot_layout": slot_layout}
+	else:
+		level_data = {}
+
 
 # JSON 解出的 abilities 可能是 Array of String（理想）或混入 null 等；统一为 Array[String]。
-static func _to_string_array(raw) -> Array:
+func _to_string_array(raw) -> Array:
 	if typeof(raw) != TYPE_ARRAY:
 		return []
 	var out: Array = []

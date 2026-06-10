@@ -95,9 +95,10 @@ func (h *Hub) handleDisconnect(c *Client) {
 		Type:   "disconnect/notify",
 		RoomID: room.ID,
 		Payload: jsonRaw(map[string]any{
-			"uuid":          c.uuid,
-			"nickname":      c.nickname,
-			"new_host_uuid": newHostUUID,
+			"uuid":           c.uuid,
+			"dead_player_id": c.uuid,   // 客户端按此字段路由阵亡
+			"nickname":       c.nickname,
+			"new_host_uuid":  newHostUUID,
 		}),
 	}
 	h.broadcast(room, notify, "")
@@ -125,12 +126,22 @@ func (h *Hub) route(in inboundMsg) {
 		h.handleList(c, msg)
 	case "room/leave":
 		h.handleLeave(c, msg)
+	case "room/update_config":
+		h.handleUpdateConfig(c, msg)
 	default:
 		h.forward(c, msg)
 	}
 }
 
 func (h *Hub) handleCreate(c *Client, msg *Message) {
+	var payload struct {
+		MatchType string `json:"match_type"`
+	}
+	_ = json.Unmarshal(msg.Payload, &payload)
+	matchType := payload.MatchType
+	if matchType == "" {
+		matchType = "1v1"
+	}
 	id := generateRoomID(h.rooms)
 	if id == "" {
 		c.push(&Message{
@@ -143,6 +154,8 @@ func (h *Hub) handleCreate(c *Client, msg *Message) {
 		ID:         id,
 		HostUUID:   c.uuid,
 		Players:    []*Client{c},
+		MatchType:  matchType,
+		MaxPlayers: MaxPlayersForType(matchType),
 		CreatedAt:  time.Now(),
 		LastActive: time.Now(),
 	}
@@ -152,11 +165,13 @@ func (h *Hub) handleCreate(c *Client, msg *Message) {
 		Type:   "room/create_ok",
 		RoomID: id,
 		Payload: jsonRaw(map[string]any{
-			"host_uuid": c.uuid,
-			"players":   room.PlayerList(),
+			"host_uuid":   c.uuid,
+			"players":     room.PlayerList(),
+			"match_type":  matchType,
+			"max_players": room.MaxPlayers,
 		}),
 	})
-	log.Printf("room %s created by %s", id, c.uuid)
+	log.Printf("room %s created by %s match_type=%s", id, c.uuid, matchType)
 }
 
 func (h *Hub) handleJoin(c *Client, msg *Message) {
@@ -183,14 +198,27 @@ func (h *Hub) handleJoin(c *Client, msg *Message) {
 		})
 		return
 	}
+	// 人数上限：按房间当前 MaxPlayers 限制（0 = 不限制，兼容旧房间）
+	if room.MaxPlayers > 0 && len(room.Players) >= room.MaxPlayers {
+		c.push(&Message{
+			Type:    "room/join_rejected",
+			Payload: jsonRaw(map[string]any{"reason": "full", "max_players": room.MaxPlayers}),
+		})
+		return
+	}
 	// 按连接指针去重（允许同 UUID 的不同连接作为不同玩家加入，支持同机测试）
 	for _, existing := range room.Players {
 		if existing == c {
 			// 同一连接已在房内，幂等回 joined
 			c.push(&Message{
-				Type:    "room/joined",
-				RoomID:  rid,
-				Payload: jsonRaw(map[string]any{"host_uuid": room.HostUUID, "players": room.PlayerList()}),
+				Type:   "room/joined",
+				RoomID: rid,
+				Payload: jsonRaw(map[string]any{
+					"host_uuid":   room.HostUUID,
+					"players":     room.PlayerList(),
+					"match_type":  room.MatchType,
+					"max_players": room.MaxPlayers,
+				}),
 			})
 			return
 		}
@@ -199,8 +227,10 @@ func (h *Hub) handleJoin(c *Client, msg *Message) {
 	c.roomID = rid
 	room.LastActive = time.Now()
 	payload := map[string]any{
-		"host_uuid": room.HostUUID,
-		"players":   room.PlayerList(),
+		"host_uuid":   room.HostUUID,
+		"players":     room.PlayerList(),
+		"match_type":  room.MatchType,
+		"max_players": room.MaxPlayers,
 	}
 	h.broadcast(room, &Message{
 		Type:    "room/joined",
@@ -269,12 +299,45 @@ func (h *Hub) handleList(c *Client, _ *Message) {
 			"id":            r.ID,
 			"host_nickname": hostNickname,
 			"player_count":  len(r.Players),
+			"match_type":    r.MatchType,
+			"max_players":   r.MaxPlayers,
 		})
 	}
 	c.push(&Message{
 		Type:    "room/list_response",
 		Payload: jsonRaw(map[string]any{"rooms": list}),
 	})
+}
+
+// handleUpdateConfig 房主动态更新房间模式与人数上限。
+// 仅房主（HostUUID == c.uuid）可操作；更新后广播 room/config_updated 给全员。
+func (h *Hub) handleUpdateConfig(c *Client, msg *Message) {
+	if c.roomID == "" {
+		return
+	}
+	room, ok := h.rooms[c.roomID]
+	if !ok || room.HostUUID != c.uuid {
+		return
+	}
+	var payload struct {
+		MatchType string `json:"match_type"`
+	}
+	_ = json.Unmarshal(msg.Payload, &payload)
+	if payload.MatchType == "" {
+		return
+	}
+	room.MatchType  = payload.MatchType
+	room.MaxPlayers = MaxPlayersForType(payload.MatchType)
+	log.Printf("room %s config updated: match_type=%s max_players=%d", room.ID, room.MatchType, room.MaxPlayers)
+	// 广播给房内全员（含房主自己），让所有人刷新 UI
+	h.broadcast(room, &Message{
+		Type:   "room/config_updated",
+		RoomID: room.ID,
+		Payload: jsonRaw(map[string]any{
+			"match_type":  room.MatchType,
+			"max_players": room.MaxPlayers,
+		}),
+	}, "")
 }
 
 // forward 业务消息转发。

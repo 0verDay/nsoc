@@ -27,11 +27,12 @@ static func trigger(game_node: Node) -> void:
 		player_slot.hero.heal_full()
 
 	# 2. 玩家侧所有单位四维恢复初始值
+	var local_team: String = game_node.team_of_player(game_node.local_player_id)
 	for slot in game_node.registry.by_faction(BoardSlot.FACTION_PLAYER):
 		if slot.board == null:
 			continue
 		for cell in slot.board.grid_cells.values():
-			if not is_instance_valid(cell) or not cell.has_card or cell.is_enemy:
+			if not is_instance_valid(cell) or not cell.has_card or cell.is_hostile_to(local_team):
 				continue
 			for s in Orientation.SIDES:
 				cell.health[s] = cell.max_health[s]

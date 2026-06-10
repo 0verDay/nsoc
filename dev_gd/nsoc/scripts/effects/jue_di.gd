@@ -29,12 +29,13 @@ func on_play(card_data, ctx) -> bool:
 			break
 
 	# 2. 全场所有棋盘敌方单位施加浸水，并立即刷新 badge
+	var local_team: String = game.team_of_player(game.local_player_id)
 	if game.registry != null:
 		for slot in game.registry.slots:
 			if slot.board == null:
 				continue
 			for cell in slot.board.grid_cells.values():
-				if not is_instance_valid(cell) or not cell.has_card or not cell.is_enemy:
+				if not is_instance_valid(cell) or not cell.has_card or not cell.is_hostile_to(local_team):
 					continue
 				if not cell.effects.has("soaked"):
 					cell.effects.append("soaked")

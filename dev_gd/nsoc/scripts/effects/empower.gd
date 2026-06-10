@@ -18,7 +18,10 @@ func on_play(_card_data, ctx) -> bool:
 	var cell = ctx.target_cell
 	if cell == null or not cell.has_card:
 		return true
-	if cell.is_enemy:
+	# 友敌判定：PVP 按 team_id；PVE 回退 is_enemy
+	var local_team: String = ctx.game.team_of_player(ctx.game.local_player_id) \
+		if ctx.game != null else ""
+	if cell.is_hostile_to(local_team):
 		return true
 	for s in Orientation.SIDES:
 		cell.health[s] += BUFF
