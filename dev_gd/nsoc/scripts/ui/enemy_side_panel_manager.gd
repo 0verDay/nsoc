@@ -11,8 +11,12 @@ signal long_press_canceled
 # 面板内部 key（仍叫 enemy_grave / enemy_banished 与 toggle 字符串保持兼容）
 const PANEL_NAMES: PackedStringArray = ["enemy_grave", "enemy_banished"]
 const PANEL_TITLES: Dictionary = {"enemy_grave": "敌方墓地", "enemy_banished": "敌方除外"}
-# slot.pile_changed 的 pile 名 → 本面板 key
-const PILE_TO_PANEL: Dictionary = {"graveyard": "enemy_grave", "banished": "enemy_banished"}
+# pile 名 → 本面板 key（同时兼容 BoardSlot 的 "banished" 与 DeckManager 的 "banish"）
+const PILE_TO_PANEL: Dictionary = {
+	"graveyard": "enemy_grave",
+	"banished": "enemy_banished",
+	"banish": "enemy_banished",
+}
 
 # clip 区域 = 敌方半场（基于 Main.tscn 中 TopGridBg 范围扩边）
 const CLIP_TOP: float = 60.0
@@ -23,6 +27,9 @@ const SLIDE_DURATION: float = 0.3
 
 var _parent: Control
 var _slot: BoardSlot = null
+# 同时订阅 owner 的个人 deck（hand-origin 单位死亡入 deck.graveyard 而非 slot.graveyard，
+# 跨端展示需合并两侧数据），_owner_deck 在 set_slot 时按 slot.owner_player_id 解析。
+var _owner_deck: DeckManager = null
 var _center_x_offset: float = 0.0   # 面板水平中心相对视口中心的偏移（与 BOARD_SHIFT 同坐标系）
 # panel_name -> {"clip": Control, "panel": Panel, "list": VBoxContainer}
 var _ui_panels: Dictionary = {}
@@ -43,9 +50,17 @@ func set_slot(slot: BoardSlot) -> void:
 		return
 	if _slot != null and _slot.pile_changed.is_connected(_on_slot_pile_changed):
 		_slot.pile_changed.disconnect(_on_slot_pile_changed)
+	if _owner_deck != null and _owner_deck.pile_changed.is_connected(_on_slot_pile_changed):
+		_owner_deck.pile_changed.disconnect(_on_slot_pile_changed)
 	_slot = slot
+	_owner_deck = null
 	if _slot != null:
 		_slot.pile_changed.connect(_on_slot_pile_changed)
+		# owner 的个人 deck（PVP 中 hand-deploy 单位死亡入此 deck.graveyard）
+		if _slot.owner_player_id != "" and has_node("/root/Game"):
+			_owner_deck = Game.get_deck(_slot.owner_player_id)
+			if _owner_deck != null:
+				_owner_deck.pile_changed.connect(_on_slot_pile_changed)
 	# 重新拉取打开中的面板内容
 	if _current_open != "":
 		_refresh_content(_current_open)
@@ -139,11 +154,17 @@ func _refresh_content(p_name: String) -> void:
 		return
 
 	if p_name == "enemy_grave":
-		var grave: Array = _slot.graveyard
+		var grave: Array = []
+		grave.append_array(_slot.graveyard)
+		if _owner_deck != null:
+			grave.append_array(_owner_deck.graveyard)
 		for i in range(grave.size() - 1, -1, -1):
 			vbox.add_child(_create_list_item(grave[i].name, 1))
 	elif p_name == "enemy_banished":
-		var ban: Array = _slot.banished
+		var ban: Array = []
+		ban.append_array(_slot.banished)
+		if _owner_deck != null:
+			ban.append_array(_owner_deck.banished)
 		for i in range(ban.size() - 1, -1, -1):
 			vbox.add_child(_create_list_item(ban[i].name, 1))
 

@@ -161,11 +161,15 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 	# 1v3：defender 盘 front=0，attacker 盘 front=2；PVE/1v1：FACTION_ENEMY front=2
 	var enemy_front_row: int = BoardModel.front_row_of_slot(slot)
 	var front_enemy = board_model.get_cell(Vector2(enemy_front_row, dst_col))
-	# 1v3：用 is_hostile_to(local_team) 判断；PVE/1v1 回退 is_enemy
-	var local_team: String = Game.team_of_player(Game.local_player_id)
+	# 用跨盘单位自身的 team_id 判断目标前排是否有敌方单位。
+	# 不能用 local_team（本地玩家队伍），因为双端玩家不同，会导致两台机器判断不一致：
+	#   守方机器 local_team="defender"：守方单位在攻方前排 = 友军 → 不阻挡
+	#   攻方机器 local_team="attacker"：同一守方单位 = 敌军 → 错误触发 has_enemy
+	var crossing_team: String = cell.team_id if cell.team_id != "" \
+		else Game.team_of_player(Game.local_player_id)
 	var has_enemy: bool = is_instance_valid(front_enemy) \
 		and front_enemy.has_card \
-		and front_enemy.is_hostile_to(local_team)
+		and front_enemy.is_hostile_to(crossing_team)
 
 	if has_enemy:
 		# 若冲锋单位尚未到达玩家前排，先冲过去再攻击

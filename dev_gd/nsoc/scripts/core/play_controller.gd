@@ -354,7 +354,7 @@ static func _pvp_opponent_id() -> String:
 # 多队伍 PVP 新路径（slot_id = "slot_<uuid>"，abs_row / abs_col = 绝对坐标，无需镜像）：
 #   payload 中带 "abs_row" / "abs_col" 字段时走新路径；否则回退旧逻辑。
 #   1v3 / 3v3 均走此路径。
-func handle_remote_play_card(payload: Dictionary) -> void:
+func handle_remote_play_card(payload: Dictionary, caster_pid: String = "") -> void:
 	var card_name: String = String(payload.get("card_name", ""))
 	var card_type: String = String(payload.get("card_type", "单位"))
 	var sender_slot: String = String(payload.get("slot_id", "player_main"))
@@ -411,6 +411,16 @@ func handle_remote_play_card(payload: Dictionary) -> void:
 		"法术":
 			print("[SPELL] recv at %s(%d,%d) has_card=%s result_atk=%s" % [
 				target_slot_id, target_row, target_col, str(cell.has_card), str(payload.get("result_atk", "N/A"))])
+			# 法术 destination 由 effect.resolve_destination 决定（默认 graveyard，
+			# 个别 effect 如 jue_di / exhaust 会覆盖为 banish）。在跑 effect 前先解析，
+			# 避免 unit 已死亡分支后再访问 cell 失败。
+			var spell_destination: String = "graveyard"
+			for eff in _get_effects(card):
+				var ctx_for_dest := Game.make_effect_context()
+				ctx_for_dest.target_cell = cell
+				var dest := Effects.resolve_destination(eff, card, ctx_for_dest)
+				if dest != "":
+					spell_destination = dest
 			if payload.has("result_atk") and cell.has_card:
 				# 法术执行后单位仍存活：直接写终态数值（绕过 is_enemy 等 effect 内部检查）
 				cell.attack = int(payload.get("result_atk", cell.attack))
@@ -436,6 +446,17 @@ func handle_remote_play_card(payload: Dictionary) -> void:
 				ctx.target_cell = cell
 				for eff in _get_effects(card):
 					await Effects.trigger_play(eff, card, ctx)
+			# 跨端入墓：法术卡同步到 caster 的代理 deck，让远端 viewer 的合并墓地面板可见。
+			# 与 _play_spell 末尾的本地落库语义一致（caster 端走 Game.deck，远端走 Game.decks[caster]）。
+			var caster_deck: DeckManager = null
+			if caster_pid != "":
+				caster_deck = Game.get_deck(caster_pid)
+			if caster_deck == null:
+				caster_deck = Game.deck
+			if caster_deck != null:
+				match spell_destination:
+					"banish": caster_deck.banish(card)
+					_: caster_deck.send_to_graveyard(card)
 		"装备":
 			# 对手装备由对手自己的 Equipments 管理，本端不添加。
 			# Step 5-D：若需展示对手装备 UI，在此补充视觉逻辑。

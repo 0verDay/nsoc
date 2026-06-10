@@ -123,8 +123,13 @@ func _reposition() -> void:
 	var bw: float = bg.size.x
 	var bh: float = bg.size.y
 	var cx: float = bw / 2.0
-	# 玩家盘贴上沿，敌方盘贴下沿
-	var cy: float = 0.0 if _slot.faction == BoardSlot.FACTION_PLAYER else bh
+	# 几何判断：bg_panel 中心在视口上半 → 板子在上方 → 徽章贴下沿（朝中线）
+	#                              下半 → 板子在下方 → 徽章贴上沿（朝中线）
+	# 不依赖 faction，兼容 3v3 友军盘（视觉在下但 faction=ENEMY）等特殊情形。
+	var screen_h: float = bg.get_viewport_rect().size.y
+	var board_mid_y: float = bg.global_position.y + bh * 0.5
+	var at_top_half: bool = board_mid_y < screen_h * 0.5
+	var cy: float = bh if at_top_half else 0.0
 	_badge.position = Vector2(cx - BADGE_SIZE / 2.0, cy - BADGE_SIZE / 2.0)
 	# 光环略大，圆心与徽章一致
 	var rh: float = RING_RADIUS + 3.0

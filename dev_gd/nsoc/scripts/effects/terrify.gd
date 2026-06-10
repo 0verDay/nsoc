@@ -34,10 +34,22 @@ func on_kill(_attacker_cell, victim_cells: Array, ctx) -> void:
 		var cdata = ctx.game.get_card(v_name)
 		if cdata == null:
 			continue
-		# origin == "hand" → game.deck（玩家手牌部署的单位）
-		# 其他 → 原属盘 slot.graveyard
+		# origin == "hand" → 受害者归属玩家的 deck（PVP 中 caster 与受害者
+		# 可能不属同一玩家；handle_unit_death 已把 cdata 入受害者 owner 的
+		# deck.graveyard，erase + banish 必须在同一 deck 上做，避免：
+		#   1) caster 本地 deck 多出异主卡（错误进 banished）
+		#   2) 受害者真实 deck.graveyard 残留 cdata（除外语义未生效）
+		# 其他 origin → 原属盘 slot.graveyard（保留旧路径）
 		if v_origin == "hand":
-			var deck = ctx.game.deck
+			var owner_slot_v: BoardSlot = ctx.game.registry.get_by_id(v_owner_id) \
+				if ctx.game.registry != null else null
+			var deck: DeckManager = null
+			if owner_slot_v != null and owner_slot_v.owner_player_id != "":
+				deck = ctx.game.get_deck(owner_slot_v.owner_player_id)
+			if deck == null:
+				deck = ctx.game.deck
+			if deck == null:
+				continue
 			if deck.graveyard.has(cdata):
 				deck.graveyard.erase(cdata)
 				deck.pile_changed.emit("graveyard")
