@@ -350,7 +350,9 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 			side_top = (team_id != local_team)
 		else:
 			side_top = (faction == BoardSlot.FACTION_ENEMY)
-		var show_pile: bool = true
+		# 附盘"墓地 / 除外"按钮已全面取消（敌方/友军/PVE/PVP 一致），跨端数据
+		# 仍同步到 slot.graveyard / Game.decks[owner_pid].graveyard，UI 不再展示。
+		var show_pile: bool = false
 		side_ui_dict = SideBoardUiScript.build(_parent, center_x, side_top,
 			"_" + id, show_pile)
 		grid = side_ui_dict["grid"]
@@ -406,15 +408,25 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 			lbl.text = str(slot.hero.health)
 		_wire_hero_long_press(hero_panel, slot)
 
-	# 附盘 ENEMY 阵营：挂一个 EnemySidePanelManager 作为该盘的墓地/除外
-	if not _main_ui.has(id) and faction == BoardSlot.FACTION_ENEMY \
-			and side_ui_dict.has("grave_btn") and side_ui_dict.has("banished_btn"):
-		_setup_side_enemy_panel(id, slot, side_ui_dict)
-
-	# 附盘 ALLY 阵营：挂一个 AllySidePanelManager 作为该盘的墓地/除外
-	if not _main_ui.has(id) and faction == BoardSlot.FACTION_PLAYER \
-			and side_ui_dict.has("grave_btn") and side_ui_dict.has("banished_btn"):
-		_setup_side_ally_panel(id, slot, side_ui_dict)
+	# 附盘墓地/除外面板：按"上下位置"决定 Enemy(顶) / Ally(底) 管理器，与 side_top 同语义。
+	# 多队伍 PVP（1v3/3v3）下队友盘 faction=ENEMY 但视觉位于底部（同队），需用 team_id 判定；
+	# PVE/1v1 回退 faction。修复友军墓地面板错误弹到敌方半场顶部的 bug。
+	# 注：墓地/除外按钮已全部取消（show_pile=false），此分支只在历史 ui_dict 仍含按钮
+	# 节点时才生效；当前总是 null → 跳过 panel manager 创建，避免无入口的孤儿 UI。
+	if not _main_ui.has(id) \
+			and side_ui_dict.get("grave_btn") != null \
+			and side_ui_dict.get("banished_btn") != null:
+		var local_team_for_panel: String = Game.team_of_player(Game.local_player_id) \
+			if Game.registry != null else ""
+		var panel_is_top: bool
+		if team_id != "" and local_team_for_panel != "":
+			panel_is_top = (team_id != local_team_for_panel)
+		else:
+			panel_is_top = (faction == BoardSlot.FACTION_ENEMY)
+		if panel_is_top:
+			_setup_side_enemy_panel(id, slot, side_ui_dict)
+		else:
+			_setup_side_ally_panel(id, slot, side_ui_dict)
 
 	# phantom 预告
 	if slot.spawners != null:

@@ -243,11 +243,16 @@ func _iter_phase_cells_of_slot(slot: BoardSlot) -> Array:
 	else:
 		for r in range(BoardModel.ROWS - 1, -1, -1):
 			rows.append(r)
-	# 自家盘的单位
+	# 自家盘的单位（仅归属本盘的，即 owner_slot_id == slot.id）。
+	# 跨入到本盘的他方单位 owner_slot_id 仍指向原归属盘，不属本盘行动阶段，
+	# 这里就过滤掉，避免 _process_cell 内多队伍 PVP 用 viewer 相对的 is_enemy
+	# 判定不一致而误处理。
 	for r in rows:
 		for c in range(BoardModel.COLS):
 			var cell = slot.board.get_cell(Vector2(r, c))
 			if cell != null and cell.has_card:
+				if cell.owner_slot_id != "" and cell.owner_slot_id != slot.id:
+					continue
 				out.append({"cell": cell, "slot": slot})
 	# 已跨入其他棋盘的本盘单位（owner_slot_id == slot.id）
 	var reg := _registry()
@@ -384,10 +389,17 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 
 	if not cell.has_card or cell.has_attacked:
 		return
-	# 多队伍 PVP 中按 team_id 判断是否是本轮处理的单位（同队即处理）；PVE/1v1 回退 is_enemy
 	var is_my_unit: bool
 	if cell.team_id != "" and slot.team_id != "":
 		is_my_unit = (cell.team_id == slot.team_id)
+		# 跨盘单位例外：已跨入敌方盘的单位 owner_slot_id ≠ 当前盘 id，
+		# 但仍属原阵营，应参与原归属盘的行动阶段。
+		# 多队伍 PVP（1v3/3v3）下 cell.is_enemy 与 for_enemy 都是 viewer 视角，
+		# 在同队队友 viewer 上会出现 is_enemy=false / for_enemy=true 的不对称
+		# 导致跨盘单位在队友视角下被错误过滤。_iter_phase_cells_of_slot 已用
+		# owner_slot_id 严格过滤跨盘 cell 归属，信任迭代器即可。
+		if not is_my_unit and cell.owner_slot_id != "" and cell.owner_slot_id != slot.id:
+			is_my_unit = true
 	else:
 		is_my_unit = (cell.is_enemy == for_enemy)
 	if not is_my_unit:
@@ -521,7 +533,13 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 							if nc == null:
 								break
 							if nc.has_card:
-								if not nc.is_enemy:  # 同阵营（友军）阻挡
+								# 友军阻挡：1v3 用 team_id（双端一致）；PVE/1v1 用 is_enemy
+								var nc_is_friendly: bool
+								if nc.team_id != "" and cell.team_id != "":
+									nc_is_friendly = (nc.team_id == cell.team_id)
+								else:
+									nc_is_friendly = not nc.is_enemy
+								if nc_is_friendly:
 									break
 								probe_enemy = nc
 								break
@@ -601,9 +619,9 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		is_auto_cross_candidate = false
 		auto_cross_target_slots = []
 	elif on_home_board and slot.team_id == "attacker":
-		# 1v3 攻方：拥有者 / 远端镜像都走 _enemy_auto_cross（确定性，单一目标=守方盘）
-		var front_r := BoardModel.front_row_of_slot(slot)
-		is_auto_cross_candidate = (cell.row == front_r and not enemy_slots.is_empty())
+		# 1v3 攻方：_can_cross_board 同时覆盖"到达 front_row"和"冲锋提前到达"两种情形，
+		# 使 charge 单位在 row 2 有畅通路径时无需停在 row 0 再跨盘。
+		is_auto_cross_candidate = (_can_cross_board(cell, slot) and not enemy_slots.is_empty())
 		auto_cross_target_slots = enemy_slots
 	elif on_home_board and slot.team_id == "defender":
 		# 1v3 守方：UI 路径已在 defender_cross_path 中处理；防止落入 auto-cross
@@ -611,10 +629,14 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		auto_cross_target_slots = []
 	else:
 		# 旧路径（PVE/1v1）
+		# _can_cross_board 同时覆盖"到达 front_row"和"冲锋提前到达"两种情形，
+		# 使 charge 单位在 row 0/1 同列到 front_row 全空时即可跨盘，与拥有者
+		# (PLAYER 阶段) 的 _front_row_resolve 路径对称（修复锁步 PVP 中对方
+		# 视角下冲锋单位只移动到自家前排不跨盘的 bug）。
 		is_auto_cross_candidate = (on_home_board \
 			and faction == ENEMY \
 			and slot.faction == BoardSlot.FACTION_ENEMY \
-			and cell.row == BoardModel.front_row_of(BoardSlot.FACTION_ENEMY) \
+			and _can_cross_board(cell, slot) \
 			and not player_slots.is_empty())
 		auto_cross_target_slots = player_slots
 	if is_auto_cross_candidate:
