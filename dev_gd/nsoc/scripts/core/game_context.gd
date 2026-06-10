@@ -78,6 +78,11 @@ func pvp_advance_turn_skip_dead() -> void:
 func is_round_complete() -> bool:
 	return pvp_active_idx == 0
 
+# 是否为多队伍 PVP（1v3 或 3v3）。
+# 用于替换分散的 pvp_match_type == "1v3" 判断，统一支持 3v3 扩展。
+func is_multi_team_pvp() -> bool:
+	return pvp_match_type == "1v3" or pvp_match_type == "3v3"
+
 # ── 队伍工具方法 ─────────────────────────────────────────────────────
 func team_of_player(pid: String) -> String:
 	for tid in pvp_teams.keys():
@@ -499,9 +504,21 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 	pvp_match_type = match_type
 	pvp_dead_players = []
 
-	# teams_map：优先用外部传入；否则按 1v1 / 1v3 默认推断
+	# teams_map：优先用外部传入；否则从 slot_layout 推断（最准确）；最后按位置兜底
 	if not teams_map.is_empty():
 		pvp_teams = teams_map.duplicate()
+	elif not slot_layout.is_empty():
+		# 从 slot_layout 提取 team 信息（1v3 / 3v3 通用）
+		var inferred: Dictionary = {}
+		for entry in slot_layout:
+			var pid: String = String(entry.get("owner_pid", ""))
+			var tid: String = String(entry.get("team_id", ""))
+			if pid == "" or tid == "":
+				continue
+			if not inferred.has(tid):
+				inferred[tid] = []
+			inferred[tid].append(pid)
+		pvp_teams = inferred
 	elif match_type == "1v3" and all_player_ids.size() >= 4:
 		pvp_teams = {
 			"defender": [String(all_player_ids[0])],

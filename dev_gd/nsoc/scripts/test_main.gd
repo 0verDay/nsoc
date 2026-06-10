@@ -118,8 +118,8 @@ func _ready() -> void:
 
 	var orchestrator_main_ui: Dictionary
 	var orchestrator_resolver = null
-	if Game.is_pvp and Game.pvp_match_type == "1v3":
-		# 1v3：用 BoardLayoutResolver 计算布局，动态映射 slot_id → UI 节点
+	if Game.is_pvp and Game.is_multi_team_pvp():
+		# 1v3 / 3v3：用 BoardLayoutResolver 计算布局，动态映射 slot_id → UI 节点
 		var resolver := BoardLayoutResolver.new()
 		var layout: Array = []
 		if Game.level_data.has("pvp_slot_layout"):
@@ -127,7 +127,10 @@ func _ready() -> void:
 			if typeof(raw) == TYPE_ARRAY:
 				layout = raw
 		if layout.is_empty():
-			layout = _build_default_1v3_layout()
+			if Game.pvp_match_type == "3v3":
+				layout = _build_default_3v3_layout()
+			else:
+				layout = _build_default_1v3_layout()
 		resolver.resolve(Game.local_player_id, layout)
 		orchestrator_resolver = resolver
 		orchestrator_main_ui = {}
@@ -176,9 +179,9 @@ func _ready() -> void:
 	if hero_action_bar != null:
 		hero_action_bar._refresh_all()
 	# boot 后把主敌盘 slot 注入 enemy_side_panels 作数据源
-	# 1v3：主对手盘 id 由 resolver 提供；PVE/1v1：固定 "enemy_main"
+	# 多队伍 PVP：主对手盘 id 由 resolver 提供；PVE/1v1：固定 "enemy_main"
 	var enemy_main_id: String = "enemy_main"
-	if Game.is_pvp and Game.pvp_match_type == "1v3" and board_orchestrator._resolver != null:
+	if Game.is_pvp and Game.is_multi_team_pvp() and board_orchestrator._resolver != null:
 		enemy_main_id = board_orchestrator._resolver.top_slot_id
 	var enemy_main_slot: BoardSlot = Game.registry.get_by_id(enemy_main_id) if Game.registry != null else null
 	if enemy_main_slot == null and Game.registry != null:
@@ -319,9 +322,9 @@ func _wire_signals() -> void:
 	if p_hero != null:
 		p_hero.health_changed.connect(_on_player_health_changed)
 		p_hero.died.connect(_on_player_hero_died)
-	# 主对手英雄：1v3 用 resolver.top_slot_id 找对应 slot；1v1/PVE 用 enemy_main_hero()
+	# 主对手英雄：多队伍 PVP 用 resolver.top_slot_id 找对应 slot；1v1/PVE 用 enemy_main_hero()
 	var e_hero: HeroState = null
-	if Game.is_pvp and Game.pvp_match_type == "1v3" and is_instance_valid(board_orchestrator) \
+	if Game.is_pvp and Game.is_multi_team_pvp() and is_instance_valid(board_orchestrator) \
 			and board_orchestrator._resolver != null:
 		var top_slot: BoardSlot = Game.registry.get_by_id(board_orchestrator._resolver.top_slot_id) \
 			if Game.registry != null else null
@@ -388,8 +391,8 @@ func _on_enemy_hero_died() -> void:
 func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利" if is_enemy else "失败"
-	# PVP 1v3：胜负已由 board_slot._on_hero_died → pvp_end_game 广播，此处只更新本端 UI
-	if Game.is_pvp and Game.pvp_match_type == "1v3":
+	# 多队伍 PVP：胜负已由 board_slot._on_hero_died → pvp_end_game 广播，此处只更新本端 UI
+	if Game.is_pvp and Game.is_multi_team_pvp():
 		# board_slot 已发 game/end，无需再发；直接显示胜负画面
 		_show_game_over(is_enemy)
 		return
@@ -478,7 +481,7 @@ func _on_end_turn_pressed() -> void:
 		end_turn_btn.disabled = true
 		end_turn_btn.text = "行动中"
 		# 跑己方 slot 的单位行动
-		if Game.pvp_match_type == "1v3":
+		if Game.is_multi_team_pvp():
 			var my_slot: BoardSlot = Game.registry.by_owner(Game.local_player_id) if Game.registry != null else null
 			if my_slot != null:
 				await Game.turn.run_pvp_phase_for_slot(my_slot.id)
@@ -495,7 +498,7 @@ func _on_end_turn_pressed() -> void:
 			"player_id":   Game.local_player_id,
 			"turn_number": Game.turn.turn_number,
 		}, "all")
-		if Game.pvp_match_type == "1v3":
+		if Game.is_multi_team_pvp():
 			Game.pvp_advance_turn_skip_dead()
 		else:
 			Game.pvp_advance_turn()
@@ -929,6 +932,8 @@ func _play_intro_animation() -> void:
 func _inject_pvp_level_data() -> void:
 	if Game.pvp_match_type == "1v3":
 		_inject_1v3_level_data()
+	elif Game.pvp_match_type == "3v3":
+		_inject_3v3_level_data()
 	else:
 		_inject_1v1_level_data()
 
@@ -1008,6 +1013,8 @@ func _setup_pvp_slots() -> void:
 		return
 	if Game.pvp_match_type == "1v3":
 		_setup_pvp_slots_1v3()
+	elif Game.pvp_match_type == "3v3":
+		_setup_pvp_slots_3v3()
 	else:
 		_setup_pvp_slots_1v1()
 
@@ -1036,6 +1043,60 @@ func _setup_pvp_slots_1v3() -> void:
 		if slot != null:
 			slot.owner_player_id = owner_pid
 			slot.team_id = tid
+
+# 3v3：按 slot_layout 构建 boards 字典（逻辑与 _inject_1v3_level_data 相同，team_a/team_b）。
+func _inject_3v3_level_data() -> void:
+	var layout: Array = []
+	if Game.level_data.has("pvp_slot_layout"):
+		var raw = Game.level_data["pvp_slot_layout"]
+		if typeof(raw) == TYPE_ARRAY:
+			layout = raw
+	if layout.is_empty():
+		layout = _build_default_3v3_layout()
+	var boards: Dictionary = {}
+	for entry in layout:
+		var slot_id: String = String(entry.get("slot_id", ""))
+		var owner_pid: String = String(entry.get("owner_pid", ""))
+		var tid: String = String(entry.get("team_id", ""))
+		var sidx: int = int(entry.get("slot_index", 0))
+		if slot_id == "":
+			continue
+		var hero_spec: Dictionary = Game.hero_specs.get(owner_pid, _pvp_default_hero_spec())
+		var faction: int = 0 if owner_pid == Game.local_player_id else 1
+		var role: String = "main_player" if owner_pid == Game.local_player_id else "main_enemy"
+		boards[slot_id] = {
+			"faction": faction, "role": role, "slot_index": sidx,
+			"team_id": tid, "owner_player_id": owner_pid,
+			"hero": hero_spec,
+			"initial_units": [], "spawners": [], "spell_casters": [],
+		}
+	Game.level_data = {"boards": boards, "pvp_slot_layout": layout}
+
+# 本地测试用：无服务器时按 pvp_teams 自动生成 3v3 的 slot_layout。
+# team_a 玩家 slot_index 0/1/2，team_b 玩家 slot_index 3/4/5。
+func _build_default_3v3_layout() -> Array:
+	var layout: Array = []
+	var team_a: Array = Game.players_of_team("team_a")
+	var team_b: Array = Game.players_of_team("team_b")
+	for i in range(team_a.size()):
+		layout.append({
+			"slot_id":    "slot_" + String(team_a[i]),
+			"owner_pid":  String(team_a[i]),
+			"team_id":    "team_a",
+			"slot_index": i,
+		})
+	for i in range(team_b.size()):
+		layout.append({
+			"slot_id":    "slot_" + String(team_b[i]),
+			"owner_pid":  String(team_b[i]),
+			"team_id":    "team_b",
+			"slot_index": 3 + i,
+		})
+	return layout
+
+# 3v3：按 level_data.pvp_slot_layout 为每个 slot 写入 owner_player_id / team_id（与 1v3 逻辑相同）。
+func _setup_pvp_slots_3v3() -> void:
+	_setup_pvp_slots_1v3()   # 完全复用 1v3 的注入逻辑（slot_layout 结构相同）
 
 func _find_opponent_pid(local_pid: String) -> String:
 	for pid in Game.decks.keys():
@@ -1173,8 +1234,8 @@ func _handle_pvp_message(msg: Dictionary) -> void:
 		"action/end_turn":
 			await _on_remote_end_turn(payload)
 		"action/cross_board":
-			# 1v3 守方拥有者广播的跨盘目标盘选择；远端入队，等待 _on_remote_end_turn
-			# 回放守方阶段时由 TurnSystem.consume_cross_choice 消费。
+			# 多队伍 PVP（1v3 守方 / 3v3 所有玩家）拥有者广播的跨盘目标盘选择；
+			# 远端入队，等待 _on_remote_end_turn 回放该玩家阶段时由 TurnSystem.consume_cross_choice 消费。
 			Game.turn.enqueue_cross_choice(payload)
 		"action/activate_hero":
 			# 对手激活英雄技能 → 本端镜像必要状态变更
@@ -1208,7 +1269,7 @@ func _handle_pvp_message(msg: Dictionary) -> void:
 				var winner_id: String    = String(payload.get("winner_id", ""))  # 1v1 旧字段兼容
 				var local_win: bool = false
 				if winning_team != "":
-					# 1v3：按队伍判断
+					# 多队伍 PVP（1v3/3v3）：按队伍判断
 					local_win = (Game.team_of_player(Game.local_player_id) == winning_team)
 				elif winner_id != "":
 					# 1v1 旧路径
@@ -1227,7 +1288,7 @@ func _on_remote_end_turn(payload: Dictionary) -> void:
 	end_turn_btn.text = "结算中"
 	# 确定本消息发送方的 slot
 	var sender_pid: String = String(payload.get("player_id", ""))
-	if Game.pvp_match_type == "1v3":
+	if Game.is_multi_team_pvp():
 		var sender_slot: BoardSlot = Game.registry.by_owner(sender_pid) if (Game.registry != null and sender_pid != "") else null
 		if sender_slot != null:
 			await Game.turn.run_pvp_phase_for_slot(sender_slot.id)

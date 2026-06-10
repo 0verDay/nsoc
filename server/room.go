@@ -19,8 +19,8 @@ type Room struct {
 	HostUUID   string
 	Players    []*Client
 	Started    bool
-	MatchType  string    // "1v1" / "1v3"（默认 "1v1"）
-	MaxPlayers int       // 按 MatchType 决定：1v1=2, 1v3=4
+	MatchType  string    // "1v1" / "1v3" / "3v3"（默认 "1v1"）
+	MaxPlayers int       // 按 MatchType 决定：1v1=2, 1v3=4, 3v3=6
 	CreatedAt  time.Time
 	LastActive time.Time
 }
@@ -35,8 +35,11 @@ func (r *Room) PlayerList() []RoomPlayer {
 
 // MaxPlayersForType 按 match_type 返回最大玩家数
 func MaxPlayersForType(matchType string) int {
-	if matchType == "1v3" {
+	switch matchType {
+	case "1v3":
 		return 4
+	case "3v3":
+		return 6
 	}
 	return 2 // 默认 1v1
 }
