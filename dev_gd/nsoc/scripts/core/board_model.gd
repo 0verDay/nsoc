@@ -35,27 +35,22 @@ static func front_row_of(faction: int) -> int:
 static func back_row_of(faction: int) -> int:
 	return ROWS - 1 if faction == FACTION_PLAYER else 0
 
-# 按 BoardSlot 取前排索引。1v3 中用 team_id 决定方向；PVE 回退 faction。
-# defender 盘：row 0 朝上攻击攻方 → front=0
-# attacker 盘：row 2 朝下攻击守方 → front=ROWS-1
+# 按 BoardSlot 取前排索引。多队伍 PVP 中用 team_id 决定方向；PVE 回退 faction。
+# defender / attacker / team_a / team_b 盘：row 0 朝上为前排 → front=0
 static func front_row_of_slot(slot: BoardSlot) -> int:
-	if slot.team_id == "defender":
-		return 0
-	elif slot.team_id == "attacker":
-		return 0   # 攻方也向 row=0 推进，与守方同方向（都朝上对面）
+	if slot.team_id != "":
+		return 0   # 所有多队伍 PVP 盘均以 row=0 为前排
 	return front_row_of(slot.faction)
 
 static func back_row_of_slot(slot: BoardSlot) -> int:
-	if slot.team_id == "defender":
-		return ROWS - 1
-	elif slot.team_id == "attacker":
-		return ROWS - 1
+	if slot.team_id != "":
+		return ROWS - 1   # 后排（英雄所在）始终是 row=ROWS-1
 	return back_row_of(slot.faction)
 
-# 推进方向（向 front 走）：defender/attacker 均 step=-1（向 row=0）；PVE/1v1 回退 faction
+# 推进方向（向 front 走）：多队伍 PVP 全员 step=-1（向 row=0）；PVE/1v1 回退 faction
 static func step_of_slot(slot: BoardSlot) -> int:
-	if slot.team_id == "defender" or slot.team_id == "attacker":
-		return -1   # 全员向 row=0 推进（自家盘）
+	if slot.team_id != "":
+		return -1   # 所有多队伍 PVP 盘均向 row=0 推进
 	return -1 if slot.faction == FACTION_PLAYER else 1
 
 # 推进方向（向 front 走）：玩家 -1（row 减小），敌方 +1（row 增大）

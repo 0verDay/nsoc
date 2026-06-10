@@ -31,8 +31,8 @@ var settings_panel: SettingsPanelController
 var play_controller: PlayController
 var combat: CombatSystem
 
-var enemy_grave_btn: Button
-var enemy_banished_btn: Button
+# 敌方"墓地 / 除外"按钮已移除（数据多端同步保留，UI 不再展示）。
+# var enemy_grave_btn / enemy_banished_btn 移除以避免引用残留。
 var hero_action_bar: HeroActionBar
 var _action_order_bar: ActionOrderBar = null
 
@@ -64,6 +64,7 @@ func _ready() -> void:
 	if Game.is_pvp:
 		# ── PVP 路径：bootstrap_pvp 已由 PvpLobby 调用，不走 PVE bootstrap ──
 		_inject_pvp_level_data()
+		_wire_pvp_deck_reshuffle_sync()
 	else:
 		# ── PVE 路径 ─────────────────────────────────────────────────────
 		# test_main 专用多棋盘测试关卡；main 场景继续读默认 test_level.json。
@@ -118,8 +119,8 @@ func _ready() -> void:
 
 	var orchestrator_main_ui: Dictionary
 	var orchestrator_resolver = null
-	if Game.is_pvp and Game.pvp_match_type == "1v3":
-		# 1v3：用 BoardLayoutResolver 计算布局，动态映射 slot_id → UI 节点
+	if Game.is_pvp and Game.is_multi_team_pvp():
+		# 1v3 / 3v3：用 BoardLayoutResolver 计算布局，动态映射 slot_id → UI 节点
 		var resolver := BoardLayoutResolver.new()
 		var layout: Array = []
 		if Game.level_data.has("pvp_slot_layout"):
@@ -127,7 +128,10 @@ func _ready() -> void:
 			if typeof(raw) == TYPE_ARRAY:
 				layout = raw
 		if layout.is_empty():
-			layout = _build_default_1v3_layout()
+			if Game.pvp_match_type == "3v3":
+				layout = _build_default_3v3_layout()
+			else:
+				layout = _build_default_1v3_layout()
 		resolver.resolve(Game.local_player_id, layout)
 		orchestrator_resolver = resolver
 		orchestrator_main_ui = {}
@@ -176,9 +180,9 @@ func _ready() -> void:
 	if hero_action_bar != null:
 		hero_action_bar._refresh_all()
 	# boot 后把主敌盘 slot 注入 enemy_side_panels 作数据源
-	# 1v3：主对手盘 id 由 resolver 提供；PVE/1v1：固定 "enemy_main"
+	# 多队伍 PVP：主对手盘 id 由 resolver 提供；PVE/1v1：固定 "enemy_main"
 	var enemy_main_id: String = "enemy_main"
-	if Game.is_pvp and Game.pvp_match_type == "1v3" and board_orchestrator._resolver != null:
+	if Game.is_pvp and Game.is_multi_team_pvp() and board_orchestrator._resolver != null:
 		enemy_main_id = board_orchestrator._resolver.top_slot_id
 	var enemy_main_slot: BoardSlot = Game.registry.get_by_id(enemy_main_id) if Game.registry != null else null
 	if enemy_main_slot == null and Game.registry != null:
@@ -319,9 +323,9 @@ func _wire_signals() -> void:
 	if p_hero != null:
 		p_hero.health_changed.connect(_on_player_health_changed)
 		p_hero.died.connect(_on_player_hero_died)
-	# 主对手英雄：1v3 用 resolver.top_slot_id 找对应 slot；1v1/PVE 用 enemy_main_hero()
+	# 主对手英雄：多队伍 PVP 用 resolver.top_slot_id 找对应 slot；1v1/PVE 用 enemy_main_hero()
 	var e_hero: HeroState = null
-	if Game.is_pvp and Game.pvp_match_type == "1v3" and is_instance_valid(board_orchestrator) \
+	if Game.is_pvp and Game.is_multi_team_pvp() and is_instance_valid(board_orchestrator) \
 			and board_orchestrator._resolver != null:
 		var top_slot: BoardSlot = Game.registry.get_by_id(board_orchestrator._resolver.top_slot_id) \
 			if Game.registry != null else null
@@ -342,8 +346,8 @@ func _wire_signals() -> void:
 	deck_btn.pressed.connect(func(): side_panels.toggle("deck"))
 	grave_btn.pressed.connect(func(): side_panels.toggle("grave"))
 	banished_btn.pressed.connect(func(): side_panels.toggle("banished"))
-	enemy_grave_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_grave"))
-	enemy_banished_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_banished"))
+	# 敌方"墓地 / 除外"按钮已移除：跨端数据仍同步到 Game.decks[opp_pid] / slot.graveyard，
+	# 但 UI 不再开放查看入口。enemy_side_panels 保留为占位/兼容，不接按钮。
 
 	side_panels.long_press_requested.connect(detail_panel.start_long_press)
 	side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
@@ -388,8 +392,8 @@ func _on_enemy_hero_died() -> void:
 func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利" if is_enemy else "失败"
-	# PVP 1v3：胜负已由 board_slot._on_hero_died → pvp_end_game 广播，此处只更新本端 UI
-	if Game.is_pvp and Game.pvp_match_type == "1v3":
+	# 多队伍 PVP：胜负已由 board_slot._on_hero_died → pvp_end_game 广播，此处只更新本端 UI
+	if Game.is_pvp and Game.is_multi_team_pvp():
 		# board_slot 已发 game/end，无需再发；直接显示胜负画面
 		_show_game_over(is_enemy)
 		return
@@ -478,7 +482,7 @@ func _on_end_turn_pressed() -> void:
 		end_turn_btn.disabled = true
 		end_turn_btn.text = "行动中"
 		# 跑己方 slot 的单位行动
-		if Game.pvp_match_type == "1v3":
+		if Game.is_multi_team_pvp():
 			var my_slot: BoardSlot = Game.registry.by_owner(Game.local_player_id) if Game.registry != null else null
 			if my_slot != null:
 				await Game.turn.run_pvp_phase_for_slot(my_slot.id)
@@ -495,7 +499,7 @@ func _on_end_turn_pressed() -> void:
 			"player_id":   Game.local_player_id,
 			"turn_number": Game.turn.turn_number,
 		}, "all")
-		if Game.pvp_match_type == "1v3":
+		if Game.is_multi_team_pvp():
 			Game.pvp_advance_turn_skip_dead()
 		else:
 			Game.pvp_advance_turn()
@@ -589,8 +593,6 @@ func _input(event) -> void:
 				side_panels.close_current()
 			if is_instance_valid(enemy_side_panels) and enemy_side_panels.has_open_panel():
 				if enemy_side_panels.is_panel_hit(p): return
-				if enemy_grave_btn != null and enemy_grave_btn.get_global_rect().has_point(p): return
-				if enemy_banished_btn != null and enemy_banished_btn.get_global_rect().has_point(p): return
 				enemy_side_panels.close_current()
 			# 阶段 5：附盘墓地/除外面板
 			if is_instance_valid(board_orchestrator):
@@ -705,43 +707,19 @@ func _create_settings_button() -> void:
 	add_child(btn)
 	btn.pressed.connect(settings_panel.open)
 
-# 敌方主棋盘附属按钮（三等分，整体对齐 BOARD_SHIFT）
+# 敌方血量面板（"墓地 / 除外"按钮已移除，hp 面板水平拉伸至整盘宽度）
 func _create_enemy_pile_buttons() -> void:
 	const BTN_H: float = 40.0
-	const GAP: float = 10.0
 	const TOTAL_W: float = BOARD_HALF_W * 2.0
-	const BTN_W: float = (TOTAL_W - GAP * 2.0) / 3.0
 	const TOP_OFFSET: float = 15.0
 
+	# 敌方血量面板：横向充满主棋盘宽度，居中于 BOARD_SHIFT
 	var hp_pnl: Panel = $EnemyHpPnl
 	hp_pnl.anchor_left = 0.5; hp_pnl.anchor_right = 0.5
-	hp_pnl.offset_left  = BOARD_SHIFT - BTN_W / 2.0
-	hp_pnl.offset_right = BOARD_SHIFT + BTN_W / 2.0
+	hp_pnl.offset_left  = BOARD_SHIFT - TOTAL_W / 2.0
+	hp_pnl.offset_right = BOARD_SHIFT + TOTAL_W / 2.0
 	hp_pnl.offset_top = TOP_OFFSET; hp_pnl.offset_bottom = TOP_OFFSET + BTN_H
-	hp_pnl.pivot_offset = Vector2(BTN_W / 2.0, BTN_H / 2.0)
-
-	enemy_grave_btn = Button.new()
-	enemy_grave_btn.name = "EnemyGraveBtn"
-	enemy_grave_btn.text = "墓地"
-	enemy_grave_btn.anchor_left = 0.5; enemy_grave_btn.anchor_right = 0.5
-	enemy_grave_btn.offset_left  = BOARD_SHIFT - BOARD_HALF_W
-	enemy_grave_btn.offset_right = BOARD_SHIFT - BOARD_HALF_W + BTN_W
-	enemy_grave_btn.offset_top = TOP_OFFSET; enemy_grave_btn.offset_bottom = TOP_OFFSET + BTN_H
-	enemy_grave_btn.add_theme_font_size_override("font_size", 22)
-	add_child(enemy_grave_btn)
-
-	enemy_banished_btn = Button.new()
-	enemy_banished_btn.name = "EnemyBanishedBtn"
-	enemy_banished_btn.text = "除外"
-	enemy_banished_btn.anchor_left = 0.5; enemy_banished_btn.anchor_right = 0.5
-	enemy_banished_btn.offset_left  = BOARD_SHIFT + BOARD_HALF_W - BTN_W
-	enemy_banished_btn.offset_right = BOARD_SHIFT + BOARD_HALF_W
-	enemy_banished_btn.offset_top = TOP_OFFSET; enemy_banished_btn.offset_bottom = TOP_OFFSET + BTN_H
-	enemy_banished_btn.add_theme_font_size_override("font_size", 22)
-	add_child(enemy_banished_btn)
-
-	ThemeFactory.apply_button_styles(enemy_grave_btn, ThemeFactory.primary_button_styles())
-	ThemeFactory.apply_button_styles(enemy_banished_btn, ThemeFactory.primary_button_styles())
+	hp_pnl.pivot_offset = Vector2(TOTAL_W / 2.0, BTN_H / 2.0)
 
 func _create_player_pile_buttons() -> void:
 	const BTN_H: float = 40.0
@@ -858,8 +836,7 @@ func _play_intro_animation() -> void:
 			slide_nodes.append(n); n.visible = false
 
 	var fade_targets: Array = []
-	for n in [enemy_hp_pnl, enemy_grave_btn, enemy_banished_btn,
-			deck_btn, grave_btn, banished_btn]:
+	for n in [enemy_hp_pnl, deck_btn, grave_btn, banished_btn]:
 		if n: fade_targets.append(n)
 	for n in fade_targets:
 		n.modulate.a = 0.0
@@ -929,6 +906,8 @@ func _play_intro_animation() -> void:
 func _inject_pvp_level_data() -> void:
 	if Game.pvp_match_type == "1v3":
 		_inject_1v3_level_data()
+	elif Game.pvp_match_type == "3v3":
+		_inject_3v3_level_data()
 	else:
 		_inject_1v1_level_data()
 
@@ -1008,6 +987,8 @@ func _setup_pvp_slots() -> void:
 		return
 	if Game.pvp_match_type == "1v3":
 		_setup_pvp_slots_1v3()
+	elif Game.pvp_match_type == "3v3":
+		_setup_pvp_slots_3v3()
 	else:
 		_setup_pvp_slots_1v1()
 
@@ -1037,6 +1018,60 @@ func _setup_pvp_slots_1v3() -> void:
 			slot.owner_player_id = owner_pid
 			slot.team_id = tid
 
+# 3v3：按 slot_layout 构建 boards 字典（逻辑与 _inject_1v3_level_data 相同，team_a/team_b）。
+func _inject_3v3_level_data() -> void:
+	var layout: Array = []
+	if Game.level_data.has("pvp_slot_layout"):
+		var raw = Game.level_data["pvp_slot_layout"]
+		if typeof(raw) == TYPE_ARRAY:
+			layout = raw
+	if layout.is_empty():
+		layout = _build_default_3v3_layout()
+	var boards: Dictionary = {}
+	for entry in layout:
+		var slot_id: String = String(entry.get("slot_id", ""))
+		var owner_pid: String = String(entry.get("owner_pid", ""))
+		var tid: String = String(entry.get("team_id", ""))
+		var sidx: int = int(entry.get("slot_index", 0))
+		if slot_id == "":
+			continue
+		var hero_spec: Dictionary = Game.hero_specs.get(owner_pid, _pvp_default_hero_spec())
+		var faction: int = 0 if owner_pid == Game.local_player_id else 1
+		var role: String = "main_player" if owner_pid == Game.local_player_id else "main_enemy"
+		boards[slot_id] = {
+			"faction": faction, "role": role, "slot_index": sidx,
+			"team_id": tid, "owner_player_id": owner_pid,
+			"hero": hero_spec,
+			"initial_units": [], "spawners": [], "spell_casters": [],
+		}
+	Game.level_data = {"boards": boards, "pvp_slot_layout": layout}
+
+# 本地测试用：无服务器时按 pvp_teams 自动生成 3v3 的 slot_layout。
+# team_a 玩家 slot_index 0/1/2，team_b 玩家 slot_index 3/4/5。
+func _build_default_3v3_layout() -> Array:
+	var layout: Array = []
+	var team_a: Array = Game.players_of_team("team_a")
+	var team_b: Array = Game.players_of_team("team_b")
+	for i in range(team_a.size()):
+		layout.append({
+			"slot_id":    "slot_" + String(team_a[i]),
+			"owner_pid":  String(team_a[i]),
+			"team_id":    "team_a",
+			"slot_index": i,
+		})
+	for i in range(team_b.size()):
+		layout.append({
+			"slot_id":    "slot_" + String(team_b[i]),
+			"owner_pid":  String(team_b[i]),
+			"team_id":    "team_b",
+			"slot_index": 3 + i,
+		})
+	return layout
+
+# 3v3：按 level_data.pvp_slot_layout 为每个 slot 写入 owner_player_id / team_id（与 1v3 逻辑相同）。
+func _setup_pvp_slots_3v3() -> void:
+	_setup_pvp_slots_1v3()   # 完全复用 1v3 的注入逻辑（slot_layout 结构相同）
+
 func _find_opponent_pid(local_pid: String) -> String:
 	for pid in Game.decks.keys():
 		if pid != local_pid:
@@ -1049,47 +1084,71 @@ func _pvp_opponent_id() -> String:
 			return id
 	return ""
 
+# 连接本地玩家 deck 的 reshuffled 信号，触发时广播给所有对手，
+# 让远端在自家代理 deck 上同步执行 reshuffle，避免代理 graveyard 永不清空。
+func _wire_pvp_deck_reshuffle_sync() -> void:
+	if Game.deck == null:
+		return
+	if not Game.deck.reshuffled.is_connected(_on_local_deck_reshuffled):
+		Game.deck.reshuffled.connect(_on_local_deck_reshuffled)
+
+func _on_local_deck_reshuffled() -> void:
+	if not Game.is_pvp:
+		return
+	Net.send_to_room("action/deck_reshuffle", Game.pvp_room_id, {
+		"player_id": Game.local_player_id,
+	}, "all")
+
 # 远端英雄技能激活：仅做必要的状态镜像（视觉一致性 / 锁步关键状态）。
 # 不调用 HeroAbilities.activate，因为对端不该执行对手英雄的逻辑（如 hand_view 操作自家手牌）。
-func _handle_remote_activate_hero(payload: Dictionary) -> void:
+func _handle_remote_activate_hero(payload: Dictionary, from: String = "") -> void:
 	var ability_id: String = String(payload.get("ability_id", ""))
 	match ability_id:
 		"restart":
-			# 把对手弃的手牌名加入 ROLE_MAIN_ENEMY slot.graveyard（视觉同步）
-			# 对端 enemy_side_panels 监听 _slot.pile_changed，自动刷新墓地面板
-			if Game.registry == null:
-				return
-			var enemy_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
-			if enemy_slots.is_empty():
-				return
-			var e_slot: BoardSlot = enemy_slots[0]
+			# 把对手弃的手牌写入 caster 的代理 deck.graveyard，与 caster 本地
+			# hand_view.discard_all_and_refill 调用 Game.deck.send_to_graveyard 一致；
+			# 这样 caster 后续重洗时 (action/deck_reshuffle) 会把 proxy graveyard
+			# 一并清空，避免与重新抽到的同名卡在合并面板里形成重复条目。
+			var caster_deck: DeckManager = Game.decks.get(from) if from != "" else null
 			var discarded = payload.get("discarded", [])
 			if typeof(discarded) != TYPE_ARRAY:
 				return
 			for n in discarded:
 				var c = Game.get_card(String(n))
-				if c != null:
-					e_slot.graveyard.append(c)
-			e_slot.pile_changed.emit("graveyard")
+				if c == null:
+					continue
+				if caster_deck != null:
+					caster_deck.send_to_graveyard(c)
+				else:
+					# PVE 兜底（理论上不会触发，restart 是 PVP 锁步路径）
+					if Game.registry == null:
+						return
+					var enemy_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
+					if enemy_slots.is_empty():
+						return
+					enemy_slots[0].send_to_graveyard(c)
 		"test_discard":
-			# 把对手弃的单张加入 ROLE_MAIN_ENEMY slot.graveyard（视觉同步）
-			if Game.registry == null:
+			# 同 restart：写入 caster 的代理 deck.graveyard，确保重洗时一致清空。
+			var caster_deck_t: DeckManager = Game.decks.get(from) if from != "" else null
+			var discarded_t = payload.get("discarded", [])
+			if typeof(discarded_t) != TYPE_ARRAY:
 				return
-			var enemy_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
-			if enemy_slots.is_empty():
-				return
-			var e_slot: BoardSlot = enemy_slots[0]
-			var discarded = payload.get("discarded", [])
-			if typeof(discarded) != TYPE_ARRAY:
-				return
-			for n in discarded:
+			for n in discarded_t:
 				var name_str: String = String(n)
 				if name_str == "":
 					continue
 				var c = Game.get_card(name_str)
-				if c != null:
-					e_slot.graveyard.append(c)
-			e_slot.pile_changed.emit("graveyard")
+				if c == null:
+					continue
+				if caster_deck_t != null:
+					caster_deck_t.send_to_graveyard(c)
+				else:
+					if Game.registry == null:
+						return
+					var enemy_slots_t: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
+					if enemy_slots_t.is_empty():
+						return
+					enemy_slots_t[0].send_to_graveyard(c)
 		_:
 			# 其他 ability 暂不实现（PVP 默认英雄=A，仅 restart 会被触发）
 			push_warning("PVP: unhandled ability_id=" + ability_id)
@@ -1146,7 +1205,7 @@ func _handle_pvp_message(msg: Dictionary) -> void:
 		return
 	match type:
 		"action/play_card":
-			await play_controller.handle_remote_play_card(payload)
+			await play_controller.handle_remote_play_card(payload, from)
 		"action/play_equip":
 			# 记录对手装备实例（仅用于详情面板展示，不加入 Equipments 单例）。
 			var card_name: String = String(payload.get("card_name", ""))
@@ -1173,12 +1232,37 @@ func _handle_pvp_message(msg: Dictionary) -> void:
 		"action/end_turn":
 			await _on_remote_end_turn(payload)
 		"action/cross_board":
-			# 1v3 守方拥有者广播的跨盘目标盘选择；远端入队，等待 _on_remote_end_turn
-			# 回放守方阶段时由 TurnSystem.consume_cross_choice 消费。
+			# 多队伍 PVP（1v3 守方 / 3v3 所有玩家）拥有者广播的跨盘目标盘选择；
+			# 远端入队，等待 _on_remote_end_turn 回放该玩家阶段时由 TurnSystem.consume_cross_choice 消费。
 			Game.turn.enqueue_cross_choice(payload)
 		"action/activate_hero":
 			# 对手激活英雄技能 → 本端镜像必要状态变更
-			_handle_remote_activate_hero(payload)
+			_handle_remote_activate_hero(payload, from)
+		"action/deck_reshuffle":
+			# 对手本地 deck 重洗（draw_pile 空时触发）→ 在本端代理 deck 上执行同样 reshuffle，
+			# 同步代理 graveyard 清空，让 EnemySidePanelManager / AllySidePanelManager 跨端
+			# 展示与拥有者的真实墓地保持一致。
+			var pid: String = String(payload.get("player_id", from))
+			if pid != "" and pid != Game.local_player_id:
+				var d: DeckManager = Game.decks.get(pid)
+				if d != null and d != Game.deck:
+					d.reshuffle(false)
+		"action/equip_broken":
+			# 对手装备耐久归零 → 在本端代理 deck 同步入墓 + 移除 _remote_equip_insts 残留。
+			# 与 caster 本地 _on_inst_changed 中的 send_to_graveyard 配对，保证跨端墓地展示一致。
+			var eq_name: String = String(payload.get("equip_name", ""))
+			if eq_name != "" and from != "":
+				var card_e = Game.get_card(eq_name)
+				if card_e != null:
+					var de: DeckManager = Game.decks.get(from)
+					if de != null:
+						de.send_to_graveyard(card_e)
+				var insts_e: Array = _remote_equip_insts.get(from, [])
+				for i in range(insts_e.size() - 1, -1, -1):
+					var rinst: EquipmentInstance = insts_e[i]
+					if rinst != null and rinst.display_name() == eq_name:
+						insts_e.remove_at(i)
+						break
 		"disconnect/notify":
 			# 对手断线：走标准阵亡流程（damage_hero 100 → hero.died → 胜负结算）
 			# 1v3 / 1v1 统一按 dead_player_id 路由到对应 slot
@@ -1208,7 +1292,7 @@ func _handle_pvp_message(msg: Dictionary) -> void:
 				var winner_id: String    = String(payload.get("winner_id", ""))  # 1v1 旧字段兼容
 				var local_win: bool = false
 				if winning_team != "":
-					# 1v3：按队伍判断
+					# 多队伍 PVP（1v3/3v3）：按队伍判断
 					local_win = (Game.team_of_player(Game.local_player_id) == winning_team)
 				elif winner_id != "":
 					# 1v1 旧路径
@@ -1227,7 +1311,7 @@ func _on_remote_end_turn(payload: Dictionary) -> void:
 	end_turn_btn.text = "结算中"
 	# 确定本消息发送方的 slot
 	var sender_pid: String = String(payload.get("player_id", ""))
-	if Game.pvp_match_type == "1v3":
+	if Game.is_multi_team_pvp():
 		var sender_slot: BoardSlot = Game.registry.by_owner(sender_pid) if (Game.registry != null and sender_pid != "") else null
 		if sender_slot != null:
 			await Game.turn.run_pvp_phase_for_slot(sender_slot.id)
@@ -1267,3 +1351,5 @@ func _update_pvp_turn_ui() -> void:
 	# 刷新行动顺序指示器
 	if is_instance_valid(_action_order_bar):
 		_action_order_bar.refresh()
+	if is_instance_valid(board_orchestrator):
+		board_orchestrator.preview_active_pvp_slots()

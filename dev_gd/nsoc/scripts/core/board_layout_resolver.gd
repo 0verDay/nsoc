@@ -1,23 +1,27 @@
 class_name BoardLayoutResolver
 extends RefCounted
 
-# PVP 棋盘布局解析器（1v1 / 1v3）。
+# PVP 棋盘布局解析器（1v1 / 1v3 / 3v3）。
 #
 # 输入：viewer_pid（本端玩家 uuid）+ slot_layout（来自 bootstrap_pvp）
 # 输出：
 #   main_ui_slots  : Array of slot_id —— 这些盘应使用现有场景树 UI 节点（bottom/top）
 #   side_slot_ids  : Array of slot_id —— 其余盘使用动态 side board UI
 #   local_slot_id  : 本端玩家的盘 id
-#   top_slot_id    : 顶部主对手盘 id（1v1 唯一对手；1v3 守方→第一个攻方盘，攻方→守方盘）
-#   extra_top_ids  : 1v3 守方时额外的 2 个攻方盘（side board，位于 top 区域左右）
+#   top_slot_id    : 顶部主对手盘 id（1v1 唯一对手；1v3 守方→中央攻方盘，攻方→守方盘；3v3 →敌队中央）
+#   extra_top_ids  : 1v3 守方/3v3 时额外的对手盘（side board，位于 top 区域左右）
 #
 # 1v3 布局规则：
 #   守方视角：bottom = 自己，top_center = 攻方中，top_left/top_right = 攻方左/右
 #   攻方视角：bottom = 自己，top_center = 守方，side_left/side_right = 队友左/右
+#
+# 3v3 布局规则（team_a / team_b）：
+#   bottom = 自己（BottomGrid），side_slot_ids = 2 队友（下方两侧附盘）
+#   top_slot_id = 敌队 slot_index 居中那盘，extra_top_ids = 敌队另外 2 盘
 
 var local_slot_id:   String = ""
 var top_slot_id:     String = ""
-var extra_top_ids:   Array  = []   # 1v3 守方额外的 2 个攻方盘（按大厅顺序：左/右）
+var extra_top_ids:   Array  = []   # 额外的上方敌盘（1v3 守方 or 3v3）
 var side_slot_ids:   Array  = []   # 动态 side board 盘 id
 
 func resolve(viewer_pid: String, slot_layout: Array) -> void:
@@ -52,10 +56,26 @@ func resolve(viewer_pid: String, slot_layout: Array) -> void:
 			opponent_entries.append(entry)
 	opponent_entries.sort_custom(func(a, b): return int(a.get("slot_index", 0)) < int(b.get("slot_index", 0)))
 
+	# 3v3（team_a / team_b）：双方各 3 盘
+	if my_team in ["team_a", "team_b"] and opponent_entries.size() >= 3:
+		# 对手 3 盘：按 slot_index 排序 → 取中间那个为 top_center
+		top_slot_id = String(opponent_entries[1].get("slot_id", ""))  # 中（index 居中）
+		extra_top_ids = [
+			String(opponent_entries[0].get("slot_id", "")),  # 左
+			String(opponent_entries[2].get("slot_id", "")),  # 右
+		]
+		# 队友 2 盘（same team，非自身）→ 侧盘（bottom 区域两侧）
+		for entry in slot_layout:
+			var pid: String = String(entry.get("owner_pid", ""))
+			if pid == viewer_pid:
+				continue
+			if String(entry.get("team_id", "")) == my_team:
+				side_slot_ids.append(String(entry.get("slot_id", "")))
+
 	# 1v3 守方 (defender)：3 个对手盘
 	#   top_slot_id   = 攻方中（slot_index 居中，或取第二个，即 index=2）
 	#   extra_top_ids = 攻方左（index=1）和右（index=3），作为附盘
-	if my_team == "defender" and opponent_entries.size() >= 3:
+	elif my_team == "defender" and opponent_entries.size() >= 3:
 		# slot_index: 1=攻左, 2=攻中, 3=攻右；按 slot_index 排列
 		top_slot_id = String(opponent_entries[1].get("slot_id", ""))  # 中间（index=2）
 		extra_top_ids = [

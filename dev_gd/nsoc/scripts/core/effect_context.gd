@@ -167,7 +167,14 @@ func send_to_graveyard(card_data) -> void:
 # 使用 damage_slot_hero(slot_id, amount)。
 # source 标签同 BoardSlot.damage_hero：""/"unit_direct"/"spell_direct"/"triggered"
 func damage_player_hero(amount: int, source: String = "") -> void:
-	var slot: BoardSlot = game.main_player_slot()
+	# "己方英雄" = 当前 effect 触发单位 (target_cell) 的归属盘英雄。
+	# PVP 中 main_player_slot() 返回本地 viewer 的主盘，跨端不一致；
+	# 改用 target_cell.owner_slot_id 反查 caster 归属盘，保证锁步双端伤害落点相同。
+	var slot: BoardSlot = null
+	if target_cell != null and target_cell.owner_slot_id != "" and game.registry != null:
+		slot = game.registry.get_by_id(target_cell.owner_slot_id)
+	if slot == null:
+		slot = game.main_player_slot()
 	if slot != null:
 		slot.damage_hero(amount, source)
 

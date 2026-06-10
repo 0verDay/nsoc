@@ -29,9 +29,20 @@ func on_play(card_data, ctx) -> bool:
 	if cdata == null:
 		return true
 
-	# 将单位放回牌库顶（玩家下次会抽到它）
-	if ctx.game.deck != null:
-		ctx.game.deck.add_to_draw_pile(cdata)
+	# 将单位放回牌库顶（PVP 中 friendly_unit 可能是队友单位 → 必须回到该单位
+	# 拥有者的 deck 而非 caster 本地 deck，否则锁步双端 deck 状态发散）。
+	var owner_pid: String = ""
+	if cell.owner_slot_id != "" and ctx.game != null and ctx.game.registry != null:
+		var owner_slot: BoardSlot = ctx.game.registry.get_by_id(cell.owner_slot_id)
+		if owner_slot != null:
+			owner_pid = owner_slot.owner_player_id
+	var d: DeckManager = null
+	if owner_pid != "" and ctx.game != null:
+		d = ctx.game.get_deck(owner_pid)
+	if d == null and ctx.game != null:
+		d = ctx.game.deck
+	if d != null:
+		d.add_to_draw_pile(cdata)
 	# 清除格子（不走死亡/墓地流程）
 	cell.clear_card()
 

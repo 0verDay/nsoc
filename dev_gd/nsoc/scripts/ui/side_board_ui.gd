@@ -63,11 +63,13 @@ static func build(parent: Control, center_x: float, side_top: bool,
 	bg.add_child(grid)
 
 	# ── HP Panel + Label（敌方贴顶；友方贴底）────────────
+	# 墓地/除外按钮已全面取消（show_pile_btns=false），hp 面板水平拉伸至整盘宽度，
+	# 与主敌方 hp 面板保持一致。
 	var hp_pnl := Panel.new()
 	hp_pnl.name = "HpPnl" + suffix
 	hp_pnl.anchor_left = 0.5; hp_pnl.anchor_right = 0.5
-	hp_pnl.offset_left  = center_x - BTN_W / 2.0
-	hp_pnl.offset_right = center_x + BTN_W / 2.0
+	hp_pnl.offset_left  = center_x - BOARD_HALF_W
+	hp_pnl.offset_right = center_x + BOARD_HALF_W
 	if side_top:
 		hp_pnl.anchor_top = 0.0; hp_pnl.anchor_bottom = 0.0
 		hp_pnl.offset_top    = TOP_BTN_Y

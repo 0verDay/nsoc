@@ -57,6 +57,13 @@ func _on_inst_changed(inst: EquipmentInstance) -> void:
 		# 入墓 + 移除按钮。
 		if has_node("/root/Game") and Game.deck != null and inst.card_data != null:
 			Game.deck.send_to_graveyard(inst.card_data)
+		# PVP：广播给其它客户端，让远端在自家代理 deck 上同步入墓 +
+		# 从 _remote_equip_insts 移除该破损实例（避免详情面板与耐久 UI 残留）。
+		if has_node("/root/Game") and has_node("/root/Net") \
+				and Game.is_pvp and inst.card_data != null:
+			Net.send_to_room("action/equip_broken", Game.pvp_room_id, {
+				"equip_name": String(inst.card_data.name),
+			}, "all")
 		unequip(inst)
 
 func all() -> Array:

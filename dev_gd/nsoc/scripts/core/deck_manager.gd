@@ -6,6 +6,10 @@ extends Node
 # 不再走本类的 enemy_* 字段（已删除）。
 
 signal pile_changed(pile_name: String)   # "draw" / "graveyard" / "banish"
+# 非首次（initial=false）洗牌完成后触发。PVP 中本地玩家 deck 监听此信号，
+# 广播 action/deck_reshuffle 让其它客户端在自家代理 deck 上同步执行 reshuffle，
+# 避免代理 graveyard 永不清空导致跨端墓地展示错位。
+signal reshuffled()
 
 var draw_pile: Array = []
 var graveyard: Array = []
@@ -44,6 +48,8 @@ func reshuffle(initial: bool = false) -> void:
 		pile_changed.emit("graveyard")
 	_shuffle_draw_pile()
 	pile_changed.emit("draw")
+	if not initial:
+		reshuffled.emit()
 
 # 按 _rng 是否存在决定洗牌方式。
 # PVP：用 _rng_base_seed + _reshuffle_count 推导本次 seed，保证确定性。
