@@ -98,7 +98,7 @@ var _player_ready: Dictionary = {}   # uuid → bool（所有玩家的准备状�
 var _is_local_ready: bool = false    # 本地玩家当前准备状态
 
 # 游戏模式（仅房主可设置）
-var _match_type: String = "1v1"     # "1v1" / "1v3"
+var _match_type: String = "1v1"     # "1v1" / "1v3" / "3v3"
 
 # 各玩家已上报的牌组名列表（uuid/session_id → Array[String]）
 # 由 room/deck_ready 消息填入；房主开始游戏时合并到 per_player_decks
@@ -339,6 +339,9 @@ func _build_my_room(holder: Control) -> void:
 	if _match_type == "1v3":
 		open_cells = [0, 1, 2, 4]
 		slot_map   = {0: 1, 1: 2, 2: 3, 4: 0}
+	elif _match_type == "3v3":
+		open_cells = [0, 1, 2, 3, 4, 5]
+		slot_map   = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
 	else:
 		open_cells = [1, 4]
 		slot_map   = {1: 0, 4: 1}
@@ -378,10 +381,12 @@ func _build_my_room(holder: Control) -> void:
 
 		if open_cells.has(flat_idx):
 			var slot_id: int = slot_map[flat_idx]
-			# 1v3 守方格（slot 0 / flat=4）：附加"守方"角色标注
+			# 1v3 守方/攻方标注；3v3 按队伍标注
 			var role_tag: String = ""
 			if _match_type == "1v3":
 				role_tag = "〔守〕" if slot_id == 0 else "〔攻〕"
+			elif _match_type == "3v3":
+				role_tag = "〔A〕" if slot_id < 3 else "〔B〕"
 			if slot_to_player.has(slot_id):
 				var p = slot_to_player[slot_id]
 				var ready_mark: String = " ✓" if bool(_player_ready.get(p.uuid, false)) else ""
@@ -456,7 +461,10 @@ func _build_my_room(holder: Control) -> void:
 		_build_match_type_row(right_vbox)
 		# 房主：「开始」按钮（所有非房主玩家都准备后才启用）
 		var all_ready := _all_non_host_ready()
-		var min_players: int = 4 if _match_type == "1v3" else 2
+		var min_players: int
+		if _match_type == "1v3": min_players = 4
+		elif _match_type == "3v3": min_players = 6
+		else: min_players = 2
 		var can_start := _players.size() >= min_players and all_ready
 		var start_btn := _make_primary_btn("开始")
 		start_btn.custom_minimum_size = Vector2(0, BTN_HEIGHT + 24)
@@ -499,7 +507,7 @@ func _build_match_type_row(parent_vbox: VBoxContainer) -> void:
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent_vbox.add_child(row)
 
-	for mt in ["1v1", "1v3"]:
+	for mt in ["1v1", "1v3", "3v3"]:
 		var btn := Button.new()
 		btn.text = mt
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -544,13 +552,13 @@ func _build_right_mode_selector(vbox: VBoxContainer) -> void:
 	vbox.add_child(lbl)
 	vbox.move_child(lbl, 2)
 
-	# 1v1 / 1v3 按钮行
+	# 1v1 / 1v3 / 3v3 按钮行
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	vbox.add_child(row)
 	vbox.move_child(row, 3)
 
-	for mt in ["1v1", "1v3"]:
+	for mt in ["1v1", "1v3", "3v3"]:
 		var btn := Button.new()
 		btn.text = mt
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1267,9 +1275,12 @@ func _on_start_game() -> void:
 	# 房主负责：生成行动顺序 + RNG 种子；广播 game/start。
 	var my_sid: String = Net.get_session_id()
 
+	# 生成行动顺序 + slot_layout
 	# 1v3：房主固定为 defender（index=0），其余 3 人随机排序为 attacker
+	# 3v3：前 3 人为 team_a，后 3 人为 team_b，行动顺序 A1→B1→A2→B2→A3→B3
 	# 1v1：随机打乱（不区分队伍）
 	var order: Array = []
+	var slot_layout: Array = []
 	if _match_type == "1v3":
 		order.append(my_sid)   # 房主 = defender（1 方），排在首位
 		var others: Array = []
@@ -1278,6 +1289,43 @@ func _on_start_game() -> void:
 				others.append(p.uuid)
 		others.shuffle()
 		order.append_array(others)
+		for i in range(order.size()):
+			var pid: String = String(order[i])
+			slot_layout.append({
+				"slot_id":    "slot_" + pid,
+				"owner_pid":  pid,
+				"team_id":    "defender" if i == 0 else "attacker",
+				"slot_index": i,
+			})
+	elif _match_type == "3v3":
+		# 将所有玩家随机分成两队（各 3 人）
+		var all_pids: Array = []
+		for p in _players:
+			all_pids.append(p.uuid)
+		all_pids.shuffle()
+		var team_a_pids: Array = all_pids.slice(0, 3)
+		var team_b_pids: Array = all_pids.slice(3, 6)
+		# 行动顺序：A1→B1→A2→B2→A3→B3
+		for i in range(3):
+			if i < team_a_pids.size():
+				order.append(team_a_pids[i])
+			if i < team_b_pids.size():
+				order.append(team_b_pids[i])
+		# slot_layout
+		for i in range(team_a_pids.size()):
+			slot_layout.append({
+				"slot_id":    "slot_" + String(team_a_pids[i]),
+				"owner_pid":  String(team_a_pids[i]),
+				"team_id":    "team_a",
+				"slot_index": i,
+			})
+		for i in range(team_b_pids.size()):
+			slot_layout.append({
+				"slot_id":    "slot_" + String(team_b_pids[i]),
+				"owner_pid":  String(team_b_pids[i]),
+				"team_id":    "team_b",
+				"slot_index": 3 + i,
+			})
 	else:
 		for p in _players:
 			order.append(p.uuid)
@@ -1298,18 +1346,6 @@ func _on_start_game() -> void:
 	for pid in _player_heroes.keys():
 		per_player_heroes[pid] = _player_heroes[pid]
 	per_player_heroes[my_sid] = DeckStorage.get_selected_hero()
-
-	# 1v3：构建 slot_layout（服务端纯中继，由房主生成下发）
-	var slot_layout: Array = []
-	if _match_type == "1v3":
-		for i in range(order.size()):
-			var pid: String = String(order[i])
-			slot_layout.append({
-				"slot_id":    "slot_" + pid,
-				"owner_pid":  pid,
-				"team_id":    "defender" if i == 0 else "attacker",
-				"slot_index": i,
-			})
 
 	var start_payload: Dictionary = {
 		"match_type":        _match_type,

@@ -97,11 +97,16 @@ func _on_hero_died() -> void:
 	# PVP 1v3：按 team_id 判断胜负，广播 game/end
 	var g: Node = Engine.get_main_loop().root.get_node_or_null("/root/Game") \
 		if Engine.get_main_loop() != null else null
-	if g != null and g.is_pvp and g.pvp_match_type == "1v3" and team_id != "":
+	if g != null and g.is_pvp and g.is_multi_team_pvp() and team_id != "":
 		g.mark_player_dead(owner_player_id)
-		# 任一方死亡即判定对方获胜（测试期简化规则）
+		# 任一方死亡即判定对方获胜（测试期简化规则）。
+		# 兼容 1v3（defender/attacker）与 3v3（team_a/team_b）：取 pvp_teams 中非己队的第一个。
 		var loser_team: String = team_id
-		var winner_team: String = "attacker" if loser_team == "defender" else "defender"
+		var winner_team: String = ""
+		for tid in g.pvp_teams.keys():
+			if tid != loser_team:
+				winner_team = tid
+				break
 		g.pvp_end_game(winner_team, owner_player_id)
 		return
 	# 主玩家英雄死亡不走 trigger（由 test_main 的 _on_player_hero_died 处理 PVE/1v1 胜负）

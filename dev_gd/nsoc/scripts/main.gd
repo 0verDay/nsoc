@@ -46,8 +46,8 @@ var front_row_selector: Node
 var hero_drag_ctrl: Node
 
 # 敌方"墓地 / 除外"按钮（动态创建）
-var enemy_grave_btn: Button
-var enemy_banished_btn: Button
+# 敌方"墓地 / 除外"按钮已移除（数据多端同步保留，UI 不再展示）。
+# var enemy_grave_btn / enemy_banished_btn 移除以避免引用残留。
 
 # 玩家英雄行动条（技能 + 装备按钮）
 var hero_action_bar: HeroActionBar
@@ -233,8 +233,8 @@ func _wire_signals() -> void:
 	deck_btn.pressed.connect(func(): side_panels.toggle("deck"))
 	grave_btn.pressed.connect(func(): side_panels.toggle("grave"))
 	banished_btn.pressed.connect(func(): side_panels.toggle("banished"))
-	enemy_grave_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_grave"))
-	enemy_banished_btn.pressed.connect(func(): enemy_side_panels.toggle("enemy_banished"))
+	# 敌方"墓地 / 除外"按钮已移除：跨端数据仍同步到 Game.decks[opp_pid] / slot.graveyard，
+	# 但 UI 不再开放查看入口。enemy_side_panels 保留为占位/兼容，不接按钮。
 
 	side_panels.long_press_requested.connect(detail_panel.start_long_press)
 	side_panels.long_press_canceled.connect(detail_panel.cancel_long_press)
@@ -507,8 +507,6 @@ func _input(event) -> void:
 				side_panels.close_current()
 			if enemy_side_panels.has_open_panel():
 				if enemy_side_panels.is_panel_hit(p): return
-				if enemy_grave_btn.get_global_rect().has_point(p): return
-				if enemy_banished_btn.get_global_rect().has_point(p): return
 				enemy_side_panels.close_current()
 			# 附盘墓地/除外面板
 			if is_instance_valid(board_orchestrator):
@@ -604,44 +602,19 @@ func _create_settings_button() -> void:
 	add_child(btn)
 	btn.pressed.connect(settings_panel.open)
 
-# ── 敌方"墓地 / 除外"按钮（对齐 BOARD_SHIFT）────────────────────────
+# ── 敌方血量面板（墓地 / 除外按钮已移除，hp 面板水平拉伸至整盘宽度）────
 func _create_enemy_pile_buttons() -> void:
 	const BTN_H: float = 40.0
-	const GAP: float = 10.0
 	const TOTAL_W: float = BOARD_HALF_W * 2.0
-	const BTN_W: float = (TOTAL_W - GAP * 2.0) / 3.0
 	const TOP_OFFSET: float = 15.0
 
-	# 敌方血量面板对齐 BOARD_SHIFT 居中
+	# 敌方血量面板：横向充满主棋盘宽度，居中于 BOARD_SHIFT
 	var hp_pnl: Panel = $EnemyHpPnl
 	hp_pnl.anchor_left = 0.5; hp_pnl.anchor_right = 0.5
-	hp_pnl.offset_left  = BOARD_SHIFT - BTN_W / 2.0
-	hp_pnl.offset_right = BOARD_SHIFT + BTN_W / 2.0
+	hp_pnl.offset_left  = BOARD_SHIFT - TOTAL_W / 2.0
+	hp_pnl.offset_right = BOARD_SHIFT + TOTAL_W / 2.0
 	hp_pnl.offset_top = TOP_OFFSET; hp_pnl.offset_bottom = TOP_OFFSET + BTN_H
-	hp_pnl.pivot_offset = Vector2(BTN_W / 2.0, BTN_H / 2.0)
-
-	enemy_grave_btn = Button.new()
-	enemy_grave_btn.name = "EnemyGraveBtn"
-	enemy_grave_btn.text = "墓地"
-	enemy_grave_btn.anchor_left = 0.5; enemy_grave_btn.anchor_right = 0.5
-	enemy_grave_btn.offset_left  = BOARD_SHIFT - BOARD_HALF_W
-	enemy_grave_btn.offset_right = BOARD_SHIFT - BOARD_HALF_W + BTN_W
-	enemy_grave_btn.offset_top = TOP_OFFSET; enemy_grave_btn.offset_bottom = TOP_OFFSET + BTN_H
-	enemy_grave_btn.add_theme_font_size_override("font_size", 22)
-	add_child(enemy_grave_btn)
-
-	enemy_banished_btn = Button.new()
-	enemy_banished_btn.name = "EnemyBanishedBtn"
-	enemy_banished_btn.text = "除外"
-	enemy_banished_btn.anchor_left = 0.5; enemy_banished_btn.anchor_right = 0.5
-	enemy_banished_btn.offset_left  = BOARD_SHIFT + BOARD_HALF_W - BTN_W
-	enemy_banished_btn.offset_right = BOARD_SHIFT + BOARD_HALF_W
-	enemy_banished_btn.offset_top = TOP_OFFSET; enemy_banished_btn.offset_bottom = TOP_OFFSET + BTN_H
-	enemy_banished_btn.add_theme_font_size_override("font_size", 22)
-	add_child(enemy_banished_btn)
-
-	ThemeFactory.apply_button_styles(enemy_grave_btn, ThemeFactory.primary_button_styles())
-	ThemeFactory.apply_button_styles(enemy_banished_btn, ThemeFactory.primary_button_styles())
+	hp_pnl.pivot_offset = Vector2(TOTAL_W / 2.0, BTN_H / 2.0)
 
 # ── 玩家"牌库 / 墓地 / 除外"三按钮（对齐 BOARD_SHIFT）──────────────
 func _create_player_pile_buttons() -> void:
@@ -738,8 +711,7 @@ func _play_intro_animation() -> void:
 			slide_nodes.append(n); n.visible = false
 
 	var fade_targets: Array = []
-	for n in [enemy_hp_pnl, enemy_grave_btn, enemy_banished_btn,
-			deck_btn, grave_btn, banished_btn]:
+	for n in [enemy_hp_pnl, deck_btn, grave_btn, banished_btn]:
 		if n: fade_targets.append(n)
 	for n in fade_targets:
 		n.modulate.a = 0.0

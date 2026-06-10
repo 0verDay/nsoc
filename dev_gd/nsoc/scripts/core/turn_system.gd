@@ -24,6 +24,8 @@ signal phase_ended(faction: int)
 # 玩家前排棋子即将行动：等待外部调用 resolve_front_row_selection(target_id) 后继续。
 # target_id: "" = 本棋盘（走默认逻辑），其他字符串 = 外部注册的棋盘标识。
 signal front_row_action_requested(cell: Node)
+# 行动顺序指示器：当前正在处理的 slot 切换时发出（每 slot 第一个有效单位时 emit）。
+signal slot_action_started(slot: BoardSlot)
 
 const PLAYER: int = 0
 const ENEMY: int = 1
@@ -39,6 +41,9 @@ var _card_resolver: Callable
 var _front_row_resolve: Callable = Callable()
 var _front_row_result: String = ""
 var _front_row_resolved: bool = false
+
+# 行动顺序指示器：缓存上一次 emit 的 slot，避免同盘连续多格重复 emit。
+var _last_active_slot: BoardSlot = null
 
 func _registry() -> BoardRegistry:
 	if has_node("/root/Game"):
@@ -121,14 +126,14 @@ func consume_cross_choice(source_slot_id: String, row: int, col: int) -> String:
 func clear_cross_choices() -> void:
 	_pending_cross_choices.clear()
 
-# 1v3 守方拥有者：UI 选定目标盘后广播给同房间所有人。
+# 多队伍 PVP 跨盘选择广播（1v3 守方拥有者 / 3v3 任意拥有者）。
 # 远端 test_main 收到后调 enqueue_cross_choice 入队。
 func _broadcast_cross_board(source_slot_id: String, row: int, col: int, target_slot_id: String) -> void:
 	if not has_node("/root/Net"):
 		return
 	if not has_node("/root/Game") or not Game.is_pvp:
 		return
-	if Game.pvp_match_type != "1v3":
+	if not Game.is_multi_team_pvp():
 		return
 	var payload: Dictionary = {
 		"source_slot_id": source_slot_id,
@@ -185,7 +190,7 @@ func run_pvp_phase(faction: int) -> void:
 				slot.board.reset_attack_flags()
 	is_running = false
 
-# 1v3 专用：只跑指定 slot_id 的行动阶段，不影响其他盘。
+# 多队伍 PVP 专用（1v3 / 3v3）：只跑指定 slot_id 的行动阶段，不影响其他盘。
 # 与 run_pvp_phase 区别：按 slot 而非 faction 粒度；保留 1v1 的 run_pvp_phase 不变。
 func run_pvp_phase_for_slot(slot_id: String) -> void:
 	if is_running:
@@ -203,6 +208,7 @@ func run_pvp_phase_for_slot(slot_id: String) -> void:
 	is_running = false
 
 func _run_phase_for_slot(slot: BoardSlot) -> void:
+	_last_active_slot = null
 	phase_started.emit(slot.faction)
 	for entry in _iter_phase_cells_of_slot(slot):
 		if _combat == null or _combat.aborted:
@@ -219,17 +225,16 @@ func _run_phase_for_slot(slot: BoardSlot) -> void:
 	phase_ended.emit(slot.faction)
 
 # 构建指定 slot 的行动 (cell, slot) 序列。
-# defender 盘：row 0→ROWS-1（前排→后排朝上方攻方）
-# attacker 盘：row ROWS-1→0（前排→后排朝下方守方）
-# PVE / 1v1 兼容：无 team_id 时按 faction 决定。
+# 多队伍 PVP（1v3 / 3v3）：所有盘均以 row=0 为前排，统一 row 0→ROWS-1 顺序。
+# PVE / 1v1 兼容：无 team_id 时按 faction 决定（PLAYER 盘 0→2，ENEMY 盘 2→0）。
 func _iter_phase_cells_of_slot(slot: BoardSlot) -> Array:
 	if slot.board == null:
 		return []
 	var out: Array = []
 	var rows: Array = []
-	# 1v3：守方和攻方均向 row=0 推进，前排（row=0）单位优先行动
+	# 多队伍 PVP：前排（row=0）单位优先行动，所有盘统一 row 0→ROWS-1
 	# PVE/1v1：PLAYER 盘前排 row=0 先走，ENEMY 盘前排 row=ROWS-1 先走
-	if slot.team_id == "defender" or slot.team_id == "attacker":
+	if slot.team_id != "":
 		for r in range(BoardModel.ROWS):   # 0,1,2（前排先走）
 			rows.append(r)
 	elif slot.faction == PLAYER:
@@ -238,11 +243,16 @@ func _iter_phase_cells_of_slot(slot: BoardSlot) -> Array:
 	else:
 		for r in range(BoardModel.ROWS - 1, -1, -1):
 			rows.append(r)
-	# 自家盘的单位
+	# 自家盘的单位（仅归属本盘的，即 owner_slot_id == slot.id）。
+	# 跨入到本盘的他方单位 owner_slot_id 仍指向原归属盘，不属本盘行动阶段，
+	# 这里就过滤掉，避免 _process_cell 内多队伍 PVP 用 viewer 相对的 is_enemy
+	# 判定不一致而误处理。
 	for r in rows:
 		for c in range(BoardModel.COLS):
 			var cell = slot.board.get_cell(Vector2(r, c))
 			if cell != null and cell.has_card:
+				if cell.owner_slot_id != "" and cell.owner_slot_id != slot.id:
+					continue
 				out.append({"cell": cell, "slot": slot})
 	# 已跨入其他棋盘的本盘单位（owner_slot_id == slot.id）
 	var reg := _registry()
@@ -257,6 +267,7 @@ func _iter_phase_cells_of_slot(slot: BoardSlot) -> Array:
 	return out
 
 func _run_phase(faction: int) -> void:
+	_last_active_slot = null
 	phase_started.emit(faction)
 	# 敌方阶段开始时，推进所有盘的法术施放器（在单位行动前）
 	if faction == ENEMY:
@@ -378,22 +389,34 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 
 	if not cell.has_card or cell.has_attacked:
 		return
-	# 1v3：用 team_id 判断是否是本轮处理的单位（同队即处理）；PVE/1v1 回退 is_enemy
 	var is_my_unit: bool
 	if cell.team_id != "" and slot.team_id != "":
 		is_my_unit = (cell.team_id == slot.team_id)
+		# 跨盘单位例外：已跨入敌方盘的单位 owner_slot_id ≠ 当前盘 id，
+		# 但仍属原阵营，应参与原归属盘的行动阶段。
+		# 多队伍 PVP（1v3/3v3）下 cell.is_enemy 与 for_enemy 都是 viewer 视角，
+		# 在同队队友 viewer 上会出现 is_enemy=false / for_enemy=true 的不对称
+		# 导致跨盘单位在队友视角下被错误过滤。_iter_phase_cells_of_slot 已用
+		# owner_slot_id 严格过滤跨盘 cell 归属，信任迭代器即可。
+		if not is_my_unit and cell.owner_slot_id != "" and cell.owner_slot_id != slot.id:
+			is_my_unit = true
 	else:
 		is_my_unit = (cell.is_enemy == for_enemy)
 	if not is_my_unit:
 		return
 
+	# 行动顺序指示器：slot 切换时 emit（同盘连续多格只 emit 一次）
+	if slot != _last_active_slot:
+		_last_active_slot = slot
+		slot_action_started.emit(slot)
+
 	var unit_faction: int = BoardSlot.FACTION_ENEMY if cell.is_enemy else BoardSlot.FACTION_PLAYER
 	var on_home_board: bool = (slot.faction == unit_faction)
-	# 1v3：用 team_id 判断"自家盘"更准确
+	# 多队伍 PVP：用 team_id 判断"自家盘"更准确（1v3 / 3v3 通用）
 	if slot.team_id != "":
 		var unit_team: String = cell.team_id
 		on_home_board = (slot.team_id == unit_team and unit_team != "")
-	# 步进方向：1v3 自家盘 step=-1（向 row=0），敌方盘 step=+1（向 row=2）
+	# 步进方向：多队伍 PVP 自家盘 step=-1（向 row=0），敌方盘 step=+1（向 row=2）
 	# PVE/1v1 回退 unit_faction
 	var step: int
 	if cell.team_id != "" and slot.team_id != "":
@@ -427,26 +450,41 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		enemy_slots = reg.enemy_targets() if reg != null else []
 	var player_slots: Array = reg.by_faction(BoardSlot.FACTION_PLAYER) if reg != null else []
 
-	# ── 1v3 跨盘路径分发 ───────────────────────────────────────────────
-	# defender：拥有者走 UI 选盘 + 广播；远端从队列消费；落点用镜像列。
-	# attacker：拥有者 + 远端 均走自动跨盘到守方盘（单一目标），落点用镜像列。
-	# PVE/1v1：保留原 UI / auto-cross 路径，同列规则不变。
+	# ── 跨盘路径分发 ───────────────────────────────────────────────────────
+	# 1v3 defender：拥有者走 UI 选盘 + 广播；远端从队列消费；落点用镜像列。
+	# 1v3 attacker：拥有者 + 远端 均走自动跨盘到守方盘（单一目标），落点用镜像列。
+	# 3v3（team_a / team_b）：所有玩家均走 UI 选盘 + 广播，落点用镜像列。
+	# PVE/1v1（team_id == ""）：保留原 UI / auto-cross 路径，同列规则不变。
 	var front_row_target_id: String = ""
 	if slot.team_id == "defender" and on_home_board \
 			and not enemy_slots.is_empty() \
 			and _can_cross_board(cell, slot):
 		if faction == PLAYER:
-			# 拥有者：UI 选盘，选定后广播给远端
+			# 1v3 守方拥有者：UI 选盘，选定后广播给远端
 			front_row_target_id = await _run_front_row_selection(cell)
 			if front_row_target_id != "":
 				_broadcast_cross_board(slot.id, cell.row, cell.col, front_row_target_id)
 		else:
-			# 远端镜像：从队列消费拥有者的选择
+			# 1v3 守方远端镜像：从队列消费拥有者的选择
 			front_row_target_id = consume_cross_choice(slot.id, cell.row, cell.col)
 			if front_row_target_id == "" and enemy_slots.size() > 0:
 				# 消息丢失兜底：取第一个敌队盘，避免卡死
 				front_row_target_id = String(enemy_slots[0].id)
 				push_warning("TurnSystem: cross_choice queue miss for %s(%d,%d); fallback %s" \
+					% [slot.id, cell.row, cell.col, front_row_target_id])
+	elif slot.team_id in ["team_a", "team_b"] and on_home_board \
+			and not enemy_slots.is_empty() \
+			and _can_cross_board(cell, slot):
+		# 3v3：所有玩家均走 UI 路径（拥有者选盘广播，远端消费队列）
+		if owner_pid == Game.local_player_id:
+			front_row_target_id = await _run_front_row_selection(cell)
+			if front_row_target_id != "":
+				_broadcast_cross_board(slot.id, cell.row, cell.col, front_row_target_id)
+		else:
+			front_row_target_id = consume_cross_choice(slot.id, cell.row, cell.col)
+			if front_row_target_id == "" and enemy_slots.size() > 0:
+				front_row_target_id = String(enemy_slots[0].id)
+				push_warning("TurnSystem: 3v3 cross_choice queue miss for %s(%d,%d); fallback %s" \
 					% [slot.id, cell.row, cell.col, front_row_target_id])
 	elif slot.team_id == "" \
 			and faction == PLAYER \
@@ -495,7 +533,13 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 							if nc == null:
 								break
 							if nc.has_card:
-								if not nc.is_enemy:  # 同阵营（友军）阻挡
+								# 友军阻挡：1v3 用 team_id（双端一致）；PVE/1v1 用 is_enemy
+								var nc_is_friendly: bool
+								if nc.team_id != "" and cell.team_id != "":
+									nc_is_friendly = (nc.team_id == cell.team_id)
+								else:
+									nc_is_friendly = not nc.is_enemy
+								if nc_is_friendly:
 									break
 								probe_enemy = nc
 								break
@@ -566,13 +610,18 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 
 	# ── 敌方/攻方自动跨盘：cell 在自家盘 front_row + 存在敌队盘
 	# 1v3：攻方单位（无论本端还是远端）到达 front_row 后自动跨入守方盘；守方走 UI 路径已在上文处理。
+	# 3v3：已在 UI 路径处理，不走 auto-cross。
 	# PVE/1v1：维持旧 FACTION_ENEMY front_row 判断
 	var is_auto_cross_candidate: bool
 	var auto_cross_target_slots: Array
-	if on_home_board and slot.team_id == "attacker":
-		# 1v3 攻方：拥有者 / 远端镜像都走 _enemy_auto_cross（确定性，单一目标=守方盘）
-		var front_r := BoardModel.front_row_of_slot(slot)
-		is_auto_cross_candidate = (cell.row == front_r and not enemy_slots.is_empty())
+	if on_home_board and slot.team_id in ["team_a", "team_b"]:
+		# 3v3：UI 路径已处理，禁用 auto-cross
+		is_auto_cross_candidate = false
+		auto_cross_target_slots = []
+	elif on_home_board and slot.team_id == "attacker":
+		# 1v3 攻方：_can_cross_board 同时覆盖"到达 front_row"和"冲锋提前到达"两种情形，
+		# 使 charge 单位在 row 2 有畅通路径时无需停在 row 0 再跨盘。
+		is_auto_cross_candidate = (_can_cross_board(cell, slot) and not enemy_slots.is_empty())
 		auto_cross_target_slots = enemy_slots
 	elif on_home_board and slot.team_id == "defender":
 		# 1v3 守方：UI 路径已在 defender_cross_path 中处理；防止落入 auto-cross
@@ -580,10 +629,14 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		auto_cross_target_slots = []
 	else:
 		# 旧路径（PVE/1v1）
+		# _can_cross_board 同时覆盖"到达 front_row"和"冲锋提前到达"两种情形，
+		# 使 charge 单位在 row 0/1 同列到 front_row 全空时即可跨盘，与拥有者
+		# (PLAYER 阶段) 的 _front_row_resolve 路径对称（修复锁步 PVP 中对方
+		# 视角下冲锋单位只移动到自家前排不跨盘的 bug）。
 		is_auto_cross_candidate = (on_home_board \
 			and faction == ENEMY \
 			and slot.faction == BoardSlot.FACTION_ENEMY \
-			and cell.row == BoardModel.front_row_of(BoardSlot.FACTION_ENEMY) \
+			and _can_cross_board(cell, slot) \
 			and not player_slots.is_empty())
 		auto_cross_target_slots = player_slots
 	if is_auto_cross_candidate:
@@ -651,7 +704,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, target_slots: Array) -> bool:
 	# steadfast 单位不移动，不跨盘
 	if cell.effects.has("steadfast"):
 		return false
-	# 落点列：1v3 用镜像（拥有者视觉同列）；PVE/1v1（无 team_id）保持同列
+	# 落点列：多队伍 PVP（1v3/3v3）用镜像（拥有者视觉同列）；PVE/1v1（无 team_id）保持同列
 	var src_col: int = cell.col
 	var dst_col: int
 	if cell.team_id != "" and target_slots.size() > 0 \

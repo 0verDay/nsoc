@@ -205,8 +205,8 @@ func _pvp_broadcast_play_card(cell, data) -> void:
 		"card_type": String(data.get("type", "单位")),
 		"slot_id":   String(cell.slot_id),
 	}
-	# 1v3 绝对坐标；1v1 旧坐标（接收方用镜像翻转）
-	if Game.pvp_match_type == "1v3":
+	# 多队伍 PVP 绝对坐标；1v1 旧坐标（接收方用镜像翻转）
+	if Game.is_multi_team_pvp():
 		payload["abs_row"] = cell.row
 		payload["abs_col"] = cell.col
 	else:
@@ -226,9 +226,8 @@ func _pvp_broadcast_play_card(cell, data) -> void:
 					break
 			if is_return_to_hand:
 				payload["result_cleared"] = true
-	# 1v3 广播给全房间（server 中继；本端 echo 由消息处理层 from==local 过滤）
-	# 1v1 仍点对点发给对手，避免 echo 进入队列
-	if Game.pvp_match_type == "1v3":
+	# 多队伍 PVP 广播给全房间；1v1 仍点对点发给对手，避免 echo 进入队列
+	if Game.is_multi_team_pvp():
 		Net.send_to_room("action/play_card", Game.pvp_room_id, payload, "all")
 	else:
 		var opp_id: String = _pvp_opponent_id()
@@ -244,7 +243,7 @@ const _RETURN_TO_HAND_EFFECTS: Array = ["ming_jin"]
 func _pvp_broadcast_play_equip(card_name: String) -> void:
 	if not has_node("/root/Net"):
 		return
-	if Game.pvp_match_type == "1v3":
+	if Game.is_multi_team_pvp():
 		Net.send_to_room("action/play_equip", Game.pvp_room_id, {"card_name": card_name}, "all")
 	else:
 		var opp_id: String = _pvp_opponent_id()
@@ -276,13 +275,13 @@ func _pvp_broadcast_activate_equip(equip_name: String, target_cell) -> void:
 	var payload: Dictionary = {"equip_name": equip_name}
 	if target_cell != null:
 		payload["slot_id"] = String(target_cell.slot_id)
-		if Game.pvp_match_type == "1v3":
+		if Game.is_multi_team_pvp():
 			payload["abs_row"] = int(target_cell.row)
 			payload["abs_col"] = int(target_cell.col)
 		else:
 			payload["row"] = int(target_cell.row)
 			payload["col"] = int(target_cell.col)
-	if Game.pvp_match_type == "1v3":
+	if Game.is_multi_team_pvp():
 		Net.send_to_room("action/activate_equip", Game.pvp_room_id, payload, "all")
 	else:
 		var opp_id: String = _pvp_opponent_id()
@@ -352,9 +351,10 @@ static func _pvp_opponent_id() -> String:
 #   row_b = (ROWS-1) - row_a,  col_b = (COLS-1) - col_a
 #   player_main → enemy_main；enemy_main → player_main
 #
-# 1v3 新路径（slot_id = "slot_<uuid>"，abs_row / abs_col = 绝对坐标，无需镜像）：
+# 多队伍 PVP 新路径（slot_id = "slot_<uuid>"，abs_row / abs_col = 绝对坐标，无需镜像）：
 #   payload 中带 "abs_row" / "abs_col" 字段时走新路径；否则回退旧逻辑。
-func handle_remote_play_card(payload: Dictionary) -> void:
+#   1v3 / 3v3 均走此路径。
+func handle_remote_play_card(payload: Dictionary, caster_pid: String = "") -> void:
 	var card_name: String = String(payload.get("card_name", ""))
 	var card_type: String = String(payload.get("card_type", "单位"))
 	var sender_slot: String = String(payload.get("slot_id", "player_main"))
@@ -395,8 +395,8 @@ func handle_remote_play_card(payload: Dictionary) -> void:
 	# 确定放置时的 is_enemy 标志（PVE/1v1 兼容）：视觉已由 _is_visual_enemy 接管，
 	# 此处仍需传 faction=1 给 spawner / effect 用；1v3 中 team_id 会在 set_card 里从 slot 取。
 	var place_as_enemy: bool
-	# 1v3 中按 team_id 判断是否为"本端敌方"；1v1 按 slot 名判断
-	if Game.pvp_match_type == "1v3":
+	# 多队伍 PVP 中按 team_id 判断是否为"本端敌方"；1v1 按 slot 名判断
+	if Game.is_multi_team_pvp():
 		var local_team: String = Game.team_of_player(Game.local_player_id)
 		place_as_enemy = t_slot.team_id != "" and t_slot.team_id != local_team
 	else:
@@ -411,6 +411,16 @@ func handle_remote_play_card(payload: Dictionary) -> void:
 		"法术":
 			print("[SPELL] recv at %s(%d,%d) has_card=%s result_atk=%s" % [
 				target_slot_id, target_row, target_col, str(cell.has_card), str(payload.get("result_atk", "N/A"))])
+			# 法术 destination 由 effect.resolve_destination 决定（默认 graveyard，
+			# 个别 effect 如 jue_di / exhaust 会覆盖为 banish）。在跑 effect 前先解析，
+			# 避免 unit 已死亡分支后再访问 cell 失败。
+			var spell_destination: String = "graveyard"
+			for eff in _get_effects(card):
+				var ctx_for_dest := Game.make_effect_context()
+				ctx_for_dest.target_cell = cell
+				var dest := Effects.resolve_destination(eff, card, ctx_for_dest)
+				if dest != "":
+					spell_destination = dest
 			if payload.has("result_atk") and cell.has_card:
 				# 法术执行后单位仍存活：直接写终态数值（绕过 is_enemy 等 effect 内部检查）
 				cell.attack = int(payload.get("result_atk", cell.attack))
@@ -436,6 +446,17 @@ func handle_remote_play_card(payload: Dictionary) -> void:
 				ctx.target_cell = cell
 				for eff in _get_effects(card):
 					await Effects.trigger_play(eff, card, ctx)
+			# 跨端入墓：法术卡同步到 caster 的代理 deck，让远端 viewer 的合并墓地面板可见。
+			# 与 _play_spell 末尾的本地落库语义一致（caster 端走 Game.deck，远端走 Game.decks[caster]）。
+			var caster_deck: DeckManager = null
+			if caster_pid != "":
+				caster_deck = Game.get_deck(caster_pid)
+			if caster_deck == null:
+				caster_deck = Game.deck
+			if caster_deck != null:
+				match spell_destination:
+					"banish": caster_deck.banish(card)
+					_: caster_deck.send_to_graveyard(card)
 		"装备":
 			# 对手装备由对手自己的 Equipments 管理，本端不添加。
 			# Step 5-D：若需展示对手装备 UI，在此补充视觉逻辑。
