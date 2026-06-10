@@ -1,4 +1,4 @@
-# NSOC (Godot 4 卡牌战棋项目) 架构与机制总结
+﻿# NSOC (Godot 4 卡牌战棋项目) 架构与机制总结
 
 > 当前主开发分支位于 `dev_gd/nsoc/`。仓库根的 `dev1/` 为旧版分叉，本文以 `dev_gd/nsoc/` 为准。
 
@@ -142,6 +142,17 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 - `FrontRowSelector` 接收信号，高亮可选棋盘，等待玩家点击
 - `resolve_front_row_selection(target_id)` 恢复回合
 - 若选择非本棋盘：有前排敌人 → 原地攻击；无敌人 → `move_card` 移入目标棋盘
+
+**1v3 跨盘三分支**（`_process_cell` 跨盘块，按 `slot.team_id` + `faction` 分发）：
+
+| 分支 | team_id | faction | 行为 |
+|---|---|---|---|
+| 守方拥有者 | "defender" | PLAYER | `_run_front_row_selection` 弹 3 盘 UI → 选定后 `_broadcast_cross_board(action/cross_board)` |
+| 守方远端镜像 | "defender" | ENEMY  | `consume_cross_choice` 从队列取 target_slot_id（WS FIFO 保证已入队） |
+| 攻方双向 | "attacker" | 任意 | `_enemy_auto_cross` 自动跨守方盘（单一目标，无 UI 无广播） |
+| PVE/1v1 | "" | — | 原 UI / auto-cross 同列规则 |
+
+**落点列镜像**（仅 1v3）：`target_col = COLS - 1 - source_col`。配合 `board_orchestrator._reverse_grid_cells` 的对手盘行/列翻转，单位"拥有者视觉同列"直线落地（不再横跨整条屏幕宽度）。PVE/1v1 仍走同 data col。
 
 多棋盘 API：
 - `register_extra_board(board, hero_resolver)` / `unregister_extra_board(board)`（兼容旧 API，内部封装为 BoardSlot 加入 registry）
@@ -726,6 +737,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 | `action/play_card` | `play_controller.handle_remote_play_card(payload)` |
 | `action/play_equip` | 追加 `EquipmentInstance` 到 `_remote_equip_insts` |
 | `action/activate_equip` | `play_controller.handle_remote_activate_equip` + 扣对手装备耐久 |
+| `action/cross_board` | 1v3 瀹堟柟璺ㄧ洏閫夋嫨 → `Game.turn.enqueue_cross_choice(payload)` 鍏ラ槦锛宔nd_turn 瑙﹀彂鍥炴斁闃舵娑堣垂 |
 | `action/end_turn` | `_on_remote_end_turn` → `run_pvp_phase` + `pvp_advance_turn` |
 | `action/activate_hero` | `_handle_remote_activate_hero`（仅 restart 有视觉镜像） |
 | `disconnect/notify` | 对掉线玩家 `damage_hero(100,"triggered")` → 标准阵亡流程 |

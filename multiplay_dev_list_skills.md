@@ -1,4 +1,4 @@
-# NSOC 多人联机开发规划文档
+﻿# NSOC 多人联机开发规划文档
 
 > 本文件记录 PVP 模式的全部决策与开发难点，后续开发以此为准。
 > 最后更新：2026-06，包含完整决策清单 + 本轮全部实施记录。
@@ -1186,3 +1186,55 @@ server/                                新增目录
 | 备战卡组+英雄两次写盘原子性问题 | 先 `save_deck` 再 `save_selected_hero` 两次 IO | 合并一次 `load_all → 修改 → save_all` |
 | `_collect_deck_names` 回退固定用 "A" | 硬编码 `generate_battle_cards("A")` | 改为 `generate_battle_cards(hero_key)` |
 | `game_context.gd` 注释"全员A" | 注释未更新 | 更新为"按 per_player_heroes 各自英雄" |
+
+### 11.7 鏈疆鏂板锛圫tep 9锛?026-06 缁級鈥斺€?1v3 璺ㄧ洏閫昏緫閲嶆瀯
+
+**鑳屾櫙**锛氬師 1v3 璺ㄧ洏璧?`_enemy_auto_cross` 鍚屽垪瑙勫垯锛屽瓨鍦ㄤ袱涓棶棰橈細
+1. 瀹堟柟 owner 绔蛋 UI 閫夌洏锛岃繙绔暅鍍忕璧?`randi() % candidates.size()` 闅忔満閫夌洏 鈫?涓夌鐘舵€?desync
+2. 鍚屽垪瑙勫垯涓嬪崟浣?璺ㄨ繃鏁存潯灞忓箷"鍒板渚э紙瑙嗚涓婁粠宸辨柟宸︿笅璺ㄥ埌瀵归潰鍙充笂锛夛紝涓嶇洿瑙?
+**閲嶆瀯鐩爣**锛堟潵鑷?dev_gd 闃舵闇€姹傜‘璁わ級锛?- 瀹堟柟鎷ユ湁鑰呯户缁?UI 閫夌洰鏍囩洏锛屾敾鏂瑰畬鍏ㄨ嚜鍔ㄨ法锛堝崟涓€鐩爣=瀹堟柟锛?- 钀界偣鍒楁敼涓洪暅鍍忥細`target_col = COLS - 1 - source_col`锛岄厤鍚?`board_orchestrator._reverse_grid_cells` 鐨勫鎵嬬洏瑙嗚缈昏浆锛屽崟浣嶅湪鎷ユ湁鑰呰瑙掍笅"瑙嗚鍚屽垪"鐩寸嚎钀藉湴
+- 瀹堟柟 UI 閫夋嫨閫氳繃鏂版秷鎭?`action/cross_board` 骞挎挱缁欐墍鏈夌锛岃繙绔寜闃熷垪鍥炴斁娑堣垂
+
+#### Step 9-A锛欱oardModel 闀滃儚鍒楄緟鍔?
+| 鏂囦欢 | 鏀瑰姩 |
+|---|---|
+| `core/board_model.gd` | 鍘熻鍒掓柊澧?`static mirror_col(c) -> int`锛屽洜 Godot 4 闈欐€佹柟娉曠紪杈戝櫒缂撳瓨璇嗗埆闂锛屾渶缁堝唴鑱斾负 `BoardModel.COLS - 1 - c` 琛ㄨ揪寮?|
+
+#### Step 9-B锛歍urnSystem 涓夊垎鏀法鐩樺垎鍙?
+| 鏂囦欢 | 鏀瑰姩 |
+|---|---|
+| `core/turn_system.gd` | `_process_cell` 璺ㄧ洏鍧楁寜 `slot.team_id` + `faction` 閲嶅啓涓轰笁鍒嗘敮锛氣憼 defender + PLAYER 鈫?UI 閫夌洏骞跺箍鎾?鈶?defender + ENEMY 鈫?consume_cross_choice 鍙栭槦鍒?鈶?attacker锛堜换鎰?faction锛夆啋 `_enemy_auto_cross`锛堢‘瀹氭€э紝鍗曚竴鐩爣锛夛紱PVE/1v1 璧?`slot.team_id==""` 鏃у垎鏀?|
+| `core/turn_system.gd` | `is_auto_cross_candidate` 鍒嗘敮閲嶅啓锛歛ttacker 鍙屽悜瑙﹀彂 auto-cross锛沝efender 寮哄埗绂佺敤锛圲I 璺緞宸插湪鍓嶆澶勭悊锛夛紱鏃?PVE/1v1 PLAYER 闃佃惀鐩?+ ENEMY faction 鍒ゅ畾淇濈暀 |
+| `core/turn_system.gd` | `_enemy_auto_cross` 钀界偣鍒楁敼涓?`dst_col = COLS - 1 - src_col`锛堜粎 cell.team_id 涓庣洰鏍囩洏 team_id 鍧囬潪绌烘椂鍚敤锛?|
+| `core/turn_system.gd` | 椤烘墜淇 `_enemy_auto_cross` 涓?`tgt_is_hostile` / `nc_is_friendly` 涓夊厓琛ㄨ揪寮忔搷浣滅浼樺厛绾?bug锛堟棫寮?`A and B if C else D` 琚В鏋愪负 `A and (B if C else D)`锛孭VE 璺緞涓嬪鑷?hostile 姘歌繙 false锛?|
+
+#### Step 9-C锛氳法鐩橀€夋嫨闃熷垪
+
+| 鏂囦欢 | 鏀瑰姩 |
+|---|---|
+| `core/turn_system.gd` | 鏂板 `_pending_cross_choices: Array`锛岄敭鍊?`{source_slot_id, row, col, target_slot_id}` |
+| `core/turn_system.gd` | 鏂板 `enqueue_cross_choice(payload)` / `consume_cross_choice(source_slot_id, row, col) -> String` / `clear_cross_choices()` API锛沜onsume 鎸夐敭鍊煎尮閰嶅苟 remove |
+| `core/turn_system.gd` | 鏂板 `_broadcast_cross_board(source_slot_id, row, col, target_slot_id)` 浠?1v3 妯″紡璋冪敤 `Net.send_to_room("action/cross_board", room, payload, "all")` |
+
+**鍚屾淇濊瘉**锛歐ebSocket FIFO + Go 鏈嶅姟绔函涓户锛涘畧鏂逛緷娆″箍鎾?cross_board#1..N 鍚庢墠骞挎挱 end_turn锛涜繙绔湪 `_on_remote_end_turn` 璋?`run_pvp_phase_for_slot` 鍓嶉槦鍒楀凡灏辩华锛宑onsume 鏃犻渶 await銆俙_iter_phase_cells_of_slot` 閬嶅巻椤哄簭涓夌涓€鑷达紝閿€煎尮閰嶄繚璇侀€夋嫨涓嶄覆銆?
+**鍏滃簳**锛氳繙绔?consume 杩斿洖 `""` 鏃跺彇 `enemy_slots[0]` + `push_warning`锛岄伩鍏?desync 鍗℃锛涚敓浜т腑涓嶅簲瑙﹀彂銆?
+#### Step 9-D锛欶rontRowSelector 闀滃儚鍒?
+| 鏂囦欢 | 鏀瑰姩 |
+|---|---|
+| `scripts/ui/front_row_selector.gd` | `_on_target_chosen` 钀界偣鍒楄绠楁敼涓?`dst_col = COLS - 1 - cell.col`锛堜粎 1v3 妯″紡鍚敤锛夛紱鍓嶆帓鏁屼汉鏌ユ壘涓庣洰鏍囨牸 lookup 閮界敤 dst_col锛涘啿閿嬬┛閫?/ vigilance 閫昏緫淇濈暀涓嶅彉 |
+
+#### Step 9-E锛氭秷鎭鐞?
+| 鏂囦欢 | 鏀瑰姩 |
+|---|---|
+| `scripts/test_main.gd` | `_handle_pvp_message` 鏂板 `"action/cross_board"` 鍒嗘敮 鈫?`Game.turn.enqueue_cross_choice(payload)`锛沗from == Game.local_player_id` 瀹堝崼淇濊瘉瀹堟柟 owner 涓嶄細鑷繁鍏ラ槦 |
+
+#### Step 9-F锛氭秷鎭崗璁眹鎬伙紙鏈疆鏂板锛?
+| 娑堟伅 | 鏂瑰悜 | payload | 鐢ㄩ€?|
+|---|---|---|---|
+| `action/cross_board` | 瀹堟柟 owner 鈫?all | `{source_slot_id, row, col, target_slot_id}` | 1v3 瀹堟柟 UI 璺ㄧ洏閫夋嫨锛岃繙绔暅鍍忔秷璐癸紝鏀绘柟鏃犻渶骞挎挱锛堢‘瀹氭€э級 |
+
+#### Step 9-G锛氭祴璇曞満鏅?
+1. 瀹堟柟鏀惧崟浣嶈嚦 col 0锛岃法鐩樼偣 UI 閫夋敾鏂逛腑鐩?鈫?鍗曚綅搴旇惤浜庢敾鏂逛腑鐩?col 2锛堣瑙夊悓鍒楋級锛屼笁绔竴鑷?2. 鏀绘柟宸︾帺瀹跺湪 col 0 鏀惧啿閿嬪崟浣?鈫?鑷姩鍐插埌瀹堟柟鐩?col 2 骞剁户缁帰璺埌瀹堟柟 row 2锛坔ero锛?3. 瀹堟柟 col 1 鍗曚綅璺ㄥ叆鏀绘柟宸?col 1锛堥暅鍍忓悗锛夛紝涓嬩竴鍥炲悎锛氬畧鏂?owner 绔璺ㄥ叆鍗曚綅缁х画 row 0 鈫?row 2 鎺ㄨ繘锛涙敾鏂瑰乏 owner 绔暅鍍忓悓姝ユ樉绀?4. PVE / 1v1 鍥炲綊锛氭棤 team_id 鍒嗘敮涓嶅彉锛屽悓鍒楄鍒欎繚鐣?
+#### Step 9-H锛氭湭瀹屾垚 / 寰呰窡杩?
+- [ ] `effects/assault_charge.gd` 浠嶈皟 `find_adjacent_enemies(dest, dest.is_enemy)` 鈥斺€?1v3 瀹堟柟鍐查樀鏁堟灉鍙兘璇垽鍚岄槦锛岄渶杩?`is_hostile_to`
+- [ ] 瀹堟柟鎷ユ湁鑰?UI 閫夌洏杩囩▼涓嫢缃戠粶鏂紑锛屽彲鑳藉嚭鐜伴儴鍒嗗崟浣嶅凡骞挎挱閮ㄥ垎鏈箍鎾殑涓嶄竴鑷寸姸鎬侊紱褰撳墠渚濊禆鏂嚎 鈫?damage_hero(100) 鈫?缁堝眬缁撶畻鍏滃簳锛屾湭鍋氱粏绮掑害鍥炴粴

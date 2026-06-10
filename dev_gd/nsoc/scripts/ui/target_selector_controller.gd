@@ -61,9 +61,11 @@ func _begin_selection(filter: String) -> void:
 	_overlay.gui_input.connect(_on_overlay_input)
 
 func _match_filter(cell, filter: String) -> bool:
+	var local_team: String = Game.team_of_player(Game.local_player_id) \
+		if has_node("/root/Game") else ""
 	match filter:
-		"enemy_unit":    return cell.is_enemy
-		"friendly_unit": return not cell.is_enemy
+		"enemy_unit":    return cell.is_hostile_to(local_team)
+		"friendly_unit": return cell.is_friendly_to(local_team)
 		"any_unit":      return true
 		_:               return true
 
