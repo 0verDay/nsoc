@@ -242,11 +242,11 @@ func _iter_phase_cells_of_slot(slot: BoardSlot) -> Array
 
 ```gdscript
 # game_context.gd
-func pvp_advance_turn() -> void:
+func pvp_advance_turn_skip_dead() -> void:
     if pvp_action_order.is_empty():
         return
     var n: int = pvp_action_order.size()
-    for i in range(n):
+    for _i in range(n):
         pvp_active_idx = (pvp_active_idx + 1) % n
         if not pvp_dead_players.has(pvp_action_order[pvp_active_idx]):
             return  # 找到下一个存活玩家
@@ -256,6 +256,8 @@ func pvp_advance_turn() -> void:
 func is_round_complete() -> bool:
     return pvp_active_idx == 0  # 回到守方位
 ```
+
+> **注**：实际实现中方法名为 `pvp_advance_turn_skip_dead`（而非原设计的 `pvp_advance_turn`），兼容旧版 `pvp_advance_turn`（不跳过阵亡者，供 1v1 使用）同时保留。
 
 ### 5.3 PlayController 出牌权限
 
@@ -671,6 +673,7 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 - [ ] 含 await 效果加 result 字段广播（destroy_unit / weaken / flood_strategy_hero）
 - [x] SparringPanel 加 match_type 选择 UI
 - [部分] 所有 cell.is_enemy 检查迁移到 is_hostile_to（assault_charge 等遗留）
+  - `assault_charge.gd` 仍调 `find_adjacent_enemies(dest, dest.is_enemy)` → 1v3 守方冲锋效果可能误判同队，待迁移
 
 ### P2（后续 / 可后置）
 
