@@ -205,8 +205,8 @@ func _pvp_broadcast_play_card(cell, data) -> void:
 		"card_type": String(data.get("type", "单位")),
 		"slot_id":   String(cell.slot_id),
 	}
-	# 1v3 绝对坐标；1v1 旧坐标（接收方用镜像翻转）
-	if Game.pvp_match_type == "1v3":
+	# 多队伍 PVP 绝对坐标；1v1 旧坐标（接收方用镜像翻转）
+	if Game.is_multi_team_pvp():
 		payload["abs_row"] = cell.row
 		payload["abs_col"] = cell.col
 	else:
@@ -226,9 +226,8 @@ func _pvp_broadcast_play_card(cell, data) -> void:
 					break
 			if is_return_to_hand:
 				payload["result_cleared"] = true
-	# 1v3 广播给全房间（server 中继；本端 echo 由消息处理层 from==local 过滤）
-	# 1v1 仍点对点发给对手，避免 echo 进入队列
-	if Game.pvp_match_type == "1v3":
+	# 多队伍 PVP 广播给全房间；1v1 仍点对点发给对手，避免 echo 进入队列
+	if Game.is_multi_team_pvp():
 		Net.send_to_room("action/play_card", Game.pvp_room_id, payload, "all")
 	else:
 		var opp_id: String = _pvp_opponent_id()
@@ -244,7 +243,7 @@ const _RETURN_TO_HAND_EFFECTS: Array = ["ming_jin"]
 func _pvp_broadcast_play_equip(card_name: String) -> void:
 	if not has_node("/root/Net"):
 		return
-	if Game.pvp_match_type == "1v3":
+	if Game.is_multi_team_pvp():
 		Net.send_to_room("action/play_equip", Game.pvp_room_id, {"card_name": card_name}, "all")
 	else:
 		var opp_id: String = _pvp_opponent_id()
@@ -276,13 +275,13 @@ func _pvp_broadcast_activate_equip(equip_name: String, target_cell) -> void:
 	var payload: Dictionary = {"equip_name": equip_name}
 	if target_cell != null:
 		payload["slot_id"] = String(target_cell.slot_id)
-		if Game.pvp_match_type == "1v3":
+		if Game.is_multi_team_pvp():
 			payload["abs_row"] = int(target_cell.row)
 			payload["abs_col"] = int(target_cell.col)
 		else:
 			payload["row"] = int(target_cell.row)
 			payload["col"] = int(target_cell.col)
-	if Game.pvp_match_type == "1v3":
+	if Game.is_multi_team_pvp():
 		Net.send_to_room("action/activate_equip", Game.pvp_room_id, payload, "all")
 	else:
 		var opp_id: String = _pvp_opponent_id()
@@ -352,8 +351,9 @@ static func _pvp_opponent_id() -> String:
 #   row_b = (ROWS-1) - row_a,  col_b = (COLS-1) - col_a
 #   player_main → enemy_main；enemy_main → player_main
 #
-# 1v3 新路径（slot_id = "slot_<uuid>"，abs_row / abs_col = 绝对坐标，无需镜像）：
+# 多队伍 PVP 新路径（slot_id = "slot_<uuid>"，abs_row / abs_col = 绝对坐标，无需镜像）：
 #   payload 中带 "abs_row" / "abs_col" 字段时走新路径；否则回退旧逻辑。
+#   1v3 / 3v3 均走此路径。
 func handle_remote_play_card(payload: Dictionary) -> void:
 	var card_name: String = String(payload.get("card_name", ""))
 	var card_type: String = String(payload.get("card_type", "单位"))
@@ -395,8 +395,8 @@ func handle_remote_play_card(payload: Dictionary) -> void:
 	# 确定放置时的 is_enemy 标志（PVE/1v1 兼容）：视觉已由 _is_visual_enemy 接管，
 	# 此处仍需传 faction=1 给 spawner / effect 用；1v3 中 team_id 会在 set_card 里从 slot 取。
 	var place_as_enemy: bool
-	# 1v3 中按 team_id 判断是否为"本端敌方"；1v1 按 slot 名判断
-	if Game.pvp_match_type == "1v3":
+	# 多队伍 PVP 中按 team_id 判断是否为"本端敌方"；1v1 按 slot 名判断
+	if Game.is_multi_team_pvp():
 		var local_team: String = Game.team_of_player(Game.local_player_id)
 		place_as_enemy = t_slot.team_id != "" and t_slot.team_id != local_team
 	else:

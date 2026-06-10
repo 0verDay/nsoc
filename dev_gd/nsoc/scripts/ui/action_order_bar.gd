@@ -1,8 +1,9 @@
 class_name ActionOrderBar
 extends HBoxContainer
 
-# 行动顺序指示器：顶部状态条，显示 1v3 全部玩家昵称。
+# 行动顺序指示器：顶部状态条，显示多队伍 PVP 全部玩家昵称。
 # 高亮当前行动者；阵亡玩家文字加删除线。
+# 3v3：team_a 蓝色 / team_b 红色区分。
 # PVE / 1v1 不显示（hide()）。
 
 var _labels: Array = []   # Array[Label]，按 pvp_action_order 顺序
@@ -24,7 +25,7 @@ func refresh() -> void:
 	if not has_node("/root/Game") or not Game.is_pvp:
 		visible = false
 		return
-	if Game.pvp_match_type != "1v3":
+	if not Game.is_multi_team_pvp():
 		visible = false
 		return
 	visible = true
@@ -55,7 +56,13 @@ func refresh() -> void:
 			lbl.add_theme_color_override("font_color", Color("#f76707"))
 		else:
 			lbl.text = nick
-			lbl.add_theme_color_override("font_color", Color("#495057"))
+			# 3v3：按队伍着色（team_a 蓝 / team_b 红）
+			if Game.pvp_match_type == "3v3":
+				var pid_team: String = Game.team_of_player(pid)
+				var team_color: Color = Color("#339af0") if pid_team == "team_a" else Color("#f03e3e")
+				lbl.add_theme_color_override("font_color", team_color)
+			else:
+				lbl.add_theme_color_override("font_color", Color("#495057"))
 
 static func _nickname_of(pid: String) -> String:
 	if Engine.get_main_loop() == null:

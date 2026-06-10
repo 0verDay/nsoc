@@ -376,7 +376,7 @@ func _create_slot(id: String, meta: Dictionary, _animate: bool = false) -> Board
 	# 原理：所有棋盘的 row=0 均为前排（朝对面）。从"对面"看时，需把 row=0 显示在视觉底部，
 	# 这样自家放在 row=2（右下角）的单位，对方看到的是左上角，与 1v1 行为一致。
 	# 仅在 PVP 1v3 模式下，且当前盘不是本端所在队伍时触发；PVE/1v1 不触发。
-	if Game.pvp_match_type == "1v3" and team_id != "":
+	if Game.is_multi_team_pvp() and team_id != "":
 		var local_team: String = Game.team_of_player(Game.local_player_id)
 		if local_team != "" and local_team != team_id and slot.grid_node != null:
 			_reverse_grid_cells(slot.grid_node)

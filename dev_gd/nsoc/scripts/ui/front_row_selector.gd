@@ -151,7 +151,7 @@ func _on_target_chosen(cell: Node, target_id: String) -> Dictionary:
 	if slot == null or not is_instance_valid(slot.board):
 		return {"handled": false}
 	var board_model: BoardModel = slot.board
-	# 落点列：1v3 用镜像（拥有者视觉同列）；PVE/1v1 保持同列
+	# 落点列：多队伍 PVP（1v3/3v3）用镜像（拥有者视觉同列）；PVE/1v1 保持同列
 	var dst_col: int
 	if cell.team_id != "" and slot.team_id != "":
 		dst_col = BoardModel.COLS - 1 - cell.col
