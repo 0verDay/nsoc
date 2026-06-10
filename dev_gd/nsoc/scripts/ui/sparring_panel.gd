@@ -1003,6 +1003,8 @@ func _on_net_message(msg: Dictionary) -> void:
 							"id": String(r.get("id", "")),
 							"host_nickname": String(r.get("host_nickname", "")),
 							"player_count": int(r.get("player_count", 0)),
+							"match_type": String(r.get("match_type", "1v1")),
+							"max_players": int(r.get("max_players", 2)),
 						})
 			if _selected_idx == 1:
 				_refresh_left_content()
