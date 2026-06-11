@@ -600,7 +600,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-**bootstrap() 流程**：①先解析关卡（含章节专属字段 `hero_key` / `initial_mana` / `objective`）写入 `level_data`；②从 `level.hero_key` 确定玩家英雄（空则回退 `BATTLE_HERO_KEY="A"`）读 `hero.json` → 填 `hero_specs`；③生成 `user://battle_cards.json`；④加载 `all_cards.json` 到 `card_db`；⑤发 `cards_loaded` / `level_loaded` 信号；⑥初始化 deck；⑦`mana.setup(initial_mana > 0 ? initial_mana : 1)`（章节可覆盖首回合起始费）；⑧初始化 counters；⑨`HeroAbilities.reset_turn_usage()`；⑩`Equipments.clear_all()`；⑪`turn.is_running = false; turn.turn_number = 0`；⑫`Objectives.setup_for_battle(level.objective)`；⑬`Events.setup_for_battle(level_data)`；⑭消费 `pending_chapter_config` / `pending_level_path`。
+**bootstrap() 流程**：①先解析关卡（含章节专属字段 `hero_key` / `initial_mana` / `mana_max_cap` / `objective`）写入 `level_data`；②从 `level.hero_key` 确定玩家英雄（空则回退 `BATTLE_HERO_KEY="A"`）读 `hero.json` → 填 `hero_specs`；③生成 `user://battle_cards.json`；④加载 `all_cards.json` 到 `card_db`；⑤发 `cards_loaded` / `level_loaded` 信号；⑥初始化 deck；⑦`mana.setup(initial_mana > 0 ? initial_mana : 1, mana_max_cap > 0 ? mana_max_cap : MAX_MANA_CAP)`（章节可覆盖首回合起始费 + 永久费用上限封顶，例：街亭·王平协防 cap=5）；⑧初始化 counters；⑨`HeroAbilities.reset_turn_usage()`；⑩`Equipments.clear_all()`；⑪`turn.is_running = false; turn.turn_number = 0`；⑫`Objectives.setup_for_battle(level.objective)`；⑬`Events.setup_for_battle(level_data)`；⑭消费 `pending_chapter_config` / `pending_level_path`。
 
 
 
@@ -1060,12 +1060,12 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-- `campaigns.json` 战役表：当前 3 个战役（c1 测试·三国、c2、c3），c1 含长坂坡/威震华夏/街亭三章节；描述字段支持 **MarkupParser 自定义标记**（`{place:}` `{ally:}` `{enemy:}` `{warn:}` `{key:}` `{para}` `{break}`）→ BBCode 富文本
+- `campaigns.json` 战役表：当前 3 个战役（c1 测试·三国、c2、c3），c1 含长坂坡/威震华夏/街亭三章节；街亭场景为 `Jieting.tscn`（双面板选英雄过渡，下文§4 描述）；描述字段支持 **MarkupParser 自定义标记**（`{place:}` `{ally:}` `{enemy:}` `{warn:}` `{key:}` `{para}` `{break}`）→ BBCode 富文本
 
 
 
 
-- `data/chapters/changbanpo.json`、`weizhenhuaxia.json` — 章节固定牌堆/关卡配置
+- `data/chapters/changbanpo.json`、`weizhenhuaxia.json`、`jieting_masu.json`、`jieting_wangping.json` — 章节固定牌堆/关卡配置（街亭按玩家选择英雄走两份不同 config，仅 `hero_key`/`initial_mana`/`mana_max_cap`/`boards.player_main.hero` ↔ `boards.ally_left.hero` 互换 + 围山 trigger 目标 slot 不同）
 
 
 
@@ -1081,6 +1081,11 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
   - `initial_mana: int` — 首回合起始费上限（0/缺省 = 默认 1）
+
+
+
+
+  - `mana_max_cap: int` — 本局费用永久上限封顶（0/缺省 = `MAX_MANA_CAP=10`）；与 `initial_mana` 配合实现"协防 5/5 永久不增长"等机制；ManaSystem.start_new_turn 检测 `if maximum < cap` 才 +1
 
 
 
@@ -1660,7 +1665,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-| `spawn_unit` | `actions/spawn_unit.gd` | 向指定盘召唤单位；`strategy: any_empty`（随机空格）/ `fixed`（指定 row/col） |
+| `spawn_unit` | `actions/spawn_unit.gd` | 向指定盘召唤单位；`strategy: any_empty`（随机空格）/ `fixed`（指定 row/col）/ `snap_origin`（用上游 `unit_died` 等事件 snap 中的 `slot_id` + `row` + `col` 在死亡盘的死亡格生成；owner_slot_id 仍取 action.board，跨盘死亡时 ownership 归属召唤者所在盘，墓地路由不出错） |
 
 
 
@@ -1800,7 +1805,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 
 
-| `unit_died` | `name?`, `faction?`（0=玩家/1=敌方）, `board?` | 匹配条件的单位死亡时（`notify_unit_died` 调用时判定） |
+| `unit_died` | `name?`, `name_not?`（单值或数组，命中即排除）, `faction?`（0=玩家/1=敌方）, `board?` | 匹配条件的单位死亡时（`notify_unit_died` 调用时判定）；`name_not` 用于"任一非 X 的单位死亡"语义（如街亭巧变排除疑兵自循环）；trigger 触发时 snap（含 `card_name / is_enemy / owner_slot_id / slot_id / row / col`）会透传到 action ctx，`spawn_unit snap_origin` 等可读 |
 
 
 
@@ -2220,7 +2225,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| `gain_mana_1` | 增益 | on_play：获得 1 点费用（`Game.mana.gain(1)`），装备"测试刀"用 |
+| `gain_mana_1` | 增益 | on_play：获得 1 点费用（`Game.mana.gain(1)`），装备"圣杯"用 |
 
 
 
@@ -2256,6 +2261,11 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 | `flood_strategy_unit` | 水攻 | 无代码钩子（元数据）；实际逻辑由 `apply_soaked_to_all` action（`require_effect="flood_strategy_unit"`）在每回合 trigger 中驱动：若场上存在此效果单位，则给全场敌方单位施加 `soaked` |
+
+
+
+
+| `yi_bing` | 疑兵 | 无独立钩子，由 CombatSystem 与 TurnSystem 内联检测：①TurnSystem `_process_cell` 先攻分支检 `effects.has("yi_bing")` 跳过近战，goal_row 命中走 `_self_destruct_yi_bing`（播死亡动画 → handle_unit_death → clear_card，不调 hero_resolver）；②CombatSystem `attack_cells` 扣血后，若 defender 含 yi_bing → 强制四面归零 + attacker 四面 HP 各 -2 + attacker 同步纳入 dead_cells；③巧变 trigger 用 `name_not: "疑兵"` 防自循环 |
 
 
 
@@ -2385,6 +2395,21 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
+| `weishan_ability` | 围山 | 街亭遗恨·马谡 | — | — | 纯展示被动；免单位/法术直伤走 `flags["die_hard"]`；"友方单位死亡 -1HP" 由 chapter `unit_died` trigger（`faction:0`）调 `damage_hero source=triggered` 穿透 die_hard 实现 |
+
+
+
+
+| `xiefang_ability` | 协防 | 街亭遗恨·王平 | — | — | 纯展示被动；起始 5 费 + 上限永久封顶 5 由 chapter `initial_mana=5` + `mana_max_cap=5` 在 bootstrap 时一次性设到 ManaSystem |
+
+
+
+
+| `qiaobian_ability` | 巧变 | 街亭遗恨·张郃 | — | — | 纯展示被动；"任一非疑兵的己方单位死亡 → 在死亡格生成疑兵" 由 chapter `unit_died` trigger（`faction:1, board:enemy_main, name_not:疑兵`）调 `spawn_unit strategy=snap_origin` 实现 |
+
+
+
+
 
 
 
@@ -2500,6 +2525,21 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
+| `masu_jt` | 街亭遗恨·马谡 | 马谡 | 20 | weishan_ability | 街亭章节玩家英雄之一；初始 `flags["die_hard"]=true`（围山免直伤）；ally case 占 ally_left |
+
+
+
+
+| `wangping_jt` | 街亭遗恨·王平 | 王平 | 20 | xiefang_ability | 街亭章节玩家英雄之一；协防 = chapter 注入 mana 5/5 永久封顶；ally case 占 ally_left（无 mana 影响） |
+
+
+
+
+| `zhanghe_jt` | 街亭遗恨·张郃 | 张郃 | 30 | qiaobian_ability | 街亭主敌英雄；巧变 = chapter trigger 在 unit_died 时 spawn_unit snap_origin 召出疑兵 |
+
+
+
+
 | `enemy_default` | 敌人 | 敌人 | 30 | — | 无专属章节时回退 |
 
 
@@ -2580,7 +2620,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-| 测试刀 | 装备 | 1 | — | — | gain_mana_1（耐久2，每回合限用1次） |
+| 圣杯 | 装备 | 1 | — | — | gain_mana_1（耐久2，每回合限用1次） |
 
 
 
@@ -2626,6 +2666,11 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 | 乡勇 | 单位 | 1 | 1 | 1/1/1/1 | love_people（被击败后对长坂坡·刘备造成 1 伤） |
+
+
+
+
+| 疑兵 | 单位 | 2 | 2 | 2/2/2/2 | yi_bing（无法主动攻击；到达敌方底线自爆；被攻击时自爆 + 攻击者四面 HP 各 -2）；街亭张郃巧变 spawn_origin 召出 |
 
 
 
@@ -2770,7 +2815,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-**新战役章节**：`campaigns.json` 加 chapter 条目（描述支持 MarkupParser 标记），新建 `scenes/chapters/<Name>.tscn` 和 `data/chapters/<name>.json`（含 cards / boards / hero_key / initial_mana / objective / board_events / triggers 等），在章节场景写入 `Game.pending_chapter_config` 后切场景。boards 下每个 entry 可含 `faction / role / slot_index / enabled / hero / initial_units / spawners / spell_casters`。
+**新战役章节**：`campaigns.json` 加 chapter 条目（描述支持 MarkupParser 标记），新建 `scenes/chapters/<Name>.tscn` 和 `data/chapters/<name>.json`（含 cards / boards / hero_key / initial_mana / mana_max_cap / objective / board_events / triggers 等），在章节场景写入 `Game.pending_chapter_config` 后切场景。boards 下每个 entry 可含 `faction / role / slot_index / enabled / hero / initial_units / spawners / spell_casters`。**双 config 模式**（街亭范式）：玩家在过渡面板选英雄分支不同 chapter config（`<chapter>_<heroX>.json` / `<chapter>_<heroY>.json`），仅 hero_key/initial_mana/mana_max_cap/boards 主友互换 + slot 相关 trigger 调整；`scripts/ui/jieting.gd` 是模板。
 
 
 
@@ -2875,7 +2920,10 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 
-- **章节专属英雄与起始费**：`chapter.json` 写 `hero_key` / `initial_mana`；bootstrap 先解析关卡再确定玩家英雄，`mana.setup(initial_mana)` 覆盖默认值；不影响无此字段的旧关卡
+- **章节专属英雄与起始费**：`chapter.json` 写 `hero_key` / `initial_mana` / `mana_max_cap`；bootstrap 先解析关卡再确定玩家英雄，`mana.setup(initial_mana, mana_max_cap)` 覆盖默认值；不影响无此字段的旧关卡（cap 缺省走 `MAX_MANA_CAP=10`）
+
+
+- **章节双 config 选英雄模式**（街亭范式）：`Jieting.tscn` 双面板（马谡 / 王平）选中后写不同 `pending_chapter_config`（`jieting_<key>.json`）；config 间 hero_key、initial_mana、mana_max_cap、boards.player_main.hero ↔ boards.ally_left.hero 互换 + 部分 trigger slot 调整；过渡面板用 panel.gui_input 信号 + PASS/IGNORE 分层让"整面板任意位置点击"都能选中
 
 
 
@@ -3023,6 +3071,18 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 - **apply_soaked_to_all + require_effect**：`flood_strategy_unit` 效果不含代码钩子，水攻触发由 `turn_gte` trigger 每回合调 `apply_soaked_to_all`（`require_effect="flood_strategy_unit"`）—— 场上若无此效果单位则不执行；保证效果存在性检查与施加逻辑完全解耦
 
 
+- **unit_died 通知用 call_deferred**：`PlayController._notify_events_unit_died` 改 `Events.call_deferred("notify_unit_died", snap)`，把 trigger 触发推迟到当前帧末。combat_system / turn_system 对死亡 cell 是"先 handle_unit_death 再 clear_card"的顺序，若同步触发 `spawn_unit snap_origin` 等"在死亡格生成"trigger 会撞上仍 `has_card == true` 的 cell 而被拒；deferred 后 cell 已清空，原位生成成功
+
+
+- **snap 透传到 action ctx**：scripted_events `_fire_trigger / _run_actions / _run_actions_async` 全链路加可选 `snap: Dictionary` 默认 `{}`；上游 `notify_unit_died(snap)` 调 `_fire_trigger(trig, snap)` → 注入 ctx；`spawn_unit snap_origin` / 未来其它依赖死亡 row/col/slot 的 action 可读；旧 callsite 0 改动
+
+
+- **name_not 过滤防自循环**：`_match_unit_died` 加 `name_not`（单值或数组）过滤；街亭巧变 `unit_died → spawn_unit("疑兵")` 用 `name_not: "疑兵"` 排除自身死亡触发，防 spawn → die → spawn 死循环
+
+
+- **疑兵战斗 hook**：`yi_bing` effect 不实现 Effect 钩子，由 CombatSystem / TurnSystem 内联检测：①`turn_system._process_cell` 先攻分支检 `effects.has("yi_bing")` 跳过近战；②`goal_row` 命中走 `_self_destruct_yi_bing`（`Game.play.handle_unit_death` + `clear_card`，不调 hero_resolver，不打英雄）；③`combat_system.attack_cells` 扣血后若 defender 含 yi_bing → 强制四面归零 + attacker 四面 HP 各 -2 + attacker 同步纳入 dead_cells（攻击者反伤致死自动跳过 handle_kills，因第 119 行 `attacker.has_card == false` 守卫）
+
+
 
 
 - **DialogueManager FIFO + CanvasLayer(92)**：叠于战斗 UI 之上、结算面板之下；`clear_queue()` 退出战斗时清空防残留；气泡全代码构建，显示时长自适应字数，点击可提前关闭
@@ -3031,6 +3091,12 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 
 - **威震华夏章节异步预加载**：`weizhenhuaxia.gd` 入场动画与 `Main.tscn` 后台 `load_threaded_request` 并行；加载完毕进度条滑出 → "点击开始"呼吸动效 → 点击 `change_scene_to_packed`（直接用已加载 packed，秒切无延迟）
+
+
+- **章节过渡面板 detail panel 默认左滑**：`changbanpo.gd` / `weizhenhuaxia.gd` / `jieting.gd` 安装 `DetailPanelController` 时不再调 `attach_to_rect(review_pnl)`，改用默认 `LEFT_WIDE` 锚 + 464px 宽，从场景左侧滑出（与游玩场景一致），不再覆盖检阅区
+
+
+- **main.gd `_input` null 守卫**：`_ready` 内 `await _apply_editor_window_scale()` 期间 `_input` 已激活，`side_panels` / `enemy_side_panels` / 三个 pile button / `detail_panel` 还未建好；press 与 release 分支均加 nil 早退，避免 jieting → main 切场景的窗口期撞 `Nil.has_open_panel()` 报错
 
 
 

@@ -50,6 +50,16 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 			for s in Orientation.SIDES:
 				defender.health[s] = 0
 			defender.effects.erase("soaked")
+		# "疑兵"：被攻击后立即自爆（四维归零强制阵亡），同时使攻击者四维各 -2。
+		# 与 frail / soaked 的差异：自爆 + 攻击者反伤，攻击力本身不减。
+		if defender.effects.has("yi_bing"):
+			for s in Orientation.SIDES:
+				defender.health[s] = 0
+			if attacker != null and is_instance_valid(attacker) and attacker.has_card:
+				for s in Orientation.SIDES:
+					attacker.health[s] = max(attacker.health[s] - 2, 0)
+				attacker._update_hp_labels()
+				attacker.play_damage_effect()
 		defender._update_hp_labels()
 		defender.play_damage_effect()
 
@@ -70,6 +80,16 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 				break
 		if dead and not dead_cells.has(defender):
 			dead_cells.append(defender)
+
+	# 攻击者也可能因为攻击疑兵被反伤致死（任一面 <=0），同步纳入死亡清算。
+	if attacker != null and is_instance_valid(attacker) and attacker.has_card:
+		var attacker_dead: bool = false
+		for s in Orientation.SIDES:
+			if attacker.health[s] <= 0:
+				attacker_dead = true
+				break
+		if attacker_dead and not dead_cells.has(attacker):
+			dead_cells.append(attacker)
 
 	if dead_cells.size() > 0:
 		for dc in dead_cells:

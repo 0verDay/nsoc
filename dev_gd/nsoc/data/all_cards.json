@@ -1,6 +1,6 @@
 [
   {
-	"name": "测试刀",
+	"name": "圣杯",
 	"type": "装备",
 	"cost": 1,
 	"durability": 2,
@@ -21,6 +21,14 @@
 	"health": {"top": 2, "bottom": 2, "left": 2, "right": 2},
 	"attack": 2,
 	"effects": ["ash"]
+  },
+  {
+	"name": "疑兵",
+	"type": "单位",
+	"cost": 2,
+	"health": {"top": 2, "bottom": 2, "left": 2, "right": 2},
+	"attack": 2,
+	"effects": ["yi_bing"]
   },
   {
 	"name": "pro哥",

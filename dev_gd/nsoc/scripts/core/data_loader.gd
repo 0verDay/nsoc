@@ -157,9 +157,11 @@ static func _empty_level() -> Dictionary:
 		# 战役章节专属字段：
 		# hero_key —— 章节为玩家指定的英雄（hero.json key）。空时回退 BATTLE_HERO_KEY。
 		# initial_mana —— 章节首回合起始费（max=current=N）。0/缺失时按默认 1 走。
+		# mana_max_cap —— 章节费用上限硬封顶（如协防 cap=5 永久不再 +1）。0/缺失时按默认 10。
 		# objective —— 章节胜利目标 {"type":..., 其它参数}。无 type 时不启用目标。
 		"hero_key": "",
 		"initial_mana": 0,
+		"mana_max_cap": 0,
 		"objective": {},
 		# 章节名称（用于战斗内 ObjectiveDrawer 标题显示）
 		"name": "",
@@ -297,6 +299,8 @@ static func _parse_level(j: Dictionary) -> Dictionary:
 		out["hero_key"] = String(j["hero_key"])
 	if j.has("initial_mana"):
 		out["initial_mana"] = int(j["initial_mana"])
+	if j.has("mana_max_cap"):
+		out["mana_max_cap"] = int(j["mana_max_cap"])
 	if j.has("objective") and typeof(j["objective"]) == TYPE_DICTIONARY:
 		out["objective"] = (j["objective"] as Dictionary).duplicate()
 	# 章节名称（ObjectiveDrawer 顶部标题）

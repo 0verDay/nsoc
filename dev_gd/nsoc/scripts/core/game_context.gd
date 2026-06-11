@@ -349,7 +349,12 @@ func bootstrap() -> void:
 	var start_mana: int = int(level.get("initial_mana", 0))
 	if start_mana <= 0:
 		start_mana = 1
-	mana.setup(start_mana)
+	# 章节级费用上限硬封顶（如街亭·王平协防：cap=5 永久不再 +1）。
+	# 0 / 缺失时 ManaSystem 走默认 MAX_MANA_CAP=10。
+	var max_cap: int = int(level.get("mana_max_cap", 0))
+	if max_cap <= 0:
+		max_cap = ManaSystem.MAX_MANA_CAP
+	mana.setup(start_mana, max_cap)
 	counters.clear()
 	# 重置英雄技能回合用量（防止上局退出时 HeroAbilities.reset_turn_usage 未执行导致残留）
 	if has_node("/root/HeroAbilities"):

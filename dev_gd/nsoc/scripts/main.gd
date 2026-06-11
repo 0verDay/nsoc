@@ -484,6 +484,10 @@ func _input(event) -> void:
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if not event.pressed:
+			# _ready 期间 await 让 _input 提前激活；detail_panel 尚未建好时跳过
+			# release 分支，等 _ready 全部完成后再正常处理后续点击。
+			if detail_panel == null:
+				return
 			detail_panel.cancel_long_press()
 			detail_panel.hide_panel()
 			if $EnemyHpPnl.scale != Vector2.ONE:
@@ -498,6 +502,11 @@ func _input(event) -> void:
 			# 检测 LeftSidePnl 命中并直接转发给 hero_drag_ctrl，绕过覆盖层
 			if is_instance_valid(hero_drag_ctrl) and $LeftSidePnl.get_global_rect().has_point(p):
 				hero_drag_ctrl.on_gui_input(event)
+				return
+			# _ready 期间 await 让 _input 提前激活；侧栏/按钮尚未建好时全部跳过，
+			# 避免对 nil 调 has_open_panel / get_global_rect 报错。
+			if side_panels == null or enemy_side_panels == null \
+					or deck_btn == null or grave_btn == null or banished_btn == null:
 				return
 			if side_panels.has_open_panel():
 				if side_panels.is_panel_hit(p): return

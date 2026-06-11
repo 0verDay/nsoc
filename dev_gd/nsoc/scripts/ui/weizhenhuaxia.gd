@@ -239,15 +239,14 @@ func _enter_battle() -> void:
 		get_tree().change_scene_to_file(NEXT_SCENE_PATH)
 
 
-# 复用游玩界面的长按详情面板（DetailPanelController），与点兵列表同款视觉。
-# attach_to_rect 锁定到 review_pnl，让弹出面板覆盖检阅区。
+# 复用游玩界面的长按详情面板（DetailPanelController），与游玩界面同款视觉与
+# 弹出方式：默认 LEFT_WIDE 锚点 + 464px 宽，从场景左侧滑出（不再覆盖检阅区）。
 func _install_detail_panel() -> void:
 	_detail_panel = DetailPanelController.new()
 	_detail_panel.name = "DetailPanel"
 	add_child(_detail_panel)
 	_detail_panel.setup(self, HAND_CARD_SCENE)
 	_detail_panel.get_clip().move_to_front()
-	_detail_panel.attach_to_rect(review_pnl)
 
 
 # 读 weizhenhuaxia.json：返回 {description, cards: [{name, count}]}。
