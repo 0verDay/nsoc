@@ -55,8 +55,17 @@ const SELECT_ACTIVE_BORDER:   Color = Color("#4a90e2")
 const SELECT_ACTIVE_W:        int   = 3
 const SELECT_PNL_RADIUS:      int   = 20
 
-# 街亭描述（与 campaigns.json 中的 description 保持一致；不另建 jieting.json）。
-const DESC_TEXT: String = "{para}先帝崩殂，{ally:诸葛丞相}受遗诏夙夜忧叹，励精图治，誓兴汉室。建兴六年春，蜀师大举出{place:祁山}，三路并进，旌旗蔽空，山岳震动；{place:天水}、{place:南安}、{place:安定}三郡望风归附，{place:陇右}板荡，朝野皆惊。{enemy:魏明帝}闻警，亲御{place:长安}坐镇，急命名将{enemy:张郃}督步骑五万星夜驰援。{ally:丞相}审地图于案前，知{place:街亭}横亘陇道之喉，进可衔大军以图{place:关中}，退可扼咽要以护粮道——此隘得失，北伐大局所系，{warn:断不可失}。{para}{ally:丞相}于帐前点将，{enemy:马谡}请缨甚急，誓当抵柱以报知遇之恩。{ally:丞相}虽心有疑虑，仍以{ally:王平}为副，谆谆嘱以\"{warn:当道下寨}\"之令。然{enemy:马谡}熟读兵书而轻视实务，至{place:街亭}弃水源而不据，舍要道而登山，自谓凭高临下、势如破竹。{ally:王平}苦谏数四，皆不能回。{enemy:张郃}铁骑一至，洞察其谬，当即环山合围，断其汲道。蜀军绝水半日，焦渴大乱；魏军纵火驱杀，山头火光烛天，蜀师溃散如潮，唯{ally:王平}鸣鼓自持，收余卒缓退，方保偏师不致全没。{para}{place:街亭}一失，前哨倾覆，粮道悬绝，{ally:丞相}挥泪还师{place:汉中}，三郡得而复失，第一次北伐{warn:功亏一篑}。归师之日，{ally:丞相}按军法泣斩{enemy:马谡}，自贬三级以谢国人，整肃纪纲，再图后举。古来名将之败，多败于一念之骄、一时之傲；蜀汉之憾，不在敌强，实在{warn:用人不察、用兵不慎}。{place:街亭}之上，山河寂寂，唯北望中原之志，{warn:虽千劫万难，未尝有改}。"
+# 街亭描述头部（两路英雄共用，拼接在各自正文前）。
+const _DESC_HEADER: String = "英雄（可选）：{ally:街亭遗恨·马谡}  血量：20  技能：{key:围山}——无法受到直接伤害；己方单位每消灭一个，失去 1 点血量\n英雄（可选）：{ally:街亭遗恨·王平}  血量：20  技能：{key:协防}——起始费用与费用上限均为 5，不再随回合递增\n敌方英雄：{enemy:街亭遗恨·张郃}  血量：30  技能：{key:巧变}——己方单位死亡时，在其原位召唤「疑兵」\n关卡目标：{warn:坚守 15 回合}"
+
+# 未选中时的正文提示。
+const _DESC_BODY_DEFAULT: String = "{break}{para}请在右侧选择出战英雄——{ally:马谡}或{ally:王平}——以阅读其视角的战前故事。"
+
+# 马谡视角正文。
+const _DESC_BODY_MASU: String = "{break}{para}{ally:丞相}召我入帐，我心中热血奔涌——此番出{place:祁山}，三郡归附，北伐气势如虹，正是建功立业的天赐良机。我熟读兵法，上知天时，下通地利，区区一个{place:街亭}，不过是我此生事业的垫脚之石，有何难哉？{ally:丞相}叮嘱我\"{warn:当道下寨}\"，我当面应允，心中却已另有打算——凭高临下，以山势为援，背水则困，登山则无忧，此兵法精要，{ally:丞相}拘谨，未必深知。{para}然而，我错了。{enemy:张郃}铁骑至，不正面交锋，反而围山断水——这一招，我竟未曾料到。山上绝水，军心溃散，我在山顶眼睁睁看着这一切崩塌，却无能为力。{ally:子均}鸣鼓缓退，独木难支，蜀师溃散如潮。那一刻，我终于明白，{ally:丞相}的每一句叮嘱，都是以血换来的经验，而我，以自己的傲慢，葬送了他倾注心血的战局。{para}归师之日，{ally:丞相}泣而斩我。我跪于刀下，无话可说，唯有愧恨。我一生熟读圣贤之书，却在最要紧的时刻，被傲慢蒙了眼。若有来生，我只愿踏踏实实，{warn:不以书卷之见轻天下事}。{place:街亭}山上，风声呜咽，是我留给自己的祭文。"
+
+# 王平视角正文。
+const _DESC_BODY_WANGPING: String = "{break}{para}我随{ally:幼常}至{place:街亭}，一见地形，心便沉了下去。道旁有险可据，有水可守，可他执意要登山——我不通文墨，讲不出那许多兵书上的大道理，但我知道，{warn:断水}就是死路，山高则孤，一旦被围，再多人马也是瓮中之鳖。我苦苦劝谏，{ally:幼常}一笑置之，说我不懂兵法。或许，我真的不懂。{para}但战场会说话。{enemy:张郃}一到，立刻看出破绽，铁骑合围，断我军汲道。半日之内，全军焦渴，阵脚大乱。我在山下，鸣鼓收拢余卒，一步一步缓退，护着残部不被尽数歼灭。那些丢盔弃甲的同袍从我身边奔逃而过，我咬紧牙关，不敢回头看山顶那片火光。{para}{place:街亭}一失，北伐大局尽毁。我活着回来，却不知该喜还是悲——活着，意味着要亲历{ally:丞相}挥泪落刀的那一刻，要带着这份{warn:苦谏未果}的遗憾，继续走下去。{place:街亭}的风，吹得人心里发凉。我不恨{ally:幼常}，只是此后每逢阵前，那道山影便会浮现眼前，提醒我：{warn:战场无书，唯有实地}。"
 
 # 选项标识 → 显示名（用于"作为{X}进入战役"）。
 const HERO_NAMES: Dictionary = {"masu": "马谡", "wangping": "王平"}
@@ -111,7 +120,7 @@ func _ready() -> void:
 	_apply_review_pnl_style(bottom_review_pnl, false)
 	_apply_progress_bar_style()
 
-	_build_desc()
+	_build_desc(_selected)
 	_build_review_panel(top_review_pnl, "马谡", "masu")
 	_build_review_panel(bottom_review_pnl, "王平", "wangping")
 	_install_detail_panel()
@@ -280,8 +289,7 @@ func _on_panel_clicked(key: String) -> void:
 	_selected = key
 	_apply_review_pnl_style(top_review_pnl, _selected == "masu")
 	_apply_review_pnl_style(bottom_review_pnl, _selected == "wangping")
-	# 文本已存在（即玩家曾选中过 → outro 已触发并建好 label）：
-	# 切换英雄时同步刷新文案，呼吸 tween 不打断。
+	_build_desc(_selected)
 	_refresh_start_label_text()
 	_maybe_run_outro()
 
@@ -306,9 +314,15 @@ func _apply_review_pnl_style(pnl: Panel, selected: bool) -> void:
 
 # ============== 描述面板 ==============
 
-func _build_desc() -> void:
+func _build_desc(selected: String) -> void:
 	for c in desc_pnl.get_children():
 		c.queue_free()
+
+	var body_text: String
+	match selected:
+		"masu":     body_text = _DESC_BODY_MASU
+		"wangping": body_text = _DESC_BODY_WANGPING
+		_:          body_text = _DESC_BODY_DEFAULT
 
 	var title := Label.new()
 	title.text = CHAPTER_NAME
@@ -325,7 +339,7 @@ func _build_desc() -> void:
 	desc_pnl.add_child(title)
 
 	var body := RichTextLabel.new()
-	body.text = MarkupParser.parse(DESC_TEXT)
+	body.text = MarkupParser.parse(_DESC_HEADER + body_text)
 	body.set_anchors_preset(Control.PRESET_FULL_RECT, false)
 	body.offset_left = DESC_PAD
 	body.offset_right = -DESC_PAD
