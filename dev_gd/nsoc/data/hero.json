@@ -71,6 +71,28 @@
 			"max_health": 20,
 			"abilities": ["aid_fancheng_ability", "straight_in_ability"],
 			"skill_text": "援樊：被击败后对曹仁造成10伤害。直入：回合开始友方单位获冲锋；回合结束移除冲锋。"
+		},
+		"masu_jt": {
+			"display_name": "街亭遗恨·马谡",
+			"battle_name": "马谡",
+			"max_health": 20,
+			"abilities": ["weishan_ability"],
+			"flags": ["die_hard"],
+			"skill_text": "围山：无法受到单位与法术的直接伤害；场上每有一个己方单位被消灭，失去 1 点血量。"
+		},
+		"wangping_jt": {
+			"display_name": "街亭遗恨·王平",
+			"battle_name": "王平",
+			"max_health": 20,
+			"abilities": ["xiefang_ability"],
+			"skill_text": "协防：本局起始费用与费用上限均为 5，且不再随回合递增。"
+		},
+		"zhanghe_jt": {
+			"display_name": "街亭遗恨·张郃",
+			"battle_name": "张郃",
+			"max_health": 30,
+			"abilities": ["qiaobian_ability"],
+			"skill_text": "巧变：任一己方单位死亡时，在其原位召唤一个「疑兵」。"
 		}
 	},
 	"enemy_default": {

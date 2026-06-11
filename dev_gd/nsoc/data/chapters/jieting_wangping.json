@@ -1,0 +1,84 @@
+{
+	"version": 1,
+	"name": "街亭遗恨",
+	"description": "玩家英雄：{ally:街亭遗恨·王平}  血量：20  技能：{key:协防}\n友方英雄：{ally:街亭遗恨·马谡}  血量：20  技能：{key:围山}\n敌方英雄：{enemy:街亭遗恨·张郃}  血量：30  技能：{key:巧变}\n关卡目标：{warn:坚守 15 回合}",
+	"hero_key": "wangping_jt",
+	"initial_mana": 5,
+	"mana_max_cap": 5,
+	"cards": [
+		{"name": "填线宝宝", "count": 10}
+	],
+	"boards": {
+		"player_main": {
+			"faction": 0,
+			"role": "main_player",
+			"slot_index": 4,
+			"hero": {
+				"hp": 20,
+				"name_short": "王平",
+				"name_full": "街亭遗恨·王平",
+				"abilities": ["xiefang_ability"]
+			}
+		},
+		"ally_left": {
+			"faction": 0,
+			"role": "ally",
+			"slot_index": 3,
+			"enabled": true,
+			"hero": {
+				"hp": 20,
+				"name_short": "马谡",
+				"name_full": "街亭遗恨·马谡",
+				"abilities": ["weishan_ability"],
+				"flags": ["die_hard"]
+			},
+			"initial_units": [],
+			"spawners": []
+		},
+		"enemy_main": {
+			"faction": 1,
+			"role": "main_enemy",
+			"slot_index": 1,
+			"hero": {
+				"hp": 30,
+				"name_short": "张郃",
+				"name_full": "街亭遗恨·张郃",
+				"abilities": ["qiaobian_ability"]
+			},
+			"initial_units": [],
+			"spawners": [
+				{
+					"name": "填线宝宝",
+					"positions": [{"row": 0, "col": 1}],
+					"interval": 3
+				}
+			]
+		}
+	},
+	"objective": {
+		"type": "survive_turns",
+		"turns": 15
+	},
+	"triggers": [
+		{
+			"id": "weishan_friend_died",
+			"when": {"type": "unit_died", "faction": 0},
+			"actions": [
+				{"type": "damage_hero", "slot": "ally_left", "amount": 1, "source": "triggered"}
+			]
+		},
+		{
+			"id": "qiaobian_unit_died",
+			"when": {"type": "unit_died", "faction": 1, "board": "enemy_main", "name_not": "疑兵"},
+			"actions": [
+				{
+					"type": "spawn_unit",
+					"name": "疑兵",
+					"board": "enemy_main",
+					"faction": 1,
+					"strategy": "snap_origin"
+				}
+			]
+		}
+	]
+}

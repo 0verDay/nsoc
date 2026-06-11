@@ -89,7 +89,8 @@ func notify_unit_died(snap: Dictionary) -> void:
 			continue
 		if not _match_unit_died(when, snap):
 			continue
-		_fire_trigger(trig)
+		# 把 snap 注入 trigger 的 action ctx，spawn_unit 等可读 row/col 等字段。
+		_fire_trigger(trig, snap)
 
 # BoardSlot.hero died 信号调用：通知英雄死亡，检查 hero_died 类 trigger。
 # snap 结构：{"slot_id": String, "hero_name": String}
@@ -151,6 +152,17 @@ func _match_unit_died(cond: Dictionary, snap: Dictionary) -> bool:
 	if cond.has("name"):
 		if String(cond["name"]) != String(snap.get("card_name", "")):
 			return false
+	# "name_not" 条件：单个名或数组，命中任一即排除（用于"任一非疑兵单位死亡"）
+	if cond.has("name_not"):
+		var nn = cond["name_not"]
+		var dead_name := String(snap.get("card_name", ""))
+		if typeof(nn) == TYPE_ARRAY:
+			for n in nn:
+				if String(n) == dead_name:
+					return false
+		else:
+			if String(nn) == dead_name:
+				return false
 	# "faction" 条件：0=玩家方，1=敌方
 	if cond.has("faction"):
 		var expected_enemy: bool = int(cond["faction"]) == 1
@@ -189,29 +201,30 @@ func _check_counters_all_set_trigger(trig: Dictionary, cond: Dictionary, _curren
 			return
 	_fire_trigger(trig)
 
-func _fire_trigger(trig: Dictionary) -> void:
+func _fire_trigger(trig: Dictionary, snap: Dictionary = {}) -> void:
 	trig["fired"] = true
 	if has_node("/root/Game") and Game.turn != null:
 		trig["last_fired_turn"] = Game.turn.turn_number
-	_run_actions_async(trig["actions"])
+	_run_actions_async(trig["actions"], snap)
 
 # 可 await 版本：执行完所有 actions 后才返回。
-func _fire_trigger_and_wait(trig: Dictionary) -> void:
+func _fire_trigger_and_wait(trig: Dictionary, snap: Dictionary = {}) -> void:
 	trig["fired"] = true
 	if has_node("/root/Game") and Game.turn != null:
 		trig["last_fired_turn"] = Game.turn.turn_number
-	await _run_actions(trig["actions"])
+	await _run_actions(trig["actions"], snap)
 
 # 启动 actions 协程（fire-and-forget）：_run_actions 是协程，
 # 不 await 即以"后台"方式运行，不阻塞当前信号处理路径。
-func _run_actions_async(actions: Array) -> void:
+func _run_actions_async(actions: Array, snap: Dictionary = {}) -> void:
 	if actions.is_empty():
 		return
 	# fire-and-forget：不 await，后台运行
-	_run_actions(actions)
+	_run_actions(actions, snap)
 
 # 顺序执行 actions 数组（协程，含 await）。
-func _run_actions(actions: Array) -> void:
+# snap 来自上游事件（如 unit_died），透传给 action ctx，spawn_unit 等可读 row/col。
+func _run_actions(actions: Array, snap: Dictionary = {}) -> void:
 	for action in actions:
 		if typeof(action) != TYPE_DICTIONARY:
 			continue
@@ -222,6 +235,8 @@ func _run_actions(actions: Array) -> void:
 			push_warning("Events: unknown action type: " + type_str)
 			continue
 		var ctx := _make_action_ctx()
+		if not snap.is_empty():
+			ctx["snap"] = snap
 		await Actions.run(type_str, action, ctx)
 
 func _make_action_ctx() -> Dictionary:

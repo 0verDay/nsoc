@@ -46,6 +46,11 @@ func _ready() -> void:
 	var stream = load(VIDEO_PATH)
 	if stream == null:
 		push_warning("VideoSplash: 找不到视频文件 %s，直接跳过" % VIDEO_PATH)
+		# 立即标记 done 并屏蔽输入，避免后续 _input 在场景切换瞬间
+		# 再次触发 _finish() → create_tween() on freed node。
+		_done = true
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_process_input(false)
 		_switch_scene()
 		return
 
@@ -81,12 +86,17 @@ func _finish() -> void:
 	if _done:
 		return
 	_done = true
+	# 屏蔽后续输入，避免淡出动画期间多次进入 _finish。
+	set_process_input(false)
 	if _player != null and _player.is_playing():
 		_player.stop()
 	var tw := create_tween()
 	tw.tween_property(_overlay, "modulate:a", 1.0, FADE_DURATION) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await tw.finished
+	# 异步等待期间节点可能已被外部 free（极端情况），确认仍在树内再切。
+	if not is_inside_tree():
+		return
 	_switch_scene()
 
 

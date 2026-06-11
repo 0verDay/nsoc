@@ -430,8 +430,9 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 	var hero_resolver: Callable = slot.hero_resolver if (not on_home_board) else Callable()
 
 	# ── 先攻：有邻敌则直接攻击，冲锋作废 ─────────────────────────────
+	# 例外："疑兵"无法主动攻击，跳过先攻；继续走移动 / 跨盘 / 到线自爆路径。
 	var enemies := board.find_adjacent_enemies(cell, for_enemy)
-	if enemies.size() > 0:
+	if enemies.size() > 0 and not cell.effects.has("yi_bing"):
 		await _combat.attack_cells(cell, enemies)
 		if _combat == null or _combat.aborted:
 			return
@@ -656,11 +657,18 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 	# 已到 goal_row：
 	#   自家盘上 = 自家 front_row → idle（跨盘已处理）
 	#   敌方盘上 = 该盘 back_row → 打英雄（"unit_direct" 来源）
+	#   "疑兵"特殊：到达敌方底线（goal_row）→ 自爆，不打英雄
 	# PVP 锁步说明：hero_resolver 只修改本端对应 HeroState，无需广播。
 	#   run_pvp_phase(PLAYER) 在 A 端打 A 的 enemy hero（对手）；
 	#   run_pvp_phase(ENEMY)  在 B 端打 B 的 player hero（自己）。
 	#   两端各打各端的 hero_resolver，结果对称，已验证。
 	if cell.row == goal_row:
+		if cell.effects.has("yi_bing"):
+			# 仅在敌方盘的 goal_row 自爆（即玩家底线）；自家盘 goal_row 是
+			# 自家 front_row（跨盘起跳点），跨盘逻辑已在前文处理过，到此处
+			# 表示无可跨目标 → 也按"无路可走"自爆，避免疑兵卡在原盘前排。
+			await _self_destruct_yi_bing(cell)
+			return
 		if not on_home_board and hero_resolver.is_valid():
 			hero_resolver.call(cell.attack, "unit_direct")
 		cell.has_attacked = true
@@ -1003,3 +1011,19 @@ func _trigger_vigilance_on_board(entered_cell, mover_for_enemy: bool,
 			return
 		if not is_instance_valid(board) or not is_instance_valid(entered_cell):
 			return
+
+
+# 疑兵到达 goal_row 时调用：播死亡动画 → 走 PlayController.handle_unit_death
+# 完成牌堆路由 + 触发 unit_died（可能再触发巧变 spawn）→ 清格。
+# 不影响 hero（不调 hero_resolver），与"被攻击自爆"路径区别仅在无攻击者反伤。
+func _self_destruct_yi_bing(cell) -> void:
+	if cell == null or not cell.has_card:
+		return
+	cell.play_death_effect()
+	await get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+	if _combat == null or _combat.aborted or not is_instance_valid(cell):
+		return
+	if Game != null and Game.play != null:
+		Game.play.handle_unit_death(cell)
+	if cell.has_card:
+		cell.clear_card()

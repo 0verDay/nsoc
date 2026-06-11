@@ -494,6 +494,8 @@ func handle_unit_death(cell) -> void:
 		"is_enemy":     cell.is_enemy,
 		"owner_slot_id": cell.owner_slot_id,
 		"slot_id":      cell.slot_id,
+		"row":          int(cell.row),
+		"col":          int(cell.col),
 	}
 
 	var cdata = Game.get_card(cell.card_name)
@@ -531,9 +533,12 @@ func handle_unit_death(cell) -> void:
 	_notify_events_unit_died(snap)
 
 # 通知 Events 系统单位已死亡（Events 存在时才调用，否则静默）。
+# 关键：用 call_deferred 推迟到当前帧末——combat_system / turn_system 在调用
+# handle_unit_death 后还要 clear_card，若同步触发 unit_died 会导致 spawn_unit
+# 等"在原位生成"的 trigger 撞上仍 has_card 的死亡格而被拒。
 func _notify_events_unit_died(snap: Dictionary) -> void:
 	if has_node("/root/Events"):
-		Events.notify_unit_died(snap)
+		Events.call_deferred("notify_unit_died", snap)
 
 # 取单位"原属盘"。优先用 cell.owner_slot_id，未注入时回退到 cell.slot_id（旧逻辑兜底）。
 static func _resolve_owner_slot(cell) -> BoardSlot:
