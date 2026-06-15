@@ -10,6 +10,8 @@ Controls:
   Left Drag (on shape) : Move shape
   Click shape          : Select for connection (click two shapes to connect)
   Click connection line: Delete that connection
+  1~4 + Right Click (square): Set category 大/商/农/军
+  Right Click (square, no key): Clear category
   Export button        : Save map to JSON
 """
 
@@ -51,6 +53,7 @@ class Shape:
         self.kind = kind  # 'triangle' | 'circle' | 'square'
         self.wx = wx      # world x
         self.wy = wy      # world y
+        self.category = None  # int 1-4, only for 'square'
 
     def screen_pos(self, offset_x, offset_y, scale):
         return (self.wx * scale + offset_x, self.wy * scale + offset_y)
@@ -67,13 +70,18 @@ class MapEditor:
 
         tk.Label(self.toolbar, text="1=Triangle  2=Circle  3=Square",
                  bg="#2b2b2b", fg="#cccccc", font=("Arial", 10)).pack(side=tk.LEFT, padx=10)
-        tk.Label(self.toolbar, text="Click 2 shapes to connect | Click line to delete | Scroll=Zoom",
+        tk.Label(self.toolbar, text="Click 2 shapes to connect | Click line to delete | Scroll=Zoom | 1~4+RClick square=category",
                  bg="#2b2b2b", fg="#cccccc", font=("Arial", 10)).pack(side=tk.LEFT, padx=10)
 
         export_btn = tk.Button(self.toolbar, text="Export JSON",
                                bg="#4a90d9", fg="white", relief=tk.FLAT,
                                padx=10, command=self.export_json)
         export_btn.pack(side=tk.RIGHT, padx=10, pady=5)
+
+        import_btn = tk.Button(self.toolbar, text="Import JSON",
+                               bg="#5a9e6f", fg="white", relief=tk.FLAT,
+                               padx=10, command=self.import_json)
+        import_btn.pack(side=tk.RIGHT, padx=5, pady=5)
 
         clear_btn = tk.Button(self.toolbar, text="Clear All",
                               bg="#d9534a", fg="white", relief=tk.FLAT,
@@ -110,9 +118,12 @@ class MapEditor:
     def _bind_events(self):
         self.root.bind("<KeyPress>", self._on_key_press)
         self.root.bind("<KeyRelease>", self._on_key_release)
+        self.root.bind("<Delete>", self._delete_selected)
+        self.root.bind("<BackSpace>", self._delete_selected)
         self.canvas.bind("<ButtonPress-1>", self._on_mouse_press)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_release)
+        self.canvas.bind("<ButtonPress-3>", self._on_right_click)
         self.canvas.bind("<MouseWheel>", self._on_scroll)          # Windows
         self.canvas.bind("<Button-4>", self._on_scroll)            # Linux scroll up
         self.canvas.bind("<Button-5>", self._on_scroll)            # Linux scroll down
@@ -124,6 +135,15 @@ class MapEditor:
     def _on_key_release(self, event):
         if event.keysym == self.pressed_key:
             self.pressed_key = None
+
+    def _delete_selected(self, event=None):
+        if self.selected_shape is None:
+            return
+        s = self.selected_shape
+        self.shapes.remove(s)
+        self.connections = [(a, b) for a, b in self.connections if a is not s and b is not s]
+        self.selected_shape = None
+        self._draw()
 
     # ------------------------------------------------------------------
     def _screen_to_world(self, sx, sy):
@@ -151,6 +171,17 @@ class MapEditor:
             if point_to_segment_dist((sx, sy), sa, sb) < LINE_HIT_DIST:
                 return conn
         return None
+
+    # ------------------------------------------------------------------
+    def _on_right_click(self, event):
+        hit = self._hit_shape(event.x, event.y)
+        if hit is None or hit.kind != 'square':
+            return
+        if self.pressed_key in ('1', '2', '3', '4'):
+            hit.category = int(self.pressed_key)
+        else:
+            hit.category = None
+        self._draw()
 
     # ------------------------------------------------------------------
     def _on_scroll(self, event):
@@ -307,9 +338,10 @@ class MapEditor:
         for shape in self.shapes:
             spx, spy = shape.screen_pos(ox, oy, sc)
             is_selected = (shape is self.selected_shape)
-            self._draw_shape(shape.kind, spx, spy, is_selected)
+            self._draw_shape(shape, spx, spy, is_selected)
 
-    def _draw_shape(self, kind, sx, sy, selected):
+    def _draw_shape(self, shape, sx, sy, selected):
+        kind = shape.kind
         r = SHAPE_RADIUS * self.scale
         outline = "#ffe066" if selected else "#ffffff"
         width = 3 if selected else 2
@@ -320,6 +352,12 @@ class MapEditor:
         elif kind == 'square':
             self.canvas.create_rectangle(sx - r, sy - r, sx + r, sy + r,
                                          fill="#e07b54", outline=outline, width=width)
+            category_labels = {1: "大", 2: "商", 3: "农", 4: "军"}
+            label = category_labels.get(shape.category)
+            if label:
+                font_size = max(8, int(r * 0.9))
+                self.canvas.create_text(sx, sy, text=label, fill="#ffffff",
+                                        font=("Arial", font_size, "bold"))
         elif kind == 'triangle':
             pts = [
                 sx, sy - r,
@@ -329,9 +367,79 @@ class MapEditor:
             self.canvas.create_polygon(pts, fill="#6abf69", outline=outline, width=width)
 
     # ------------------------------------------------------------------
+    def import_json(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json")],
+            title="Import Map"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Import", f"读取文件失败：\n{e}")
+            return
+
+        self.shapes.clear()
+        self.connections.clear()
+        self.selected_shape = None
+
+        id_to_shape = {}
+        max_id = 0
+        for entry in data.get("shapes", []):
+            s = Shape.__new__(Shape)
+            s.id = entry["id"]
+            s.kind = entry["kind"]
+            s.wx = entry["x"]
+            s.wy = entry["y"]
+            s.category = entry.get("category", None)
+            self.shapes.append(s)
+            id_to_shape[s.id] = s
+            if s.id > max_id:
+                max_id = s.id
+
+        Shape._id_counter = max_id
+
+        for conn in data.get("connections", []):
+            a = id_to_shape.get(conn["from"])
+            b = id_to_shape.get(conn["to"])
+            if a and b:
+                self.connections.append((a, b))
+
+        self._draw()
+        messagebox.showinfo("Import", f"地图已导入：\n{path}")
+
+    # ------------------------------------------------------------------
     def export_json(self):
         if not self.shapes:
             messagebox.showwarning("Export", "No shapes to export.")
+            return
+
+        unclassified = [s for s in self.shapes if s.kind == 'square' and s.category is None]
+        if unclassified:
+            ids = ", ".join(str(s.id) for s in unclassified)
+            messagebox.showwarning("Export", f"以下方形尚未分类，请先右键分配类别后再导出：\nID: {ids}")
+            return
+
+        # connectivity check (BFS)
+        adj = {s.id: set() for s in self.shapes}
+        for a, b in self.connections:
+            adj[a.id].add(b.id)
+            adj[b.id].add(a.id)
+        start = self.shapes[0].id
+        visited = {start}
+        queue = [start]
+        while queue:
+            cur = queue.pop()
+            for nb in adj[cur]:
+                if nb not in visited:
+                    visited.add(nb)
+                    queue.append(nb)
+        if len(visited) != len(self.shapes):
+            isolated = [s for s in self.shapes if s.id not in visited]
+            ids = ", ".join(str(s.id) for s in isolated)
+            messagebox.showwarning("Export", f"场景中存在未连通的图形，无法导出。\n孤立图形 ID: {ids}")
             return
 
         min_x = min(s.wx for s in self.shapes)
@@ -348,6 +456,8 @@ class MapEditor:
                 "x": round(shape.wx - min_x, 2),
                 "y": round(shape.wy - min_y, 2)
             }
+            if shape.kind == 'square':
+                entry["category"] = shape.category
             data["shapes"].append(entry)
 
         for a, b in self.connections:

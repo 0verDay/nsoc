@@ -137,6 +137,8 @@ func _refresh_left_content() -> void:
 	_build_empire(holder, MODE_NAMES[_selected_idx])
 
 
+const EMPIRE_TEST_SCENE := "res://scenes/EmpireTest.tscn"
+
 func _build_empire(holder: Control, mode_title: String) -> void:
 	# 整体 HBox：主内容区（占满） + 右侧操作按钮列
 	var hbox := HBoxContainer.new()
@@ -168,6 +170,16 @@ func _build_empire(holder: Control, mode_title: String) -> void:
 
 	for label in ["载\n入", "开\n始", "继\n续"]:
 		btn_col.add_child(_make_action_btn(label))
+
+	if _selected_idx == 0:
+		var center := CenterContainer.new()
+		center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		main_area.add_child(center)
+		var test_btn := Button.new()
+		test_btn.text = "test"
+		test_btn.custom_minimum_size = Vector2(320, 120)
+		test_btn.pressed.connect(func(): get_tree().change_scene_to_file(EMPIRE_TEST_SCENE))
+		center.add_child(test_btn)
 
 
 func _make_action_btn(label: String) -> Button:

@@ -44,6 +44,9 @@ var _exit_action: Callable
 var _can_open: Callable
 # 可选：投降按钮（仅 PVP 模式注入）。Callable 有效则在"设置"与"退回菜单"之间插入红色"投降"按钮。
 var _surrender_action: Callable
+# 可选：额外按钮列表。每项为 { "label": String, "action": Callable }，插入在"设置"与"退回菜单"之间。
+var _extra_buttons: Array = []
+var _button_align: String = "left"   # "left" | "right"
 
 func setup(parent: Control, config: Dictionary = {}) -> void:
 	_parent = parent
@@ -57,6 +60,10 @@ func setup(parent: Control, config: Dictionary = {}) -> void:
 		_can_open = config["can_open"]
 	if config.has("surrender_action") and config["surrender_action"] is Callable:
 		_surrender_action = config["surrender_action"]
+	if config.has("extra_buttons") and config["extra_buttons"] is Array:
+		_extra_buttons = config["extra_buttons"]
+	if config.has("button_align"):
+		_button_align = String(config["button_align"])
 	if bool(config.get("create_trigger_button", true)):
 		_build_button()
 	_build_overlay_and_panel()
@@ -83,11 +90,18 @@ func _build_button() -> void:
 	_btn.name = "SettingsBtn"
 	_btn.text = "选项"
 	_btn.add_theme_font_size_override("font_size", 32)
-	_btn.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
-	_btn.offset_left = 20
-	_btn.offset_top = 20
-	_btn.offset_right = 180
-	_btn.offset_bottom = 100
+	if _button_align == "right":
+		_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT, false)
+		_btn.offset_left   = -180
+		_btn.offset_top    =  20
+		_btn.offset_right  = -20
+		_btn.offset_bottom =  100
+	else:
+		_btn.set_anchors_preset(Control.PRESET_TOP_LEFT, false)
+		_btn.offset_left   =  20
+		_btn.offset_top    =  20
+		_btn.offset_right  =  180
+		_btn.offset_bottom =  100
 	ThemeFactory.apply_button_styles(_btn, ThemeFactory.primary_button_styles())
 	_btn.add_theme_color_override("font_color", Color.WHITE)
 	_parent.add_child(_btn)
@@ -105,12 +119,10 @@ func _build_overlay_and_panel() -> void:
 	_parent.add_child(_overlay)
 	_overlay.gui_input.connect(_on_overlay_input)
 
-	# 是否含投降按钮决定面板高度：
-	#   无投降（3 按钮）：panel 高 400，vbox 高 270
-	#   含投降（4 按钮）：panel 高 490，vbox 高 360（多一个按钮 70 + 间距 20 = 90）
-	var has_surrender: bool = _surrender_action.is_valid()
-	var panel_half_h: int  = 245 if has_surrender else 200
-	var vbox_half_h:  int  = 180 if has_surrender else 135
+	# 按钮数量决定面板高度：基础 3 个，每额外一个 +90（按钮 70 + 间距 20）
+	var extra_count: int = (1 if _surrender_action.is_valid() else 0) + _extra_buttons.size()
+	var panel_half_h: int = 200 + extra_count * 45
+	var vbox_half_h:  int = 135 + extra_count * 45
 
 	_panel = Panel.new()
 	_panel.name = "SettingsPanel"
@@ -152,6 +164,15 @@ func _build_overlay_and_panel() -> void:
 		_apply_danger_button_style(surrender_btn)
 		surrender_btn.pressed.connect(_on_surrender_pressed)
 		vbox.add_child(surrender_btn)
+
+	# 可选额外按钮（如"存档"等）
+	for entry in _extra_buttons:
+		if entry is Dictionary and entry.has("label"):
+			var eb := _make_button(String(entry["label"]))
+			if entry.has("action") and entry["action"] is Callable:
+				var action: Callable = entry["action"]
+				eb.pressed.connect(func(): close(); action.call())
+			vbox.add_child(eb)
 
 	var exit_btn := _make_button(_exit_label)
 	exit_btn.pressed.connect(_on_exit_pressed)
