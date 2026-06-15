@@ -61,6 +61,30 @@
 	},
 	"triggers": [
 		{
+			"id": "dialogue_turn_1",
+			"when": {"type": "turn_eq", "n": 1},
+			"once": true,
+			"actions": [
+				{"type": "show_dialogue", "speaker": "张郃",
+				 "text": "{ally:马谡}据山断水，{warn:此乃取死之道}——{ally:王平}，你一人之力，能支撑几时？"},
+				{"type": "show_dialogue", "speaker": "王平",
+				 "text": "{enemy:张郃}，纵幼常有失，{ally:吾}必死守此地，{warn:绝不后退一步}！",
+				 "side": "player"}
+			]
+		},
+		{
+			"id": "dialogue_turn_2",
+			"when": {"type": "turn_eq", "n": 2},
+			"once": true,
+			"actions": [
+				{"type": "show_dialogue", "speaker": "张郃",
+				 "text": "你的援兵不会来了。{place:街亭}已成孤地，{warn:降者免死}！"},
+				{"type": "show_dialogue", "speaker": "王平",
+				 "text": "丞相之令，{ally:平}字字铭记。{warn:此阵不破，此身不退}！",
+				 "side": "player"}
+			]
+		},
+		{
 			"id": "weishan_friend_died",
 			"when": {"type": "unit_died", "faction": 0},
 			"actions": [

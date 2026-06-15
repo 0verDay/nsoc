@@ -33,7 +33,7 @@ const SECONDARY_PANEL_SCENES: Dictionary = {
 	"CollectionBtn": preload("res://scenes/CollectionPanel.tscn"),
 	"CustomBtn": preload("res://scenes/CustomPanel.tscn"),
 	"CampaignBtn": preload("res://scenes/CampaignPanel.tscn"),
-	"JourneyBtn": preload("res://scenes/JourneyPanel.tscn"),
+	"JourneyBtn": preload("res://scenes/YanyiPanel.tscn"),
 	"SparringBtn": preload("res://scenes/SparringPanel.tscn"),
 	"ProfilePnl": preload("res://scenes/ProfileSubPanel.tscn"),
 }

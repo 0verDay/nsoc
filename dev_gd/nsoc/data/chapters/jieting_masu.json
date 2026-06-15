@@ -61,6 +61,30 @@
 	},
 	"triggers": [
 		{
+			"id": "dialogue_turn_1",
+			"when": {"type": "turn_eq", "n": 1},
+			"once": true,
+			"actions": [
+				{"type": "show_dialogue", "speaker": "张郃",
+				 "text": "{ally:马谡}！你弃道据山，{warn:自绝水源}，此乃兵家大忌，你当真不知？"},
+				{"type": "show_dialogue", "speaker": "马谡",
+				 "text": "{enemy:张郃}，居高临下，势如破竹——{ally:吾}岂会惧你！",
+				 "side": "player"}
+			]
+		},
+		{
+			"id": "dialogue_turn_2",
+			"when": {"type": "turn_eq", "n": 2},
+			"once": true,
+			"actions": [
+				{"type": "show_dialogue", "speaker": "张郃",
+				 "text": "断你水道，围而不攻——{warn:不出三日，此山不攻自破}！"},
+				{"type": "show_dialogue", "speaker": "王平",
+				 "text": "幼常，军心不可动摇，{ally:我等}务必坚守，等待丞相援兵！",
+				 "board": "ally_left", "side": "player"}
+			]
+		},
+		{
 			"id": "weishan_friend_died",
 			"when": {"type": "unit_died", "faction": 0},
 			"actions": [
