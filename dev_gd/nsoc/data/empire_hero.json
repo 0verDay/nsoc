@@ -1,0 +1,17 @@
+{
+	"version": 1,
+	"heroes": {
+		"A": {
+			"display_name": "将领A",
+			"skill_text": "占位技能A：暂无具体效果，待后续填充。"
+		},
+		"B": {
+			"display_name": "将领B",
+			"skill_text": "占位技能B：暂无具体效果，待后续填充。"
+		},
+		"C": {
+			"display_name": "将领C",
+			"skill_text": "占位技能C：暂无具体效果，待后续填充。"
+		}
+	}
+}

@@ -9,6 +9,7 @@ Controls:
   Left Drag (empty)    : Pan view
   Left Drag (on shape) : Move shape
   Click shape          : Select for connection (click two shapes to connect)
+  Double-click shape   : Open properties panel
   Click connection line: Delete that connection
   1~4 + Right Click (square): Set category 大/商/农/军
   Right Click (square, no key): Clear category
@@ -16,7 +17,7 @@ Controls:
 """
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 import json
 import math
 
@@ -54,6 +55,9 @@ class Shape:
         self.wx = wx      # world x
         self.wy = wy      # world y
         self.category = None  # int 1-4, only for 'square'
+        self.name = ""        # 地点名字
+        self.gold = 0         # 资金产出（每回合）
+        self.food = 0         # 粮食供应
 
     def screen_pos(self, offset_x, offset_y, scale):
         return (self.wx * scale + offset_x, self.wy * scale + offset_y)
@@ -123,6 +127,7 @@ class MapEditor:
         self.canvas.bind("<ButtonPress-1>", self._on_mouse_press)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_release)
+        self.canvas.bind("<Double-Button-1>", self._on_double_click)
         self.canvas.bind("<ButtonPress-3>", self._on_right_click)
         self.canvas.bind("<MouseWheel>", self._on_scroll)          # Windows
         self.canvas.bind("<Button-4>", self._on_scroll)            # Linux scroll up
@@ -171,6 +176,92 @@ class MapEditor:
             if point_to_segment_dist((sx, sy), sa, sb) < LINE_HIT_DIST:
                 return conn
         return None
+
+    # ------------------------------------------------------------------
+    def _on_double_click(self, event):
+        hit = self._hit_shape(event.x, event.y)
+        if hit:
+            self._open_properties(hit)
+
+    def _open_properties(self, shape):
+        win = tk.Toplevel(self.root)
+        win.title("地点属性")
+        win.resizable(False, False)
+        win.grab_set()
+
+        # ---------- 地点名字 ----------
+        tk.Label(win, text="地点名字：", anchor="w").grid(
+            row=0, column=0, sticky="w", padx=12, pady=(16, 4))
+        name_var = tk.StringVar(value=shape.name)
+        name_entry = tk.Entry(win, textvariable=name_var, width=24)
+        name_entry.grid(row=0, column=1, columnspan=3, sticky="ew", padx=(0, 12), pady=(16, 4))
+
+        # ---------- 地点类型 ----------
+        tk.Label(win, text="地点类型：", anchor="w").grid(
+            row=1, column=0, sticky="w", padx=12, pady=4)
+
+        TYPE_OPTIONS = ["关隘", "乡镇", "大都市", "商业城市", "农业城市", "军事城市"]
+        KIND_FROM_TYPE = {
+            "关隘": ("triangle", None),
+            "乡镇": ("circle",   None),
+            "大都市":  ("square", 1),
+            "商业城市": ("square", 2),
+            "农业城市": ("square", 3),
+            "军事城市": ("square", 4),
+        }
+        TYPE_FROM_KIND = {
+            ("triangle", None): "关隘",
+            ("circle",   None): "乡镇",
+            ("square",   1):    "大都市",
+            ("square",   2):    "商业城市",
+            ("square",   3):    "农业城市",
+            ("square",   4):    "军事城市",
+        }
+        current_type = TYPE_FROM_KIND.get((shape.kind, shape.category), "关隘")
+        type_var = tk.StringVar(value=current_type)
+        type_combo = ttk.Combobox(win, textvariable=type_var,
+                                  values=TYPE_OPTIONS, state="readonly", width=14)
+        type_combo.grid(row=1, column=1, columnspan=3, sticky="w", padx=(0, 12), pady=4)
+
+        # ---------- 资源产出 ----------
+        tk.Label(win, text="资金产出：", anchor="w").grid(
+            row=2, column=0, sticky="w", padx=12, pady=4)
+        gold_var = tk.StringVar(value=str(shape.gold))
+        gold_entry = tk.Entry(win, textvariable=gold_var, width=10)
+        gold_entry.grid(row=2, column=1, sticky="w", pady=4)
+        tk.Label(win, text="/回合", anchor="w").grid(
+            row=2, column=2, sticky="w", pady=4)
+
+        tk.Label(win, text="粮食供应：", anchor="w").grid(
+            row=3, column=0, sticky="w", padx=12, pady=(4, 16))
+        food_var = tk.StringVar(value=str(shape.food))
+        food_entry = tk.Entry(win, textvariable=food_var, width=10)
+        food_entry.grid(row=3, column=1, sticky="w", pady=(4, 16))
+
+        # ---------- 确定 / 取消 ----------
+        def _apply():
+            new_kind, new_cat = KIND_FROM_TYPE[type_var.get()]
+            shape.name = name_var.get().strip()
+            shape.kind = new_kind
+            shape.category = new_cat
+            try:
+                shape.gold = int(gold_var.get())
+            except ValueError:
+                shape.gold = 0
+            try:
+                shape.food = int(food_var.get())
+            except ValueError:
+                shape.food = 0
+            win.destroy()
+            self._draw()
+
+        btn_frame = tk.Frame(win)
+        btn_frame.grid(row=4, column=0, columnspan=4, pady=(0, 12))
+        tk.Button(btn_frame, text="确定", width=8, command=_apply).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_frame, text="取消", width=8, command=win.destroy).pack(side=tk.LEFT, padx=8)
+
+        win.columnconfigure(1, weight=1)
+        name_entry.focus_set()
 
     # ------------------------------------------------------------------
     def _on_right_click(self, event):
@@ -366,6 +457,11 @@ class MapEditor:
             ]
             self.canvas.create_polygon(pts, fill="#6abf69", outline=outline, width=width)
 
+        if shape.name:
+            font_size = max(7, int(r * 0.55))
+            self.canvas.create_text(sx, sy + r + font_size + 2, text=shape.name,
+                                    fill="#e8e8b0", font=("Arial", font_size))
+
     # ------------------------------------------------------------------
     def import_json(self):
         path = filedialog.askopenfilename(
@@ -394,6 +490,9 @@ class MapEditor:
             s.wx = entry["x"]
             s.wy = entry["y"]
             s.category = entry.get("category", None)
+            s.name = entry.get("name", "")
+            s.gold = entry.get("gold", 0)
+            s.food = entry.get("food", 0)
             self.shapes.append(s)
             id_to_shape[s.id] = s
             if s.id > max_id:
@@ -454,7 +553,10 @@ class MapEditor:
                 "id": shape.id,
                 "kind": shape.kind,
                 "x": round(shape.wx - min_x, 2),
-                "y": round(shape.wy - min_y, 2)
+                "y": round(shape.wy - min_y, 2),
+                "name": shape.name,
+                "gold": shape.gold,
+                "food": shape.food,
             }
             if shape.kind == 'square':
                 entry["category"] = shape.category

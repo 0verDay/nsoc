@@ -3,6 +3,12 @@ extends Control
 const MAP_PATH := "res://data/empire_maps/test_map.json"
 const PROFILE_PANEL_SCENE := preload("res://scenes/ProfileSubPanel.tscn")
 
+const SECONDARY_PANEL_SCENES: Dictionary = {
+	"ArmyBtn":    preload("res://scenes/EmpireArmyPanel.tscn"),
+	"TalentBtn":  preload("res://scenes/EmpireTalentPanel.tscn"),
+	"StrategyBtn":preload("res://scenes/EmpireStrategyPanel.tscn"),
+}
+
 const NODE_RADIUS: float = 28.0
 
 const SIDE_BTN_TOP: float = 120.0
@@ -22,8 +28,11 @@ var _frozen_state: Dictionary = {}
 var _current_tween: Tween
 var _secondary_panel: SecondaryPanel = null
 var _origin_panel: Control = null
+var _origin_btn: Control = null
 
 var _info_panel: Panel = null
+
+var _location_panel: EmpireLocationPanel
 
 var _settings: SettingsPanelController
 var _map_root: Node2D
@@ -40,6 +49,9 @@ var _pan_start_pos: Vector2 = Vector2.ZERO
 var _pinch_active: bool = false
 var _pinch_last_dist: float = 0.0
 var _pinch_last_center: Vector2 = Vector2.ZERO
+
+# 双指触摸追踪（手机捏合缩放）
+var _touch_points: Dictionary = {}   # index → Vector2
 
 const ZOOM_MIN: float = 0.2
 const ZOOM_MAX: float = 5.0
@@ -78,6 +90,10 @@ func _ready() -> void:
 
 	_build_side_panel()
 	_build_info_panel()
+	_location_panel = EmpireLocationPanel.new()
+	_location_panel.name = "LocationPanel"
+	add_child(_location_panel)
+	_location_panel.setup(self)
 	call_deferred("_setup_transition")
 	call_deferred("_load_map")
 
@@ -172,6 +188,13 @@ func _setup_transition() -> void:
 	if _info_panel:
 		call_deferred("_install_info_panel_button", _info_panel)
 
+	# 连接 SidePanel 三按钮：各自以自身为 origin_btn，以 SidePanel 为 origin_panel 触发转场
+	if side_panel:
+		for btn_name in ["ArmyBtn", "TalentBtn", "StrategyBtn"]:
+			var btn: Button = side_panel.get_node_or_null("SideVBox/" + btn_name)
+			if btn:
+				btn.pressed.connect(func(b = btn): _trigger_transition(side_panel, b))
+
 
 func _record_initial(ctrl: Control) -> void:
 	if ctrl == null:
@@ -213,14 +236,22 @@ func _install_info_panel_button(pnl: Panel) -> void:
 		if _is_transitioning or _is_expanded: return
 		var t := pnl.create_tween()
 		t.tween_property(pnl, "scale", Vector2.ONE, 0.08))
-	btn.pressed.connect(func(): _trigger_transition(_info_panel))
+	btn.pressed.connect(func(): _trigger_transition(_info_panel, _info_panel))
 
 
-func _trigger_transition(origin_panel: Control) -> void:
+func _trigger_transition(origin_panel: Control, origin_btn: Control) -> void:
 	if _is_transitioning or _is_expanded:
 		return
 	_is_transitioning = true
 	_origin_panel = origin_panel
+	_origin_btn = origin_btn
+
+	# 进入二级面板前清掉地点选中态与详情面板，避免遮挡。
+	if _selected_node != null and is_instance_valid(_selected_node):
+		_selected_node.set_selected(false)
+	_selected_node = null
+	if _location_panel:
+		_location_panel.hide_panel()
 
 	if _current_tween and _current_tween.is_valid():
 		_current_tween.kill()
@@ -282,10 +313,12 @@ func _trigger_transition(origin_panel: Control) -> void:
 		if is_instance_valid(c) and c is Control:
 			(c as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	# attach 二级面板
+	# attach 二级面板（按 origin_btn 名路由）
 	if _secondary_panel and is_instance_valid(_secondary_panel):
 		_secondary_panel.queue_free()
-	_secondary_panel = PROFILE_PANEL_SCENE.instantiate()
+	var btn_key: String = _origin_btn.name if _origin_btn else ""
+	var panel_scene: PackedScene = SECONDARY_PANEL_SCENES.get(btn_key, PROFILE_PANEL_SCENE)
+	_secondary_panel = panel_scene.instantiate()
 	_secondary_panel.back_pressed.connect(_trigger_reverse)
 	_secondary_panel.attach(origin_panel)
 
@@ -363,43 +396,62 @@ static func _disable_mouse_recursive(c: Control) -> void:
 
 
 func _build_side_panel() -> void:
-	const BTN_SIZE    := 340.0   # 结束回合按钮宽度
-	const END_BTN_H   := 140.0    # 结束回合按钮高度
-	const GAP         := 12.0    # 两区域间距
+	const BTN_SIZE    := 340.0
+	const END_BTN_H   := 140.0
+	const GAP         := 12.0
 	const RIGHT_MARGIN := 20.0
+	const PANEL_W     := 120.0
 
-	# ── 三个方形按钮容器（宽 160px，右边距 20px，与选项按钮对齐）
-	var container := Control.new()
+	# ── SidePanel：Panel 白底+圆角+阴影，与主菜单 LeftNavPnl 同款
+	var container := Panel.new()
 	container.name = "SidePanel"
 	container.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	container.offset_left   = -180.0
-	container.offset_right  = -20.0
+	container.offset_left   = -(RIGHT_MARGIN + PANEL_W)
+	container.offset_right  = -RIGHT_MARGIN
 	container.offset_top    = SIDE_BTN_TOP
 	container.offset_bottom = -(RIGHT_MARGIN + END_BTN_H + GAP)
+	container.add_theme_stylebox_override("panel",
+		ThemeFactory.panel(Color.WHITE, Color(1, 1, 1, 0.6), 1, 20, true))
 	add_child(container)
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "SideVBox"
 	vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
-	vbox.add_theme_constant_override("separation", 8)
+	vbox.offset_left   = 10.0
+	vbox.offset_top    = 16.0
+	vbox.offset_right  = -10.0
+	vbox.offset_bottom = -16.0
+	vbox.add_theme_constant_override("separation", 12)
 	container.add_child(vbox)
 
-	for lbl in ["军\n队", "人\n才", "方\n略"]:
+	var side_btn_defs: Array = [
+		{"name": "ArmyBtn",    "text": "军\n队"},
+		{"name": "TalentBtn",  "text": "人\n才"},
+		{"name": "StrategyBtn","text": "方\n略"},
+	]
+	var btn_styles := ThemeFactory.primary_button_styles()
+	for def in side_btn_defs:
 		var btn := Button.new()
-		btn.text = lbl
-		btn.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		btn.name = def.name
+		btn.text = def.text
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 		btn.add_theme_font_size_override("font_size", 26)
-		btn.add_theme_color_override("font_color", Color.WHITE)
-		ThemeFactory.apply_button_styles(btn, ThemeFactory.primary_button_styles())
+		btn.add_theme_color_override("font_color",         Color.WHITE)
+		btn.add_theme_color_override("font_hover_color",   Color.WHITE)
+		btn.add_theme_color_override("font_pressed_color", Color.WHITE)
+		ThemeFactory.apply_button_styles(btn, btn_styles)
 		vbox.add_child(btn)
 
-	# ── "结束回合"按钮：单独锚定右下角，横宽竖窄方形
+	# ── "结束回合"按钮：单独锚定右下角
 	var end_btn := Button.new()
 	end_btn.name = "EndTurnBtn"
 	end_btn.text = "结束回合"
 	end_btn.add_theme_font_size_override("font_size", 26)
-	end_btn.add_theme_color_override("font_color", Color.WHITE)
-	ThemeFactory.apply_button_styles(end_btn, ThemeFactory.primary_button_styles())
+	end_btn.add_theme_color_override("font_color",         Color.WHITE)
+	end_btn.add_theme_color_override("font_hover_color",   Color.WHITE)
+	end_btn.add_theme_color_override("font_pressed_color", Color.WHITE)
+	ThemeFactory.apply_button_styles(end_btn, btn_styles)
 	end_btn.set_anchor(SIDE_RIGHT,  1.0)
 	end_btn.set_anchor(SIDE_LEFT,   1.0)
 	end_btn.set_anchor(SIDE_BOTTOM, 1.0)
@@ -415,11 +467,15 @@ func _on_shape_clicked(node) -> void:
 	if _selected_node == node:
 		_selected_node.set_selected(false)
 		_selected_node = null
+		if _location_panel:
+			_location_panel.hide_panel()
 	else:
 		if _selected_node != null:
 			_selected_node.set_selected(false)
 		_selected_node = node
 		_selected_node.set_selected(true)
+		if _location_panel:
+			_location_panel.show_for(node)
 
 
 func _load_map() -> void:
@@ -475,7 +531,8 @@ func _build_map(data: Dictionary) -> void:
 				var cat_map: Dictionary = {1: "大", 2: "商", 3: "农", 4: "军"}
 				if cat_map.has(cat_int):
 					cat_label = cat_map[cat_int]
-		node.init(sid, s.get("kind", "circle"), cat_label, pos, NODE_RADIUS)
+		node.init(sid, s.get("kind", "circle"), cat_label, pos, NODE_RADIUS,
+				s.get("name", ""), int(s.get("gold", 0)), int(s.get("food", 0)))
 		node.clicked.connect(_on_shape_clicked)
 		_map_root.add_child(node)
 		_shape_nodes.append(node)
@@ -501,6 +558,8 @@ func _gui_input(event: InputEvent) -> void:
 			accept_event()
 
 func _input(event: InputEvent) -> void:
+	if _is_expanded or _is_transitioning:
+		return
 	# 左键拖拽平移（全局输入，不受子节点遮挡影响）
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -522,6 +581,54 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventPanGesture:
 		_map_root.position = _clamp_pan(_map_root.position - event.delta * 2.0)
 		accept_event()
+
+	# ── 手机双指捏合缩放 ──────────────────────────────────────────────────────
+	elif event is InputEventScreenTouch:
+		if event.pressed:
+			_touch_points[event.index] = event.position
+		else:
+			_touch_points.erase(event.index)
+			if _touch_points.size() < 2:
+				_pinch_active = false
+				# 单指抬起时重置平移起点，避免跳变
+				if _touch_points.size() == 1:
+					var remaining_pos: Vector2 = _touch_points.values()[0]
+					_pan_start_mouse = remaining_pos
+					_pan_start_pos = _map_root.position
+					_pan_active = true
+				else:
+					_pan_active = false
+
+	elif event is InputEventScreenDrag:
+		_touch_points[event.index] = event.position
+		var fingers: Array = _touch_points.values()
+
+		if fingers.size() >= 2:
+			var p0: Vector2 = fingers[0]
+			var p1: Vector2 = fingers[1]
+			var cur_dist: float = p0.distance_to(p1)
+			var cur_center: Vector2 = (p0 + p1) * 0.5
+
+			if _pinch_active:
+				# 缩放
+				if _pinch_last_dist > 0.0:
+					var factor: float = cur_dist / _pinch_last_dist
+					_zoom_at(cur_center, factor)
+				# 双指平移
+				var pan_delta: Vector2 = cur_center - _pinch_last_center
+				_map_root.position = _clamp_pan(_map_root.position + pan_delta)
+			else:
+				_pinch_active = true
+
+			_pinch_last_dist = cur_dist
+			_pinch_last_center = cur_center
+			_pan_active = false
+			accept_event()
+
+		elif fingers.size() == 1 and _pan_active:
+			var delta: Vector2 = event.position - _pan_start_mouse
+			if delta.length() > 4.0:
+				_map_root.position = _clamp_pan(_pan_start_pos + delta)
 
 
 func _zoom_at(screen_pos: Vector2, factor: float) -> void:
@@ -590,12 +697,19 @@ class _MapShapeNode extends Control:
 	var _radius: float
 	var _fill: Color
 	var _selected: bool = false
+	var _name_text: String = ""
+	var _gold: int = 0
+	var _food: int = 0
 
-	func init(id: int, kind: String, cat_label: String, center: Vector2, radius: float) -> void:
+	func init(id: int, kind: String, cat_label: String, center: Vector2, radius: float,
+			name_text: String = "", gold: int = 0, food: int = 0) -> void:
 		_id = id
 		_kind = kind
 		_cat_label = cat_label
 		_radius = radius
+		_name_text = name_text
+		_gold = gold
+		_food = food
 		match kind:
 			"triangle": _fill = Color.GRAY
 			"circle":   _fill = Color.GRAY
@@ -645,10 +759,21 @@ class _MapShapeNode extends Control:
 				draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[0]]),
 					outline, 2.0, true)
 
+	var _last_click_frame: int = -1
+
 	func _gui_input(event: InputEvent) -> void:
-		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			clicked.emit(self)
+		var is_touch: bool = event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed and (event as InputEventScreenTouch).index == 0
+		var is_mouse: bool = event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT and (event as InputEventMouseButton).pressed
+		if not is_touch and not is_mouse:
+			return
+		# 同一帧内两种事件只响应一次（应对 emulate_mouse_from_touch 顺序不定问题）
+		var cur_frame: int = Engine.get_process_frames()
+		if cur_frame == _last_click_frame:
 			get_viewport().set_input_as_handled()
+			return
+		_last_click_frame = cur_frame
+		clicked.emit(self)
+		get_viewport().set_input_as_handled()
 
 
 # ── 势力色块：纯色圆 + 细白描边 ──────────────────────────────────────────────
