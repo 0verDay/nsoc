@@ -85,7 +85,7 @@ text = "战役"
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-text = "游历"
+text = "演义"
 
 [node name="SparringBtn" type="Button" parent="RightSidePnl/VBox" unique_id=2128988056]
 layout_mode = 2
