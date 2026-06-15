@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://empire_test_001"]
+
+[ext_resource type="Script" path="res://scripts/ui/empire_test.gd" id="1_et"]
+
+[node name="EmpireTest" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_et")
