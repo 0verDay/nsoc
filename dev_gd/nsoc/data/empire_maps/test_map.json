@@ -1,117 +1,178 @@
 {
+  "factions": [
+    {
+      "id": 0,
+      "name": "中立",
+      "color": "#808080"
+    },
+    {
+      "id": 1,
+      "name": "Ap",
+      "color": "#FF0000"
+    },
+    {
+      "id": 2,
+      "name": "Bp",
+      "color": "#0080FF"
+    }
+  ],
   "shapes": [
     {
       "id": 2,
       "kind": "triangle",
-      "x": 304.62,
-      "y": 271.26,
+      "x": 463.25,
+      "y": 442.26,
       "name": "囊关",
       "gold": 0,
-      "food": 0
+      "food": 0,
+      "faction": 1
     },
     {
       "id": 3,
       "kind": "square",
-      "x": 0.0,
-      "y": 270.46,
+      "x": 158.63,
+      "y": 441.46,
       "name": "中陵",
       "gold": 2,
       "food": 2,
+      "faction": 2,
       "category": 1
     },
     {
       "id": 4,
       "kind": "square",
-      "x": 488.56,
-      "y": 279.3,
+      "x": 647.19,
+      "y": 450.3,
       "name": "尔郡",
       "gold": 10,
       "food": 2,
+      "faction": 1,
       "category": 2
     },
     {
       "id": 5,
       "kind": "square",
-      "x": 178.67,
-      "y": 126.01,
+      "x": 337.3,
+      "y": 297.01,
       "name": "军屯#1",
       "gold": 1,
       "food": 1,
+      "faction": 1,
       "category": 4
     },
     {
       "id": 6,
       "kind": "square",
-      "x": 430.69,
-      "y": 130.43,
+      "x": 589.32,
+      "y": 301.43,
       "name": "军屯#2",
       "gold": 1,
       "food": 1,
+      "faction": 1,
       "category": 4
     },
     {
       "id": 7,
       "kind": "circle",
-      "x": 298.05,
-      "y": 0.0,
+      "x": 456.68,
+      "y": 171.0,
       "name": "荒村#1",
       "gold": 2,
-      "food": 2
+      "food": 2,
+      "faction": 0
     },
     {
       "id": 8,
       "kind": "circle",
-      "x": 629.65,
-      "y": 4.42,
+      "x": 788.28,
+      "y": 175.42,
       "name": "荒村#2",
       "gold": 2,
-      "food": 2
+      "food": 2,
+      "faction": 0
     },
     {
       "id": 9,
       "kind": "square",
-      "x": 156.56,
-      "y": 450.98,
-      "name": "大仓",
+      "x": 315.19,
+      "y": 621.98,
+      "name": "大仓#2",
       "gold": 1,
       "food": 5,
+      "faction": 2,
       "category": 3
     },
     {
       "id": 11,
       "kind": "triangle",
-      "x": 424.06,
-      "y": 455.4,
+      "x": 582.69,
+      "y": 626.4,
       "name": "山隘",
       "gold": 1,
-      "food": 1
+      "food": 1,
+      "faction": 0
     },
     {
       "id": 12,
       "kind": "circle",
-      "x": 607.54,
-      "y": 455.4,
+      "x": 766.17,
+      "y": 626.4,
       "name": "荒村#4",
       "gold": 2,
-      "food": 2
+      "food": 2,
+      "faction": 1
     },
     {
       "id": 13,
       "kind": "circle",
-      "x": 786.61,
-      "y": 267.49,
+      "x": 945.24,
+      "y": 438.49,
       "name": "荒村#3",
       "gold": 2,
-      "food": 2
+      "food": 2,
+      "faction": 0
     },
     {
       "id": 14,
       "kind": "circle",
-      "x": 72.56,
-      "y": 596.88,
+      "x": 231.19,
+      "y": 767.88,
       "name": "荒村#5",
       "gold": 2,
-      "food": 2
+      "food": 2,
+      "faction": 0
+    },
+    {
+      "id": 15,
+      "kind": "triangle",
+      "x": 220.0,
+      "y": 206.99,
+      "name": "上关",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 17,
+      "kind": "square",
+      "x": 0.0,
+      "y": 301.99,
+      "name": "前陵",
+      "gold": 5,
+      "food": 1,
+      "faction": 2,
+      "category": 2
+    },
+    {
+      "id": 18,
+      "kind": "square",
+      "x": 622.0,
+      "y": 0.0,
+      "name": "大仓#1",
+      "gold": 1,
+      "food": 4,
+      "faction": 0,
+      "category": 3
     }
   ],
   "connections": [
@@ -174,6 +235,30 @@
     {
       "from": 9,
       "to": 11
+    },
+    {
+      "from": 15,
+      "to": 7
+    },
+    {
+      "from": 15,
+      "to": 3
+    },
+    {
+      "from": 17,
+      "to": 15
+    },
+    {
+      "from": 17,
+      "to": 3
+    },
+    {
+      "from": 18,
+      "to": 7
+    },
+    {
+      "from": 18,
+      "to": 8
     }
   ]
 }

@@ -44,6 +44,7 @@ var _badge_lbl: Label
 var _badge_panel: PanelContainer
 var _gold_val_lbl: Label
 var _food_val_lbl: Label
+var _specialize_btn: Button
 
 
 func setup(parent: Control) -> void:
@@ -240,11 +241,11 @@ func _build_panel() -> void:
 	troop_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	troop_vbox.add_child(troop_empty)
 
-	# ── 特化按钮（置灰）─────────────────────────────────────────────────
+	# ── 特化按钮（初始隐藏，由 _refresh_content 按条件显示）─────────────────
 	var specialize_btn := Button.new()
 	specialize_btn.name = "SpecializeBtn"
 	specialize_btn.text = "特化"
-	specialize_btn.disabled = true
+	specialize_btn.visible = false
 	specialize_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	specialize_btn.custom_minimum_size = Vector2(0, 64)
 	specialize_btn.add_theme_font_size_override("font_size", 22)
@@ -254,6 +255,7 @@ func _build_panel() -> void:
 	var btn_styles := ThemeFactory.primary_button_styles()
 	ThemeFactory.apply_button_styles(specialize_btn, btn_styles)
 	root_vbox.add_child(specialize_btn)
+	_specialize_btn = specialize_btn
 
 
 # 资源行：左侧彩色 badge + 右侧值 Label。返回值 Label 引用。
@@ -321,6 +323,8 @@ func _refresh_content(node) -> void:
 	var name_text: String = ""
 	var gold: int = 0
 	var food: int = 0
+	var faction_name: String = "中立"
+	var faction_color: Color = Color("#adb5bd")
 	if node and "_kind" in node:
 		kind = String(node._kind)
 	if node and "_id" in node:
@@ -335,6 +339,10 @@ func _refresh_content(node) -> void:
 		gold = int(node._gold)
 	if node and "_food" in node:
 		food = int(node._food)
+	if node and "_faction_name" in node:
+		faction_name = String(node._faction_name)
+	if node and "_fill" in node:
+		faction_color = node._fill as Color
 
 	# 地点名
 	if _name_lbl:
@@ -343,12 +351,12 @@ func _refresh_content(node) -> void:
 		else:
 			_name_lbl.text = _format_title(kind, id)
 
-	# 势力（占位：全灰+中立）
+	# 势力
 	if _faction_lbl:
-		_faction_lbl.text = "中立"
+		_faction_lbl.text = faction_name
 	if _faction_dot:
 		_faction_dot.add_theme_stylebox_override(
-			"panel", ThemeFactory.panel(Color("#adb5bd"), Color.TRANSPARENT, 0, 9))
+			"panel", ThemeFactory.panel(faction_color, Color.TRANSPARENT, 0, 9))
 
 	# 类型 Badge
 	if _badge_lbl and _badge_panel:
@@ -371,6 +379,14 @@ func _refresh_content(node) -> void:
 		_gold_val_lbl.text = "+%d / 回合" % gold
 	if _food_val_lbl:
 		_food_val_lbl.text = str(food)
+
+	# 特化按钮：仅己方地点显示且可用，其余隐藏
+	if _specialize_btn:
+		var faction_id: int = 0
+		if node and "_faction_id" in node:
+			faction_id = int(node._faction_id)
+		_specialize_btn.visible  = (faction_id == 1)
+		_specialize_btn.disabled = false
 
 
 static func _format_title(kind: String, id: int) -> String:

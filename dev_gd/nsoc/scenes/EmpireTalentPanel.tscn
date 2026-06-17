@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://scripts/ui/secondary_panel.gd" id="1_sp"]
+[ext_resource type="Script" path="res://scripts/ui/empire_talent_panel.gd" id="1_etp"]
+[ext_resource type="Script" path="res://scripts/ui/empire_carousel.gd" id="2_ec"]
 
 [node name="EmpireTalentPanel" type="Control"]
 layout_mode = 3
@@ -10,7 +11,64 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 1
-script = ExtResource("1_sp")
+script = ExtResource("1_etp")
+
+[node name="HeroPnl" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_right = 0.25
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -6.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Carousel" type="Control" parent="HeroPnl"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+script = ExtResource("2_ec")
+
+[node name="MiddleVBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.25
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 6.0
+offset_top = 24.0
+offset_right = -192.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="Row1" type="HBoxContainer" parent="MiddleVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="DiamondPanel" type="PanelContainer" parent="MiddleVBox/Row1"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AttrPanel" type="PanelContainer" parent="MiddleVBox/Row1"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Panel2" type="PanelContainer" parent="MiddleVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Panel3" type="PanelContainer" parent="MiddleVBox"]
+layout_mode = 2
+size_flags_vertical = 3
 
 [node name="BackBtn" type="Button" parent="."]
 layout_mode = 1
@@ -24,3 +82,45 @@ offset_bottom = 100.0
 grow_horizontal = 0
 text = "返回"
 theme_override_font_sizes/font_size = 32
+
+[node name="RightVBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -180.0
+offset_top = 112.0
+offset_right = -20.0
+offset_bottom = -20.0
+grow_horizontal = 0
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="TrainBtn" type="Button" parent="RightVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "训
+练"
+theme_override_font_sizes/font_size = 26
+
+[node name="UpgradeBtn" type="Button" parent="RightVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "升
+级"
+theme_override_font_sizes/font_size = 26
+
+[node name="RecruitBtn" type="Button" parent="RightVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "招
+募"
+theme_override_font_sizes/font_size = 26
+
+[node name="DeployBtn" type="Button" parent="RightVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "部
+署"
+theme_override_font_sizes/font_size = 26

@@ -3,15 +3,39 @@
 	"heroes": {
 		"A": {
 			"display_name": "将领A",
-			"skill_text": "占位技能A：暂无具体效果，待后续填充。"
+			"skill_text": "占位技能A：暂无具体效果，待后续填充。",
+			"command": 10,
+			"force": 9,
+			"intelligence": 8,
+			"charisma": 7,
+			"level": 1,
+			"current_exp": 0,
+			"next_level_exp": 100,
+			"background": "这是该人才的背景占位文案"
 		},
 		"B": {
 			"display_name": "将领B",
-			"skill_text": "占位技能B：暂无具体效果，待后续填充。"
+			"skill_text": "占位技能B：暂无具体效果，待后续填充。",
+			"command": 9,
+			"force": 8,
+			"intelligence": 7,
+			"charisma": 6,
+			"level": 1,
+			"current_exp": 0,
+			"next_level_exp": 100,
+			"background": "这是该人才的背景占位文案"
 		},
 		"C": {
 			"display_name": "将领C",
-			"skill_text": "占位技能C：暂无具体效果，待后续填充。"
+			"skill_text": "占位技能C：暂无具体效果，待后续填充。",
+			"command": 8,
+			"force": 7,
+			"intelligence": 6,
+			"charisma": 5,
+			"level": 1,
+			"current_exp": 0,
+			"next_level_exp": 100,
+			"background": "这是该人才的背景占位文案"
 		}
 	}
 }

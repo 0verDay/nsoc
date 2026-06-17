@@ -244,8 +244,57 @@ func _on_long_press_timeout() -> void:
 			show_hero(String(t), [], -1, [])
 	elif _long_press_kind == "equipment":
 		show_equipment(_long_press_target)
+	elif _long_press_kind == "attr":
+		var t = _long_press_target
+		if typeof(t) == TYPE_DICTIONARY:
+			show_attr(String(t.get("attr_name", "")), String(t.get("description", "")))
 	else:
 		show_for(_long_press_target)
+
+
+# 属性长按：仅需属性名 + 描述文本，不需要卡牌 scene。
+func start_long_press_attr(attr_name: String, description: String) -> void:
+	_long_press_target = {"attr_name": attr_name, "description": description}
+	_long_press_kind   = "attr"
+	if _long_press_timer:
+		_long_press_timer.start()
+
+
+# 属性详情展示：属性名（大号）+ 描述文本。复用同一弹出动画。
+func show_attr(attr_name: String, description: String) -> void:
+	var vbox := _panel.get_node_or_null("DetailVBox")
+	if vbox == null:
+		return
+	var card_center := vbox.get_node_or_null("CardCenter") as Control
+	var name_lbl    := vbox.get_node_or_null("NameLbl")   as Label
+	var hp_lbl      := vbox.get_node_or_null("HpLbl")     as Label
+	var cost_lbl    := vbox.get_node_or_null("CostLbl")   as Label
+	var effect_lbl  := vbox.get_node_or_null("EffectLbl") as Label
+
+	if card_center:
+		card_center.visible = false
+		card_center.custom_minimum_size = Vector2.ZERO
+		for c in card_center.get_children():
+			c.queue_free()
+	if hp_lbl:   hp_lbl.visible = false
+	if name_lbl: name_lbl.text  = attr_name
+	if cost_lbl: cost_lbl.text  = ""
+	if effect_lbl:
+		effect_lbl.text = description
+	_hide_equip_section(vbox)
+
+	if _is_open:
+		return
+	_is_open = true
+	_clip.visible = true
+	var w: float = _current_width()
+	_panel.offset_left  = -w
+	_panel.offset_right = 0
+	_animating = true
+	var tween := get_tree().create_tween()
+	tween.tween_property(_panel, "offset_left",  0.0, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_panel, "offset_right", w, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(func(): _animating = false)
 
 func show_for(data) -> void:
 	if data == null:
