@@ -2,6 +2,7 @@ extends Control
 
 const MAP_PATH := "res://data/empire_maps/test_map.json"
 const PROFILE_PANEL_SCENE := preload("res://scenes/ProfileSubPanel.tscn")
+const DEPLOY_ICON_TEX: Texture2D = preload("res://icon.svg")
 
 const SECONDARY_PANEL_SCENES: Dictionary = {
 	"ArmyBtn":    preload("res://scenes/EmpireArmyPanel.tscn"),
@@ -33,12 +34,45 @@ var _origin_btn: Control = null
 var _info_panel: Panel = null
 
 var _location_panel: EmpireLocationPanel
+var _hero_detail_panel: EmpireHeroDetailPanel
+
+# 当前在地图上选中的人才 key（点同一头像关闭，与地点选中互斥）
+var _selected_hero_key: String = ""
+# 从 empire_hero.json 加载的英雄数据库（供人才详情面板使用）
+var _empire_hero_db: Dictionary = {}
 
 var _settings: SettingsPanelController
 var _map_root: Node2D
 var _line_layer: _LineLayer
 var _shape_nodes: Array = []
 var _selected_node = null
+
+# 势力数据（从地图 JSON 加载）
+# 每项：{"id": int, "name": String, "color": Color}
+var _factions: Array = []
+
+# 玩家状态（势力 id = 1 即 Ap）
+const PLAYER_FACTION_ID: int = 1
+var _player_gold: int = 0
+var _player_food: int = 0
+
+# 部署系统状态
+# _deployed_heroes：hero_key → _MapShapeNode（人才唯一，地点可多）
+# _deploy_mode：true 时己方地点呼吸缩放，等待玩家点选目标
+# _deploy_pending_hero：从二级面板触发部署后保留的待部署 hero_key
+var _deployed_heroes: Dictionary = {}
+var _deploy_mode: bool = false
+var _deploy_pending_hero: String = ""
+# 空白点击取消部署模式：在 _gui_input 中按下记录起点，松开时若未拖动则取消
+var _deploy_blank_press: bool = false
+var _deploy_blank_press_pos: Vector2 = Vector2.ZERO
+const DEPLOY_BLANK_TAP_THRESHOLD: float = 8.0
+
+# InfoPanel 内容节点引用（供回合结算后刷新）
+var _info_faction_dot: _FactionDot = null
+var _info_faction_lbl: Label = null
+var _info_food_lbl: Label = null
+var _info_gold_lbl: Label = null
 
 # 视角状态
 var _pan_active: bool = false
@@ -94,6 +128,13 @@ func _ready() -> void:
 	_location_panel.name = "LocationPanel"
 	add_child(_location_panel)
 	_location_panel.setup(self)
+
+	_hero_detail_panel = EmpireHeroDetailPanel.new()
+	_hero_detail_panel.name = "HeroDetailPanel"
+	add_child(_hero_detail_panel)
+	_hero_detail_panel.setup(self)
+
+	_load_empire_hero_db()
 	call_deferred("_setup_transition")
 	call_deferred("_load_map")
 
@@ -120,42 +161,46 @@ func _build_info_panel() -> void:
 	vbox.add_theme_constant_override("separation", 8)
 	pnl.add_child(vbox)
 
-	# 第一行：势力色块 + 势力名
+	# 第一行：势力色块 + 势力名（运行时由 _refresh_info_panel 填充）
 	var row1 := HBoxContainer.new()
 	row1.add_theme_constant_override("separation", 10)
 	row1.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_child(row1)
 
 	var faction_dot := _FactionDot.new()
-	faction_dot.init(Color("#4caf50"))   # 绿色占位
+	faction_dot.init(Color.GRAY)
 	faction_dot.custom_minimum_size = Vector2(28, 28)
 	faction_dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row1.add_child(faction_dot)
+	_info_faction_dot = faction_dot
 
 	var faction_lbl := Label.new()
-	faction_lbl.text = "蜀汉"
+	faction_lbl.text = ""
 	faction_lbl.add_theme_font_size_override("font_size", 22)
 	faction_lbl.add_theme_color_override("font_color", Color("#1f2937"))
 	faction_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row1.add_child(faction_lbl)
+	_info_faction_lbl = faction_lbl
 
 	# 第二行：粮草
 	var food_lbl := Label.new()
-	food_lbl.text = "粮草：1 / 9"
+	food_lbl.text = "粮草：—"
 	food_lbl.add_theme_font_size_override("font_size", 18)
 	food_lbl.add_theme_color_override("font_color", Color("#374151"))
 	food_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	food_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	vbox.add_child(food_lbl)
+	_info_food_lbl = food_lbl
 
 	# 第三行：资金
 	var gold_lbl := Label.new()
-	gold_lbl.text = "资金：666"
+	gold_lbl.text = "资金：—"
 	gold_lbl.add_theme_font_size_override("font_size", 18)
 	gold_lbl.add_theme_color_override("font_color", Color("#374151"))
 	gold_lbl.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	gold_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	vbox.add_child(gold_lbl)
+	_info_gold_lbl = gold_lbl
 
 	add_child(pnl)
 	_info_panel = pnl
@@ -246,12 +291,19 @@ func _trigger_transition(origin_panel: Control, origin_btn: Control) -> void:
 	_origin_panel = origin_panel
 	_origin_btn = origin_btn
 
-	# 进入二级面板前清掉地点选中态与详情面板，避免遮挡。
+	# 进入二级面板前清掉地点选中态与人才选中态，关闭所有详情面板，避免遮挡。
 	if _selected_node != null and is_instance_valid(_selected_node):
 		_selected_node.set_selected(false)
 	_selected_node = null
 	if _location_panel:
 		_location_panel.hide_panel()
+	if _selected_hero_key != "":
+		var prev_hero_node = _deployed_heroes.get(_selected_hero_key, null)
+		if prev_hero_node != null and is_instance_valid(prev_hero_node):
+			prev_hero_node.set_hero_icon_selected(_selected_hero_key, false)
+		_selected_hero_key = ""
+	if _hero_detail_panel and _hero_detail_panel.is_open():
+		_hero_detail_panel.hide_panel()
 
 	if _current_tween and _current_tween.is_valid():
 		_current_tween.kill()
@@ -321,6 +373,12 @@ func _trigger_transition(origin_panel: Control, origin_btn: Control) -> void:
 	_secondary_panel = panel_scene.instantiate()
 	_secondary_panel.back_pressed.connect(_trigger_reverse)
 	_secondary_panel.attach(origin_panel)
+	# 人才面板需要查询/请求部署相关状态
+	if _secondary_panel is EmpireTalentPanel:
+		var tp: EmpireTalentPanel = _secondary_panel as EmpireTalentPanel
+		tp.set_deployed_state(_deployed_heroes)
+		tp.deploy_requested.connect(_on_deploy_requested)
+		tp.recall_requested.connect(_on_recall_requested)
 
 
 func _trigger_reverse() -> void:
@@ -369,6 +427,133 @@ func _trigger_reverse() -> void:
 
 	await _current_tween.finished
 	_is_transitioning = false
+
+	# 反向转场结束后，若挂着部署请求则进入部署模式（人才面板触发）
+	if _deploy_pending_hero != "":
+		_enter_deploy_mode()
+
+
+# ── 部署系统 ────────────────────────────────────────────────────────────────
+
+func _on_deploy_requested(hero_key: String) -> void:
+	# 由人才面板「部署」按钮触发：暂存待部署人才，再走反向转场退回大地图
+	_deploy_pending_hero = hero_key
+	_trigger_reverse()
+
+
+func _on_recall_requested(hero_key: String) -> void:
+	# 由人才面板「流放」按钮触发：撤销该人才部署，不退回大地图
+	if not _deployed_heroes.has(hero_key):
+		return
+	var node = _deployed_heroes[hero_key]
+	_deployed_heroes.erase(hero_key)
+	if is_instance_valid(node):
+		_refresh_deploy_icons_for(node)
+
+
+func _enter_deploy_mode() -> void:
+	_deploy_mode = true
+	for n in _shape_nodes:
+		if is_instance_valid(n) and "_faction_id" in n and int(n._faction_id) == PLAYER_FACTION_ID:
+			n.set_breathing(true)
+
+
+func _exit_deploy_mode() -> void:
+	if not _deploy_mode and _deploy_pending_hero == "":
+		return
+	_deploy_mode = false
+	_deploy_pending_hero = ""
+	_deploy_blank_press = false
+	for n in _shape_nodes:
+		if is_instance_valid(n):
+			n.set_breathing(false)
+
+
+# 完成部署：人才唯一 → 若已在别处先移走，再插到目标节点。
+func _commit_deploy(target_node) -> void:
+	var hero_key: String = _deploy_pending_hero
+	var prev_node = _deployed_heroes.get(hero_key, null)
+	_deployed_heroes[hero_key] = target_node
+	if prev_node != null and prev_node != target_node and is_instance_valid(prev_node):
+		_refresh_deploy_icons_for(prev_node)
+	_refresh_deploy_icons_for(target_node)
+	_exit_deploy_mode()
+
+
+# 重建该地点上方的人才头像横排（按 hero_key 字典序稳定）。
+func _refresh_deploy_icons_for(node) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	var keys: Array = []
+	for k in _deployed_heroes.keys():
+		if _deployed_heroes[k] == node:
+			keys.append(String(k))
+	keys.sort()
+	var textures: Array = []
+	for _k in keys:
+		textures.append(DEPLOY_ICON_TEX)
+	node.set_deployed_icons(keys, textures)
+
+
+# ── 英雄数据库 ───────────────────────────────────────────────────────────────
+
+func _load_empire_hero_db() -> void:
+	const EMPIRE_HERO_JSON: String = "res://data/empire_hero.json"
+	if not FileAccess.file_exists(EMPIRE_HERO_JSON):
+		push_warning("EmpireTest: missing " + EMPIRE_HERO_JSON)
+		return
+	var f := FileAccess.open(EMPIRE_HERO_JSON, FileAccess.READ)
+	if f == null:
+		return
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(parsed) == TYPE_DICTIONARY:
+		_empire_hero_db = parsed.get("heroes", {})
+
+
+# ── 人才头像点击 ─────────────────────────────────────────────────────────────
+
+func _on_hero_icon_clicked(hero_key: String) -> void:
+	if _deploy_mode:
+		return
+	if _selected_hero_key == hero_key:
+		# 点同一头像 = 取消选中
+		var prev_node = _deployed_heroes.get(_selected_hero_key, null)
+		if prev_node != null and is_instance_valid(prev_node):
+			prev_node.set_hero_icon_selected(_selected_hero_key, false)
+		_selected_hero_key = ""
+		if _hero_detail_panel:
+			_hero_detail_panel.hide_panel()
+	else:
+		# 切换：先取消旧选中图标
+		if _selected_hero_key != "":
+			var prev_node = _deployed_heroes.get(_selected_hero_key, null)
+			if prev_node != null and is_instance_valid(prev_node):
+				prev_node.set_hero_icon_selected(_selected_hero_key, false)
+		_selected_hero_key = hero_key
+		if _selected_node != null:
+			_selected_node.set_selected(false)
+			_selected_node = null
+		if _location_panel:
+			_location_panel.hide_panel()
+		# 选中新图标
+		var new_node = _deployed_heroes.get(hero_key, null)
+		if new_node != null and is_instance_valid(new_node):
+			new_node.set_hero_icon_selected(hero_key, true)
+		var hero_data: Dictionary = _empire_hero_db.get(hero_key, {})
+		var faction_name: String = ""
+		var faction_color: Color = Color("#adb5bd")
+		var deployed_node = _deployed_heroes.get(hero_key, null)
+		if deployed_node != null and is_instance_valid(deployed_node):
+			if "_faction_name" in deployed_node:
+				faction_name = String(deployed_node._faction_name)
+			if "_fill" in deployed_node:
+				faction_color = deployed_node._fill as Color
+		if _hero_detail_panel:
+			if _hero_detail_panel.is_open():
+				_hero_detail_panel.refresh_for(hero_key, hero_data, faction_name, faction_color)
+			else:
+				_hero_detail_panel.show_for(hero_key, hero_data, faction_name, faction_color)
 
 
 func _collect_fade_targets(root: Node) -> Array:
@@ -464,6 +649,23 @@ func _build_side_panel() -> void:
 
 
 func _on_shape_clicked(node) -> void:
+	# 部署模式：己方地点 = 部署成功；其他地点 = 取消部署模式
+	if _deploy_mode:
+		if node != null and "_faction_id" in node and int(node._faction_id) == PLAYER_FACTION_ID:
+			_commit_deploy(node)
+		else:
+			_exit_deploy_mode()
+		return
+
+	# 选中地点时清除人才选中状态（互斥）
+	if _selected_hero_key != "":
+		var prev_hero_node = _deployed_heroes.get(_selected_hero_key, null)
+		if prev_hero_node != null and is_instance_valid(prev_hero_node):
+			prev_hero_node.set_hero_icon_selected(_selected_hero_key, false)
+		_selected_hero_key = ""
+	if _hero_detail_panel and _hero_detail_panel.is_open():
+		_hero_detail_panel.hide_panel()
+
 	if _selected_node == node:
 		_selected_node.set_selected(false)
 		_selected_node = null
@@ -498,6 +700,28 @@ func _build_map(data: Dictionary) -> void:
 	if shapes_data.is_empty():
 		return
 
+	# ── 解析势力表 ────────────────────────────────────────────────────────────
+	_factions.clear()
+	for f in data.get("factions", []):
+		_factions.append({
+			"id":    int(f.get("id", 0)),
+			"name":  String(f.get("name", "中立")),
+			"color": Color(String(f.get("color", "#808080"))),
+		})
+	# 若 JSON 无 factions 字段，补默认中立
+	if _factions.is_empty():
+		_factions.append({"id": 0, "name": "中立", "color": Color.GRAY})
+
+	# ── 初始化玩家状态 ─────────────────────────────────────────────────────────
+	_player_gold = 0
+	_player_food = _calc_total_food(shapes_data)
+	_refresh_info_panel()
+
+	# ── 连接结束回合按钮 ───────────────────────────────────────────────────────
+	var end_btn: Button = get_node_or_null("EndTurnBtn")
+	if end_btn and not end_btn.pressed.is_connected(_on_end_turn):
+		end_btn.pressed.connect(_on_end_turn.bind(shapes_data))
+
 	var vp: Vector2 = get_viewport_rect().size
 	var margin: float = 80.0
 
@@ -531,8 +755,12 @@ func _build_map(data: Dictionary) -> void:
 				var cat_map: Dictionary = {1: "大", 2: "商", 3: "农", 4: "军"}
 				if cat_map.has(cat_int):
 					cat_label = cat_map[cat_int]
+		var faction_id: int = int(s.get("faction", 0))
+		var faction_color: Color = _faction_color(faction_id)
+		var faction_nm: String = _faction_name(faction_id)
 		node.init(sid, s.get("kind", "circle"), cat_label, pos, NODE_RADIUS,
-				s.get("name", ""), int(s.get("gold", 0)), int(s.get("food", 0)))
+				s.get("name", ""), int(s.get("gold", 0)), int(s.get("food", 0)),
+				faction_color, faction_nm, faction_id)
 		node.clicked.connect(_on_shape_clicked)
 		_map_root.add_child(node)
 		_shape_nodes.append(node)
@@ -546,6 +774,60 @@ func _build_map(data: Dictionary) -> void:
 	_line_layer.set_bounds(content_min, content_max)
 
 
+# 根据势力 id 查颜色，找不到返回 GRAY
+func _faction_color(faction_id: int) -> Color:
+	for f in _factions:
+		if f.id == faction_id:
+			return f.color
+	return Color.GRAY
+
+
+func _faction_name(faction_id: int) -> String:
+	for f in _factions:
+		if f.id == faction_id:
+			return f.name
+	return "中立"
+
+
+# 计算玩家势力（PLAYER_FACTION_ID）所有地点的粮草供应量总值
+func _calc_total_food(shapes_data: Array) -> int:
+	var total: int = 0
+	for s in shapes_data:
+		if int(s.get("faction", 0)) == PLAYER_FACTION_ID:
+			total += int(s.get("food", 0))
+	return total
+
+
+# 计算玩家势力（PLAYER_FACTION_ID）所有地点的资金产出总值
+func _calc_player_gold_income(shapes_data: Array) -> int:
+	var total: int = 0
+	for s in shapes_data:
+		if int(s.get("faction", 0)) == PLAYER_FACTION_ID:
+			total += int(s.get("gold", 0))
+	return total
+
+
+func _on_end_turn(shapes_data: Array) -> void:
+	_player_gold += _calc_player_gold_income(shapes_data)
+	_player_food = _calc_total_food(shapes_data)
+	_refresh_info_panel()
+
+
+func _refresh_info_panel() -> void:
+	if _info_faction_dot == null:
+		return
+	var faction_color := _faction_color(PLAYER_FACTION_ID)
+	var faction_name  := _faction_name(PLAYER_FACTION_ID)
+	_info_faction_dot.init(faction_color)
+	_info_faction_dot.queue_redraw()
+	if _info_faction_lbl:
+		_info_faction_lbl.text = faction_name
+	if _info_food_lbl:
+		_info_food_lbl.text = "粮草：" + str(_player_food)
+	if _info_gold_lbl:
+		_info_gold_lbl.text = "资金：" + str(_player_gold)
+
+
 # ── 输入：平移 + 滚轮缩放 + 双指缩放 ─────────────────────────────────────────
 func _gui_input(event: InputEvent) -> void:
 	# 滚轮缩放
@@ -553,9 +835,23 @@ func _gui_input(event: InputEvent) -> void:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_zoom_at(event.position, ZOOM_STEP)
 			accept_event()
+			return
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_zoom_at(event.position, 1.0 / ZOOM_STEP)
 			accept_event()
+			return
+
+	# 部署模式下的空白点击取消：按下记起点，松开时未拖动则取消。
+	# 子节点（_MapShapeNode）的点击会被自身 _gui_input 吃掉，事件不会冒到此处。
+	if _deploy_mode and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var mb := event as InputEventMouseButton
+		if mb.pressed:
+			_deploy_blank_press = true
+			_deploy_blank_press_pos = mb.position
+		else:
+			if _deploy_blank_press and mb.position.distance_to(_deploy_blank_press_pos) <= DEPLOY_BLANK_TAP_THRESHOLD:
+				_exit_deploy_mode()
+			_deploy_blank_press = false
 
 func _input(event: InputEvent) -> void:
 	if _is_expanded or _is_transitioning:
@@ -700,9 +996,24 @@ class _MapShapeNode extends Control:
 	var _name_text: String = ""
 	var _gold: int = 0
 	var _food: int = 0
+	var _faction_name: String = "中立"
+	var _faction_id: int = 0
+
+	# 呼吸缩放
+	var _breathing_tween: Tween = null
+	const BREATH_SCALE: Vector2 = Vector2(1.18, 1.18)
+	const BREATH_PERIOD: float = 0.9
+
+	# 已部署人才头像横排（节点上方）
+	var _deploy_icon_row: HBoxContainer = null
+	const DEPLOY_ICON_SIZE: Vector2 = Vector2(36, 36)
+	const DEPLOY_ICON_GAP: int = 4
+	const DEPLOY_ICON_OFFSET_Y: float = 14.0   # 节点上沿与图标底部的间距
 
 	func init(id: int, kind: String, cat_label: String, center: Vector2, radius: float,
-			name_text: String = "", gold: int = 0, food: int = 0) -> void:
+			name_text: String = "", gold: int = 0, food: int = 0,
+			faction_color: Color = Color.GRAY,
+			faction_name: String = "中立", faction_id: int = 0) -> void:
 		_id = id
 		_kind = kind
 		_cat_label = cat_label
@@ -710,14 +1021,14 @@ class _MapShapeNode extends Control:
 		_name_text = name_text
 		_gold = gold
 		_food = food
-		match kind:
-			"triangle": _fill = Color.GRAY
-			"circle":   _fill = Color.GRAY
-			"square":   _fill = Color.GRAY
-			_:          _fill = Color.GRAY
+		_fill = faction_color
+		_faction_name = faction_name
+		_faction_id = faction_id
 		var d: float = radius * 2.0
 		size = Vector2(d, d)
 		position = center - Vector2(radius, radius)
+		# 中心枢轴：让 scale 缩放围绕节点几何中心
+		pivot_offset = size * 0.5
 
 	func _ready() -> void:
 		if _kind == "square" and _cat_label != "":
@@ -736,6 +1047,60 @@ class _MapShapeNode extends Control:
 	func set_selected(val: bool) -> void:
 		_selected = val
 		queue_redraw()
+
+	# 设置指定 hero_key 头像的选中状态（用于 EmpireTest 同步视觉）。
+	func set_hero_icon_selected(hero_key: String, selected: bool) -> void:
+		if _deploy_icon_row == null:
+			return
+		for child in _deploy_icon_row.get_children():
+			if "_hero_key" in child and String(child._hero_key) == hero_key:
+				if child.has_method("set_selected_state"):
+					child.set_selected_state(selected)
+				break
+
+	# 启停呼吸缩放：scale 在 1.0 ↔ BREATH_SCALE 之间循环。
+	func set_breathing(active: bool) -> void:
+		if active:
+			if _breathing_tween != null and _breathing_tween.is_valid():
+				return
+			scale = Vector2.ONE
+			_breathing_tween = create_tween().set_loops()
+			_breathing_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+			_breathing_tween.tween_property(self, "scale", BREATH_SCALE, BREATH_PERIOD * 0.5)
+			_breathing_tween.tween_property(self, "scale", Vector2.ONE,  BREATH_PERIOD * 0.5)
+		else:
+			if _breathing_tween != null and _breathing_tween.is_valid():
+				_breathing_tween.kill()
+			_breathing_tween = null
+			scale = Vector2.ONE
+
+	# 重建节点上方的人才头像横排。
+	# hero_keys 和 textures 平行数组，长度相同。
+	# 图标可点击，点击后通过父链找到 EmpireTest 调用 _on_hero_icon_clicked。
+	func set_deployed_icons(hero_keys: Array, textures: Array) -> void:
+		if _deploy_icon_row == null:
+			_deploy_icon_row = HBoxContainer.new()
+			_deploy_icon_row.name = "DeployIconRow"
+			_deploy_icon_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_deploy_icon_row.add_theme_constant_override("separation", DEPLOY_ICON_GAP)
+			add_child(_deploy_icon_row)
+		for c in _deploy_icon_row.get_children():
+			c.queue_free()
+		var n: int = min(hero_keys.size(), textures.size())
+		if n == 0:
+			_deploy_icon_row.visible = false
+			return
+		_deploy_icon_row.visible = true
+		for i in n:
+			var btn := _HeroIconBtn.new()
+			btn.init(hero_keys[i], textures[i], DEPLOY_ICON_SIZE)
+			_deploy_icon_row.add_child(btn)
+		var row_w: float = float(n) * DEPLOY_ICON_SIZE.x + float(max(0, n - 1)) * float(DEPLOY_ICON_GAP)
+		_deploy_icon_row.size = Vector2(row_w, DEPLOY_ICON_SIZE.y)
+		_deploy_icon_row.position = Vector2(
+			(size.x - row_w) * 0.5,
+			-DEPLOY_ICON_SIZE.y - DEPLOY_ICON_OFFSET_Y
+		)
 
 	func _draw() -> void:
 		var r: float = _radius
@@ -789,3 +1154,80 @@ class _FactionDot extends Control:
 		var c := Vector2(size.x * 0.5, size.y * 0.5)
 		draw_circle(c, r, _color)
 		draw_arc(c, r, 0.0, TAU, 32, Color(1, 1, 1, 0.7), 1.5, true)
+
+
+# ── 人才头像按钮：可点击的图标，点击后沿父链回调 EmpireTest ──────────────────────
+class _HeroIconBtn extends Control:
+	var _hero_key: String = ""
+	const OUTLINE_NORMAL:   Color = Color(1, 1, 1, 0.55)
+	const OUTLINE_HOVER:    Color = Color(0.55, 0.9, 1.0, 0.9)
+	const OUTLINE_PRESSED:  Color = Color(1, 0.6, 0.1, 1.0)
+	const OUTLINE_SELECTED: Color = Color("#ffe066")
+
+	var _tex: Texture2D = null
+	var _icon_size: Vector2 = Vector2(36, 36)
+	var _hover: bool = false
+	var _pressing: bool = false
+	var _is_selected: bool = false
+	var _last_click_frame: int = -1
+
+	func init(hero_key: String, tex: Texture2D, icon_size: Vector2) -> void:
+		_hero_key = hero_key
+		_tex = tex
+		_icon_size = icon_size
+		custom_minimum_size = icon_size
+		size = icon_size
+		mouse_filter = Control.MOUSE_FILTER_STOP
+
+	func set_selected_state(val: bool) -> void:
+		_is_selected = val
+		queue_redraw()
+
+	func _draw() -> void:
+		if _tex:
+			draw_texture_rect(_tex, Rect2(Vector2.ZERO, _icon_size), false)
+		var outline_col: Color
+		if _pressing:
+			outline_col = OUTLINE_PRESSED
+		elif _is_selected:
+			outline_col = OUTLINE_SELECTED
+		elif _hover:
+			outline_col = OUTLINE_HOVER
+		else:
+			outline_col = OUTLINE_NORMAL
+		draw_rect(Rect2(Vector2.ZERO, _icon_size), outline_col, false, 2.0)
+
+	func _gui_input(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			_pressing = event.pressed
+			queue_redraw()
+			# press 和 release 都阻断，防止冒泡到父 _MapShapeNode 触发地点选中逻辑
+			get_viewport().set_input_as_handled()
+			if not event.pressed:
+				var cur_frame := Engine.get_process_frames()
+				if cur_frame != _last_click_frame:
+					_last_click_frame = cur_frame
+					_fire_click()
+		elif event is InputEventScreenTouch and event.index == 0:
+			_pressing = event.pressed
+			queue_redraw()
+			get_viewport().set_input_as_handled()
+			if not event.pressed:
+				var cur_frame := Engine.get_process_frames()
+				if cur_frame != _last_click_frame:
+					_last_click_frame = cur_frame
+					_fire_click()
+		elif event is InputEventMouseMotion:
+			var was_hover: bool = _hover
+			_hover = Rect2(Vector2.ZERO, _icon_size).has_point(event.position)
+			if _hover != was_hover:
+				queue_redraw()
+
+	func _fire_click() -> void:
+		# 沿父链找到第一个有 _on_hero_icon_clicked 方法的节点（即 EmpireTest）
+		var p: Node = get_parent()
+		while p != null:
+			if p.has_method("_on_hero_icon_clicked"):
+				p._on_hero_icon_clicked(_hero_key)
+				return
+			p = p.get_parent()
