@@ -45,6 +45,9 @@ var _badge_panel: PanelContainer
 var _gold_val_lbl: Label
 var _food_val_lbl: Label
 var _specialize_btn: Button
+# 驻军列表
+var _garrison_list: VBoxContainer = null
+var _garrison_empty_lbl: Label = null
 
 
 func setup(parent: Control) -> void:
@@ -234,12 +237,26 @@ func _build_panel() -> void:
 	troop_title.add_theme_color_override("font_color", Color(0.4, 0.4, 0.4))
 	troop_vbox.add_child(troop_title)
 
-	var troop_empty := Label.new()
-	troop_empty.text = "（无）"
-	troop_empty.add_theme_font_size_override("font_size", 14)
-	troop_empty.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
-	troop_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	troop_vbox.add_child(troop_empty)
+	var troop_scroll := ScrollContainer.new()
+	troop_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	troop_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	troop_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	troop_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
+	troop_vbox.add_child(troop_scroll)
+
+	_garrison_list = VBoxContainer.new()
+	_garrison_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_garrison_list.add_theme_constant_override("separation", 6)
+	_garrison_list.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	troop_scroll.add_child(_garrison_list)
+
+	_garrison_empty_lbl = Label.new()
+	_garrison_empty_lbl.text = "（无）"
+	_garrison_empty_lbl.add_theme_font_size_override("font_size", 14)
+	_garrison_empty_lbl.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
+	_garrison_empty_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_garrison_empty_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_garrison_list.add_child(_garrison_empty_lbl)
 
 	# ── 特化按钮（初始隐藏，由 _refresh_content 按条件显示）─────────────────
 	var specialize_btn := Button.new()
@@ -284,10 +301,12 @@ static func _add_res_row(parent: VBoxContainer, key: String, value: String, key_
 
 
 # 显示某个地图节点的详情，刷新所有内容节点。
-func show_for(node) -> void:
+# heroes：该地点驻军列表，每项 {"name": String, "level": int}（由 EmpireTest 计算并传入，已剔除虚影）。
+func show_for(node, heroes: Array = []) -> void:
 	if node == null:
 		return
 	_refresh_content(node)
+	_refresh_garrison(heroes)
 
 	if _is_open:
 		return
@@ -404,3 +423,67 @@ static func _resolve_badge(kind: String, cat: int) -> Dictionary:
 	if KIND_META.has(kind):
 		return KIND_META[kind]
 	return {"label": "地点", "color": Color("#868e96")}
+
+
+# 刷新驻军列表。heroes：[{"name": String, "level": int}, ...]
+func _refresh_garrison(heroes: Array) -> void:
+	if _garrison_list == null:
+		return
+	for c in _garrison_list.get_children():
+		if c == _garrison_empty_lbl:
+			continue
+		c.queue_free()
+	if heroes.is_empty():
+		if _garrison_empty_lbl:
+			_garrison_empty_lbl.visible = true
+		return
+	if _garrison_empty_lbl:
+		_garrison_empty_lbl.visible = false
+	for h in heroes:
+		var nm: String = String(h.get("name", "?"))
+		var lv: int = int(h.get("level", 1))
+		_garrison_list.add_child(_make_garrison_row(nm, lv))
+
+
+const _GARRISON_BADGE_COLOR: Color = Color("#7b68ee")
+
+
+static func _make_garrison_row(name: String, level: int) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var name_lbl := Label.new()
+	name_lbl.text = name
+	name_lbl.add_theme_font_size_override("font_size", 16)
+	name_lbl.add_theme_color_override("font_color", Color(0.2, 0.2, 0.2))
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(name_lbl)
+
+	var badge_style := StyleBoxFlat.new()
+	badge_style.bg_color = _GARRISON_BADGE_COLOR
+	badge_style.corner_radius_top_left = 6
+	badge_style.corner_radius_top_right = 6
+	badge_style.corner_radius_bottom_left = 6
+	badge_style.corner_radius_bottom_right = 6
+	badge_style.content_margin_left = 8
+	badge_style.content_margin_right = 8
+	badge_style.content_margin_top = 2
+	badge_style.content_margin_bottom = 2
+
+	var badge_pc := PanelContainer.new()
+	badge_pc.add_theme_stylebox_override("panel", badge_style)
+	badge_pc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	badge_pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(badge_pc)
+
+	var badge_lbl := Label.new()
+	badge_lbl.text = "Lv.%d" % level
+	badge_lbl.add_theme_font_size_override("font_size", 12)
+	badge_lbl.add_theme_color_override("font_color", Color.WHITE)
+	badge_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge_pc.add_child(badge_lbl)
+
+	return row

@@ -16,6 +16,10 @@ const PAGE_MARGIN_Y: float = 16.0
 
 const HERO_NAMES: Array = ["A", "B", "C"]
 
+# 运行时可被外部过滤（流放后将 hero_key 移出）。
+# 默认与 HERO_NAMES 一致；EmpireTest 在 attach 二级面板后通过 set_alive_pool 注入。
+var _hero_names: Array = HERO_NAMES.duplicate()
+
 const EMPIRE_HERO_JSON: String = "res://data/empire_hero.json"
 
 const SKILL_PLACEHOLDER: String = "技能"
@@ -29,11 +33,13 @@ const NAME_HEIGHT_RATIO: float = 0.42
 
 var _hero_display_names: Dictionary = {}
 var _hero_skills: Dictionary = {}
+var _hero_commands: Dictionary = {}  # hero_key → command 值（统帅）
 
 var _track: Control
 var _pages: Array[Panel] = []
 var _page_labels: Array[Label] = []
 var _skill_labels: Array[Label] = []
+var _command_labels: Array[Label] = []
 
 const SKILL_MASK_RATIO: float = 0.25
 const SKILL_MASK_CORNER_RADIUS: float = 20.0
@@ -111,7 +117,7 @@ func _ready() -> void:
 		_track.add_child(page)
 
 	var saved_hero: String = EmpireDeckStorage.get_selected_hero()
-	var saved_idx: int = HERO_NAMES.find(saved_hero)
+	var saved_idx: int = _hero_names.find(saved_hero)
 	if saved_idx >= 0:
 		_current_page = saved_idx
 
@@ -153,15 +159,33 @@ func _make_page() -> Panel:
 	name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_lbl.clip_text = true
 	name_lbl.anchor_left = 0.0
-	name_lbl.anchor_right = 1.0
+	name_lbl.anchor_right = 0.62
 	name_lbl.anchor_top = 0.0
 	name_lbl.anchor_bottom = NAME_HEIGHT_RATIO
 	name_lbl.offset_left = SKILL_TEXT_PAD_LEFT
-	name_lbl.offset_right = -SKILL_TEXT_PAD_RIGHT
+	name_lbl.offset_right = 0.0
 	name_lbl.offset_top = SKILL_TEXT_PAD_TOP
 	name_lbl.offset_bottom = 0.0
 	mask.add_child(name_lbl)
 	_page_labels.append(name_lbl)
+
+	var cmd_lbl := Label.new()
+	cmd_lbl.name = "CommandLbl"
+	cmd_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cmd_lbl.add_theme_font_size_override("font_size", 22)
+	cmd_lbl.add_theme_color_override("font_color", Color(0.60, 0.32, 0.06))
+	cmd_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	cmd_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cmd_lbl.anchor_left = 0.62
+	cmd_lbl.anchor_right = 1.0
+	cmd_lbl.anchor_top = 0.0
+	cmd_lbl.anchor_bottom = NAME_HEIGHT_RATIO
+	cmd_lbl.offset_left = 0.0
+	cmd_lbl.offset_right = -SKILL_TEXT_PAD_RIGHT
+	cmd_lbl.offset_top = SKILL_TEXT_PAD_TOP
+	cmd_lbl.offset_bottom = 0.0
+	mask.add_child(cmd_lbl)
+	_command_labels.append(cmd_lbl)
 
 	var skill_lbl := Label.new()
 	skill_lbl.name = "Skill"
@@ -212,12 +236,16 @@ func _refresh_labels() -> void:
 			if skill_text == "":
 				skill_text = SKILL_PLACEHOLDER
 			_skill_labels[idx].text = skill_text
+		if idx < _command_labels.size():
+			var cmd: int = int(_hero_commands.get(hero_key, 0))
+			_command_labels[idx].text = "统帅 %d" % cmd
 
 
 # 直接读 empire_hero.json，不走 DataLoader.load_hero_db（其路径写死 hero.json）。
 func _load_hero_db() -> void:
 	_hero_display_names.clear()
 	_hero_skills.clear()
+	_hero_commands.clear()
 	if not FileAccess.file_exists(EMPIRE_HERO_JSON):
 		push_warning("EmpireCarousel: missing " + EMPIRE_HERO_JSON)
 		return
@@ -237,11 +265,41 @@ func _load_hero_db() -> void:
 			_hero_display_names[String(key)] = String(data["display_name"])
 		if data.has("skill_text"):
 			_hero_skills[String(key)] = String(data["skill_text"])
+		if data.has("command"):
+			_hero_commands[String(key)] = int(data["command"])
 
 
 func _hero_name_at(idx: int) -> String:
-	var n: int = HERO_NAMES.size()
-	return HERO_NAMES[posmod(idx, n)]
+	var n: int = _hero_names.size()
+	if n == 0:
+		return ""
+	return _hero_names[posmod(idx, n)]
+
+
+# 由 EmpireTest 在 attach 二级面板后调用，注入"未流放"人才池。
+# 若当前显示者仍在新池中，定位到该 key；否则跳到首位。
+func set_alive_pool(arr: Array) -> void:
+	if arr.is_empty():
+		return
+	var prev_key: String = ""
+	if not _hero_names.is_empty():
+		prev_key = current_hero_key()
+	_hero_names = arr.duplicate()
+	var idx: int = _hero_names.find(prev_key)
+	_current_page = idx if idx >= 0 else 0
+	if is_inside_tree():
+		_refresh_labels()
+
+
+# 直接跳转到指定 hero_key。
+# 若 hero_key 不在当前 _hero_names 中则忽略。
+func goto_hero(hero_key: String) -> void:
+	var idx: int = _hero_names.find(hero_key)
+	if idx < 0:
+		return
+	_current_page = idx
+	if is_inside_tree():
+		_refresh_labels()
 
 
 func _on_gui_input(event: InputEvent) -> void:

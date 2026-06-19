@@ -63,6 +63,35 @@ var _player_food: int = 0
 var _deployed_heroes: Dictionary = {}
 var _deploy_mode: bool = false
 var _deploy_pending_hero: String = ""
+# 流放名单（仅本次运行有效，重启后人才复现）。hero_key → true。
+# 被流放的人才：从地图抹除、不出现在轮播中、卡组清空（单位放回公共牌池）。
+var _exiled_heroes: Dictionary = {}
+# 完整人才池（与 EmpireCarousel.HERO_NAMES 对齐，过滤后即 alive 池）
+const ALL_HERO_KEYS: Array = ["A", "B", "C"]
+# 人才面板最后一次查看的 hero_key。
+# 空串 = 从未打开过 → 打开时默认定位到第一个未流放人才。
+# 退出面板时记录，再进则恢复；若上次记录者已被流放，退化回第一个未流放者。
+var _talent_last_hero: String = ""
+
+# 行棋（移动）系统
+# _connections_data：JSON 中 connections 数组（{from,to}），用于相邻判断
+# _id_to_node：node_id → _MapShapeNode 索引
+# _pending_moves：hero_key → 目标 _MapShapeNode。
+#   拖放成功后写入，本回合内该 hero 不可再拖。结束回合时统一提交。
+var _connections_data: Array = []
+var _id_to_node: Dictionary = {}
+var _pending_moves: Dictionary = {}
+
+# 当前拖拽状态
+var _drag_active: bool = false
+var _drag_hero_key: String = ""
+var _drag_source_node = null
+var _drag_ghost: Control = null
+var _drag_adjacent: Array = []  # 当前呼吸高亮中的相邻节点
+
+const DRAG_START_THRESHOLD: float = 8.0
+const PENDING_GHOST_ALPHA: float = 0.45
+const DRAGGING_GHOST_ALPHA: float = 0.7
 # 空白点击取消部署模式：在 _gui_input 中按下记录起点，松开时若未拖动则取消
 var _deploy_blank_press: bool = false
 var _deploy_blank_press_pos: Vector2 = Vector2.ZERO
@@ -379,9 +408,23 @@ func _trigger_transition(origin_panel: Control, origin_btn: Control) -> void:
 		tp.set_deployed_state(_deployed_heroes)
 		tp.deploy_requested.connect(_on_deploy_requested)
 		tp.recall_requested.connect(_on_recall_requested)
+	# 统一注入未流放人才池，供 carousel 过滤 / 流放按钮置灰判断
+	if _secondary_panel.has_method("set_alive_pool"):
+		_secondary_panel.set_alive_pool(_alive_hero_keys())
+	# 人才面板：恢复上次查看的人才（首次打开则定位到第一个未流放者）
+	if _secondary_panel is EmpireTalentPanel:
+		var alive := _alive_hero_keys()
+		var initial: String = _talent_last_hero if (not _talent_last_hero.is_empty() and alive.has(_talent_last_hero)) else (String(alive[0]) if not alive.is_empty() else "")
+		if not initial.is_empty():
+			(_secondary_panel as EmpireTalentPanel).goto_hero(initial)
 
 
 func _trigger_reverse() -> void:
+	# 人才面板关闭前：记录当前查看的 hero_key，下次打开时恢复
+	if _secondary_panel is EmpireTalentPanel and is_instance_valid(_secondary_panel):
+		var car := (_secondary_panel as EmpireTalentPanel).get_node_or_null("HeroPnl/Carousel") as EmpireCarousel
+		if car:
+			_talent_last_hero = car.current_hero_key()
 	if _current_tween and _current_tween.is_valid():
 		_current_tween.kill()
 	if _secondary_panel and is_instance_valid(_secondary_panel):
@@ -442,13 +485,42 @@ func _on_deploy_requested(hero_key: String) -> void:
 
 
 func _on_recall_requested(hero_key: String) -> void:
-	# 由人才面板「流放」按钮触发：撤销该人才部署，不退回大地图
+	# 由人才面板「流放」按钮触发：
+	#   1) 从地图抹去该人才
+	#   2) 加入流放名单（轮播过滤）
+	#   3) 清空其军队卡组（下属单位放回公共牌池）
+	#   4) 若被流放者为当前 selected_hero，切到首个未流放者
+	#   5) 触发反向转场关闭二级人才面板
+	# 拒绝流放最后一人。
 	if not _deployed_heroes.has(hero_key):
 		return
+	if _alive_hero_keys().size() <= 1:
+		return
+
 	var node = _deployed_heroes[hero_key]
 	_deployed_heroes.erase(hero_key)
 	if is_instance_valid(node):
 		_refresh_deploy_icons_for(node)
+
+	_exiled_heroes[hero_key] = true
+
+	EmpireDeckStorage.save_deck(hero_key, {}, [], "no_sort")
+
+	if EmpireDeckStorage.get_selected_hero() == hero_key:
+		var new_alive: Array = _alive_hero_keys()
+		if not new_alive.is_empty():
+			EmpireDeckStorage.save_selected_hero(String(new_alive[0]))
+
+	_trigger_reverse()
+
+
+# 返回当前未流放的人才 key 列表，保持 ALL_HERO_KEYS 顺序。
+func _alive_hero_keys() -> Array:
+	var out: Array = []
+	for k in ALL_HERO_KEYS:
+		if not _exiled_heroes.has(k):
+			out.append(k)
+	return out
 
 
 func _enter_deploy_mode() -> void:
@@ -484,15 +556,182 @@ func _commit_deploy(target_node) -> void:
 func _refresh_deploy_icons_for(node) -> void:
 	if node == null or not is_instance_valid(node):
 		return
-	var keys: Array = []
+	# 实体：在此节点 deployed 且没有 pending move 的英雄
+	# 虚影：pending_moves 目标是此节点的英雄
+	var key_flag: Dictionary = {}  # hero_key → is_ghost
 	for k in _deployed_heroes.keys():
-		if _deployed_heroes[k] == node:
-			keys.append(String(k))
+		var ks: String = String(k)
+		if _deployed_heroes[k] == node and not _pending_moves.has(ks):
+			key_flag[ks] = false
+	for k in _pending_moves.keys():
+		var ks: String = String(k)
+		if _pending_moves[k] == node:
+			key_flag[ks] = true
+	var keys: Array = key_flag.keys()
 	keys.sort()
 	var textures: Array = []
-	for _k in keys:
+	var ghost_flags: Array = []
+	for k in keys:
 		textures.append(DEPLOY_ICON_TEX)
-	node.set_deployed_icons(keys, textures)
+		ghost_flags.append(bool(key_flag[k]))
+	node.set_deployed_icons(keys, textures, ghost_flags)
+
+
+# 根据 connections 返回与 node 直接相邻的所有 _MapShapeNode。
+func _get_adjacent_nodes(node) -> Array:
+	if node == null or not is_instance_valid(node):
+		return []
+	var sid: int = int(node._id)
+	var out: Array = []
+	for conn in _connections_data:
+		var f: int = int(conn.get("from", -1))
+		var t: int = int(conn.get("to", -1))
+		var other: int = -1
+		if f == sid:
+			other = t
+		elif t == sid:
+			other = f
+		if other >= 0 and _id_to_node.has(other):
+			var adj = _id_to_node[other]
+			if is_instance_valid(adj) and not out.has(adj):
+				out.append(adj)
+	return out
+
+
+# 返回某地点的驻军列表：仅"实际部署在此节点 且 未在 pending_moves 中"的人才。
+# 虚影人才（无论起点或终点）一律不计入。
+# 返回每项：{"name": String, "level": int}（取自 empire_hero.json）
+func _compute_garrison_for(node) -> Array:
+	var out: Array = []
+	if node == null or not is_instance_valid(node):
+		return out
+	var keys: Array = []
+	for k in _deployed_heroes.keys():
+		var ks: String = String(k)
+		if _deployed_heroes[k] == node and not _pending_moves.has(ks):
+			keys.append(ks)
+	keys.sort()
+	for ks in keys:
+		var hd: Dictionary = _empire_hero_db.get(ks, {})
+		out.append({
+			"name": String(hd.get("display_name", ks)),
+			"level": int(hd.get("level", 1)),
+		})
+	return out
+
+
+# 命中测试：找到全局坐标 global_pos 下的 _MapShapeNode；无则返回 null。
+# 地图有缩放，必须把全局坐标转换到节点本地空间后再做矩形命中，
+# 否则 Rect2(global_position, size) 在缩放时尺寸不匹配。
+func _find_node_at(global_pos: Vector2):
+	for n in _shape_nodes:
+		if not is_instance_valid(n):
+			continue
+		var local_pos: Vector2 = n.get_global_transform().affine_inverse() * global_pos
+		if Rect2(Vector2.ZERO, n.size).has_point(local_pos):
+			return n
+	return null
+
+
+# ── 行棋：头像拖拽到相邻地点 ─────────────────────────────────────────────────
+# _HeroIconBtn 在按下 + 移动超过阈值后通过父链调用此方法。
+# 拖拽过程中：
+#   - 起点头像设为虚（_HeroIconBtn.set_ghost）
+#   - 创建跟随鼠标的虚影 _drag_ghost
+#   - 相邻节点呼吸高亮
+# 拖拽结束（_input 捕获 LMB 释放）：见 _on_hero_drag_end。
+func _on_hero_drag_start(hero_key: String, source_node, global_start_pos: Vector2) -> void:
+	if _deploy_mode or _drag_active:
+		return
+	if _pending_moves.has(hero_key):
+		return  # 本回合已经定下移动，禁止再拖
+	if source_node == null or not is_instance_valid(source_node):
+		return
+	_drag_active = true
+	_drag_hero_key = hero_key
+	_drag_source_node = source_node
+	# 立即取消地图平移（_input 先于 GUI dispatch 执行，图标按下那帧 _pan_active 可能已被激活）
+	_pan_active = false
+
+	# 相邻高亮（呼吸缩放复用部署模式的实现）
+	_drag_adjacent.clear()
+	for adj in _get_adjacent_nodes(source_node):
+		adj.set_breathing(true)
+		_drag_adjacent.append(adj)
+
+	# 跟随鼠标的虚影图标
+	_drag_ghost = TextureRect.new()
+	_drag_ghost.texture = DEPLOY_ICON_TEX
+	_drag_ghost.modulate.a = DRAGGING_GHOST_ALPHA
+	_drag_ghost.size = _MapShapeNode.DEPLOY_ICON_SIZE
+	_drag_ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_drag_ghost.top_level = true
+	_drag_ghost.z_index = 1000
+	add_child(_drag_ghost)
+	_drag_ghost.global_position = global_start_pos - _drag_ghost.size * 0.5
+
+	# 起点头像变虚
+	if source_node.has_method("set_hero_icon_ghost"):
+		source_node.set_hero_icon_ghost(hero_key, true)
+
+
+func _on_hero_drag_end(global_pos: Vector2) -> void:
+	if not _drag_active:
+		return
+	var target = _find_node_at(global_pos)
+	var is_valid: bool = target != null and _drag_adjacent.has(target)
+
+	if is_valid:
+		_pending_moves[_drag_hero_key] = target
+
+	# 起点头像若未被刷新移除则恢复实（失败时）；成功时下面 refresh 会重建为"无"
+	if _drag_source_node and is_instance_valid(_drag_source_node):
+		if _drag_source_node.has_method("set_hero_icon_ghost"):
+			_drag_source_node.set_hero_icon_ghost(_drag_hero_key, false)
+
+	# 清相邻呼吸
+	for adj in _drag_adjacent:
+		if is_instance_valid(adj):
+			adj.set_breathing(false)
+	_drag_adjacent.clear()
+
+	# 销毁跟随虚影
+	if _drag_ghost and is_instance_valid(_drag_ghost):
+		_drag_ghost.queue_free()
+	_drag_ghost = null
+
+	# 刷新涉及节点：起点（若 pending 写入则该节点会少一个图标）+ 目标（多一个虚影）
+	var refresh_set: Dictionary = {}
+	if _drag_source_node and is_instance_valid(_drag_source_node):
+		refresh_set[_drag_source_node] = true
+	if is_valid and not refresh_set.has(target):
+		refresh_set[target] = true
+	for n in refresh_set.keys():
+		_refresh_deploy_icons_for(n)
+
+	_drag_active = false
+	_drag_hero_key = ""
+	_drag_source_node = null
+
+
+# 回合结束统一提交所有待生效移动：虚影变实，hero 解除本回合的移动锁定。
+func _commit_pending_moves() -> void:
+	if _pending_moves.is_empty():
+		return
+	var affected: Dictionary = {}
+	for hero_key in _pending_moves.keys():
+		var target = _pending_moves[hero_key]
+		var prev = _deployed_heroes.get(hero_key, null)
+		_deployed_heroes[hero_key] = target
+		if prev and is_instance_valid(prev):
+			affected[prev] = true
+		if target and is_instance_valid(target):
+			affected[target] = true
+	_pending_moves.clear()
+	for n in affected.keys():
+		_refresh_deploy_icons_for(n)
+
+
 
 
 # ── 英雄数据库 ───────────────────────────────────────────────────────────────
@@ -677,7 +916,7 @@ func _on_shape_clicked(node) -> void:
 		_selected_node = node
 		_selected_node.set_selected(true)
 		if _location_panel:
-			_location_panel.show_for(node)
+			_location_panel.show_for(node, _compute_garrison_for(node))
 
 
 func _load_map() -> void:
@@ -764,7 +1003,9 @@ func _build_map(data: Dictionary) -> void:
 		node.clicked.connect(_on_shape_clicked)
 		_map_root.add_child(node)
 		_shape_nodes.append(node)
+		_id_to_node[sid] = node
 
+	_connections_data = connections_data
 	_line_layer.set_data(id_to_pos, connections_data)
 	# 地图内容 bounding box（world 坐标，即 _map_root 本地坐标）
 	var content_min := Vector2(ox - NODE_RADIUS, oy - NODE_RADIUS)
@@ -808,6 +1049,7 @@ func _calc_player_gold_income(shapes_data: Array) -> int:
 
 
 func _on_end_turn(shapes_data: Array) -> void:
+	_commit_pending_moves()
 	_player_gold += _calc_player_gold_income(shapes_data)
 	_player_food = _calc_total_food(shapes_data)
 	_refresh_info_panel()
@@ -856,6 +1098,18 @@ func _gui_input(event: InputEvent) -> void:
 func _input(event: InputEvent) -> void:
 	if _is_expanded or _is_transitioning:
 		return
+	# ── 行棋拖拽优先：拦截 motion + LMB 释放，防止误触地图平移 ─────────────────
+	if _drag_active:
+		if event is InputEventMouseMotion:
+			if _drag_ghost and is_instance_valid(_drag_ghost):
+				_drag_ghost.global_position = event.global_position - _drag_ghost.size * 0.5
+			return  # 拖拽中不走平移逻辑
+		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if not event.pressed:
+				_on_hero_drag_end(event.global_position)
+				get_viewport().set_input_as_handled()
+			# press / release 均 return，防止 _pan_active 被重设
+			return
 	# 左键拖拽平移（全局输入，不受子节点遮挡影响）
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -1076,8 +1330,9 @@ class _MapShapeNode extends Control:
 
 	# 重建节点上方的人才头像横排。
 	# hero_keys 和 textures 平行数组，长度相同。
+	# ghost_flags 可选，对应位置 true 时图标显示为虚影（不可拖、半透明）。
 	# 图标可点击，点击后通过父链找到 EmpireTest 调用 _on_hero_icon_clicked。
-	func set_deployed_icons(hero_keys: Array, textures: Array) -> void:
+	func set_deployed_icons(hero_keys: Array, textures: Array, ghost_flags: Array = []) -> void:
 		if _deploy_icon_row == null:
 			_deploy_icon_row = HBoxContainer.new()
 			_deploy_icon_row.name = "DeployIconRow"
@@ -1094,6 +1349,8 @@ class _MapShapeNode extends Control:
 		for i in n:
 			var btn := _HeroIconBtn.new()
 			btn.init(hero_keys[i], textures[i], DEPLOY_ICON_SIZE)
+			if i < ghost_flags.size() and bool(ghost_flags[i]):
+				btn.set_ghost(true)
 			_deploy_icon_row.add_child(btn)
 		var row_w: float = float(n) * DEPLOY_ICON_SIZE.x + float(max(0, n - 1)) * float(DEPLOY_ICON_GAP)
 		_deploy_icon_row.size = Vector2(row_w, DEPLOY_ICON_SIZE.y)
@@ -1101,6 +1358,16 @@ class _MapShapeNode extends Control:
 			(size.x - row_w) * 0.5,
 			-DEPLOY_ICON_SIZE.y - DEPLOY_ICON_OFFSET_Y
 		)
+
+	# 临时把某 hero_key 头像设为/取消虚化（拖拽中使用）。
+	func set_hero_icon_ghost(hero_key: String, ghost: bool) -> void:
+		if _deploy_icon_row == null:
+			return
+		for child in _deploy_icon_row.get_children():
+			if "_hero_key" in child and String(child._hero_key) == hero_key:
+				if child.has_method("set_ghost"):
+					child.set_ghost(ghost)
+				break
 
 	func _draw() -> void:
 		var r: float = _radius
@@ -1163,6 +1430,7 @@ class _HeroIconBtn extends Control:
 	const OUTLINE_HOVER:    Color = Color(0.55, 0.9, 1.0, 0.9)
 	const OUTLINE_PRESSED:  Color = Color(1, 0.6, 0.1, 1.0)
 	const OUTLINE_SELECTED: Color = Color("#ffe066")
+	const DRAG_START_THRESHOLD: float = 8.0
 
 	var _tex: Texture2D = null
 	var _icon_size: Vector2 = Vector2(36, 36)
@@ -1170,6 +1438,11 @@ class _HeroIconBtn extends Control:
 	var _pressing: bool = false
 	var _is_selected: bool = false
 	var _last_click_frame: int = -1
+	# 拖拽相关
+	var _press_start_global: Vector2 = Vector2.ZERO
+	var _dragging: bool = false
+	# 虚影态（pending 移动或拖拽中的源）= 不可再拖
+	var _is_ghost: bool = false
 
 	func init(hero_key: String, tex: Texture2D, icon_size: Vector2) -> void:
 		_hero_key = hero_key
@@ -1182,6 +1455,11 @@ class _HeroIconBtn extends Control:
 	func set_selected_state(val: bool) -> void:
 		_is_selected = val
 		queue_redraw()
+
+	# 虚影态：半透明，且不可再拖。
+	func set_ghost(val: bool) -> void:
+		_is_ghost = val
+		modulate.a = 0.45 if val else 1.0
 
 	func _draw() -> void:
 		if _tex:
@@ -1199,15 +1477,23 @@ class _HeroIconBtn extends Control:
 
 	func _gui_input(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-			_pressing = event.pressed
-			queue_redraw()
-			# press 和 release 都阻断，防止冒泡到父 _MapShapeNode 触发地点选中逻辑
-			get_viewport().set_input_as_handled()
-			if not event.pressed:
-				var cur_frame := Engine.get_process_frames()
-				if cur_frame != _last_click_frame:
-					_last_click_frame = cur_frame
-					_fire_click()
+			if event.pressed:
+				_pressing = true
+				_press_start_global = event.global_position
+				_dragging = false
+				queue_redraw()
+				get_viewport().set_input_as_handled()
+			else:
+				_pressing = false
+				queue_redraw()
+				get_viewport().set_input_as_handled()
+				# 仅在未发生拖拽时 fire click；拖拽释放由 EmpireTest._input 处理
+				if not _dragging:
+					var cur_frame := Engine.get_process_frames()
+					if cur_frame != _last_click_frame:
+						_last_click_frame = cur_frame
+						_fire_click()
+				_dragging = false
 		elif event is InputEventScreenTouch and event.index == 0:
 			_pressing = event.pressed
 			queue_redraw()
@@ -1222,6 +1508,29 @@ class _HeroIconBtn extends Control:
 			_hover = Rect2(Vector2.ZERO, _icon_size).has_point(event.position)
 			if _hover != was_hover:
 				queue_redraw()
+			# 按下且未拖拽 → 距离超阈值则启动拖拽
+			if _pressing and not _dragging and not _is_ghost:
+				var dist: float = event.global_position.distance_to(_press_start_global)
+				if dist >= DRAG_START_THRESHOLD:
+					_dragging = true
+					# 启动拖拽后把"按下"状态交出去：EmpireTest 接管 motion/release。
+					# 保持 _dragging=true，release 时仍按未点击处理。
+					_pressing = false
+					queue_redraw()
+					_fire_drag_start(event.global_position)
+
+	# 全局输入：按下且未触发拖拽时，光标移出图标后仍能侦测拖拽阈值。
+	func _input(event: InputEvent) -> void:
+		if _is_ghost or _dragging or not _pressing:
+			return
+		if event is InputEventMouseMotion:
+			var dist: float = event.global_position.distance_to(_press_start_global)
+			if dist >= DRAG_START_THRESHOLD:
+				_dragging = true
+				_pressing = false
+				queue_redraw()
+				_fire_drag_start(event.global_position)
+				get_viewport().set_input_as_handled()
 
 	func _fire_click() -> void:
 		# 沿父链找到第一个有 _on_hero_icon_clicked 方法的节点（即 EmpireTest）
@@ -1229,5 +1538,17 @@ class _HeroIconBtn extends Control:
 		while p != null:
 			if p.has_method("_on_hero_icon_clicked"):
 				p._on_hero_icon_clicked(_hero_key)
+				return
+			p = p.get_parent()
+
+	func _fire_drag_start(global_pos: Vector2) -> void:
+		# 沿父链查找 EmpireTest，附带源 _MapShapeNode（祖父节点）
+		var source_node: Node = get_parent()
+		if source_node:
+			source_node = source_node.get_parent()
+		var p: Node = get_parent()
+		while p != null:
+			if p.has_method("_on_hero_drag_start"):
+				p._on_hero_drag_start(_hero_key, source_node, global_pos)
 				return
 			p = p.get_parent()

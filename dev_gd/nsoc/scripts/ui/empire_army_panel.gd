@@ -38,6 +38,8 @@ enum GestureMode { NONE, SCROLL, DRAG }
 
 var _hero_carousel: EmpireCarousel
 var _current_hero_key: String = ""
+# 英雄数据库（empire_hero.json），用于读取统帅值作为点兵上限
+var _hero_db: Dictionary = {}
 
 enum SortMode { NO_SORT, COST_ASC, COST_DESC }
 const SORT_LABELS: Dictionary = {
@@ -49,6 +51,7 @@ const SORT_CYCLE: Array = [SortMode.COST_ASC, SortMode.COST_DESC]
 
 var _sort_mode: int = SortMode.NO_SORT
 var _sort_btn: Button
+var _muster_title_lbl: Label = null  # 点兵标题，动态显示 "点兵 N/M"
 
 var _review_margin: MarginContainer
 var _review_grid: GridContainer
@@ -87,6 +90,7 @@ func _apply_styles() -> void:
 	review_pnl.add_theme_stylebox_override("panel", pnl_style)
 	filter_pnl.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	muster_pnl.add_theme_stylebox_override("panel", muster_style)
+	_load_hero_db()
 	_init_card_pool()
 	_populate_review()
 	_build_muster()
@@ -95,11 +99,54 @@ func _apply_styles() -> void:
 	_install_deck_persistence()
 
 
-# 装填 _card_pool：从 empire_cards.json 读出每张卡，total 设为 TOTAL_PER_CARD。
+# 读取 empire_hero.json，供统帅值上限使用。
+func _load_hero_db() -> void:
+	_hero_db.clear()
+	const EMPIRE_HERO_JSON: String = "res://data/empire_hero.json"
+	if not FileAccess.file_exists(EMPIRE_HERO_JSON):
+		return
+	var f := FileAccess.open(EMPIRE_HERO_JSON, FileAccess.READ)
+	if f == null:
+		return
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(parsed) == TYPE_DICTIONARY:
+		_hero_db = parsed.get("heroes", {})
+
+
+# 当前将领的统帅值（点兵上限）。读不到则返回 TOTAL_PER_CARD 作为兜底。
+func _current_command() -> int:
+	var data = _hero_db.get(_current_hero_key, null)
+	if typeof(data) == TYPE_DICTIONARY:
+		return int(data.get("command", TOTAL_PER_CARD))
+	return TOTAL_PER_CARD
+
+
+# 当前 muster 中所有牌的总张数。
+func _total_muster_count() -> int:
+	var total: int = 0
+	for entry in _muster_entries.values():
+		total += int(entry.count)
+	return total
+
+
+# 装填 _card_pool：从 empire_cards.json 读出每张卡。
+# 优先读卡定义中的 quantity 字段；未设则退回 TOTAL_PER_CARD。
+# DataLoader.load_cards 仅返回 CardBase 对象（无原始字段），故原始 JSON 单独读一次建量表。
 func _init_card_pool() -> void:
 	_card_pool.clear()
+	var qty_map: Dictionary = {}
+	var f := FileAccess.open(REVIEW_CARD_JSON, FileAccess.READ)
+	if f:
+		var parsed = JSON.parse_string(f.get_as_text())
+		f.close()
+		if typeof(parsed) == TYPE_ARRAY:
+			for raw in parsed:
+				if typeof(raw) == TYPE_DICTIONARY and raw.has("name") and raw.has("quantity"):
+					qty_map[String(raw["name"])] = int(raw["quantity"])
 	for card in DataLoader.load_cards(REVIEW_CARD_JSON):
-		_card_pool[String(card.name)] = {"card": card, "total": TOTAL_PER_CARD}
+		var qty: int = qty_map.get(String(card.name), TOTAL_PER_CARD)
+		_card_pool[String(card.name)] = {"card": card, "total": qty}
 
 
 func _install_deck_persistence() -> void:
@@ -109,9 +156,28 @@ func _install_deck_persistence() -> void:
 		return
 	_hero_carousel.current_hero_changed.connect(_on_hero_changed)
 	tree_exiting.connect(_save_current_deck)
+	# _apply_styles 由 call_deferred 延后，set_alive_pool 可能已在此之前调用并暂存于
+	# _alive_pool_pending；在 carousel 引用确立后立即同步。
+	if not _alive_pool_pending.is_empty():
+		_hero_carousel.set_alive_pool(_alive_pool_pending)
 	await get_tree().process_frame
 	_current_hero_key = _hero_carousel.current_hero_key()
 	_load_deck_for(_current_hero_key)
+
+
+# 暂存 set_alive_pool 传入的过滤池，供 _install_deck_persistence 在 carousel 可用后补传。
+var _alive_pool_pending: Array = []
+
+# 由 EmpireTest 在 attach 后调用，注入未被流放的人才池，透传给 carousel。
+# 注：_apply_styles 由 call_deferred 延后，_install_deck_persistence 含 await，
+# 调用时 _hero_carousel 可能尚未赋值，故同时暂存 + 节点直访兜底。
+func set_alive_pool(arr: Array) -> void:
+	_alive_pool_pending = arr.duplicate()
+	var car: EmpireCarousel = _hero_carousel
+	if car == null and hero_pnl:
+		car = hero_pnl.get_node_or_null("Carousel") as EmpireCarousel
+	if car:
+		car.set_alive_pool(arr)
 
 
 func _on_hero_changed(new_key: String) -> void:
@@ -554,6 +620,7 @@ func _build_muster() -> void:
 	title.offset_top = 20
 	title.offset_bottom = 20 + MUSTER_TITLE_HEIGHT
 	muster_pnl.add_child(title)
+	_muster_title_lbl = title
 
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT, false)
@@ -579,6 +646,9 @@ func _build_muster() -> void:
 func _add_to_muster(card_data) -> void:
 	if card_data == null:
 		return
+	# 统帅值上限：当前点兵总数已达上限时拒绝添加
+	if _total_muster_count() >= _current_command():
+		return
 	var key: String = String(card_data.name)
 	var is_new_kind: bool = not _muster_entries.has(key)
 	if is_new_kind:
@@ -599,6 +669,10 @@ func _refresh_muster_list() -> void:
 	for key in _muster_entries.keys():
 		var entry = _muster_entries[key]
 		_muster_list.add_child(_make_muster_row(entry.card, int(entry.count)))
+	if _muster_title_lbl:
+		var used: int = _total_muster_count()
+		var cap: int  = _current_command()
+		_muster_title_lbl.text = "点兵  %d / %d" % [used, cap]
 
 
 const MUSTER_ROW_WIDTH: float = 390.0
