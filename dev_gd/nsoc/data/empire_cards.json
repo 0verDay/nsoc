@@ -4,6 +4,15 @@
 	"type": "单位",
 	"cost": 1,
 	"health": {"top": 1, "bottom": 1, "left": 1, "right": 1},
-	"attack": 1
+	"attack": 1,
+	"quantity": 20
+  },
+  {
+	"name": "放箭",
+	"type": "法术",
+	"cost": 1,
+	"target": "any_unit",
+	"effects": ["weaken"],
+	"quantity": 10
   }
 ]

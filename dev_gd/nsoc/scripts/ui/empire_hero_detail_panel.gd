@@ -42,6 +42,9 @@ var _badge_lbl: Label = null
 var _faction_lbl: Label = null
 var _faction_dot: Panel = null
 var _attr_val_labels: Array = []
+# 配属部队列表（卡名 x 数量）
+var _troop_list: VBoxContainer = null
+var _troop_empty_lbl: Label = null
 
 
 func setup(parent: Control) -> void:
@@ -232,12 +235,27 @@ func _build_panel() -> void:
 	troop_title.add_theme_color_override("font_color", Color(0.4, 0.4, 0.4))
 	troop_vbox.add_child(troop_title)
 
-	var troop_empty := Label.new()
-	troop_empty.text = "（无）"
-	troop_empty.add_theme_font_size_override("font_size", 14)
-	troop_empty.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
-	troop_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	troop_vbox.add_child(troop_empty)
+	# 滚动容器 + 内层 VBox 存放卡牌行（卡很多时可滚）
+	var troop_scroll := ScrollContainer.new()
+	troop_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	troop_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	troop_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	troop_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
+	troop_vbox.add_child(troop_scroll)
+
+	_troop_list = VBoxContainer.new()
+	_troop_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_troop_list.add_theme_constant_override("separation", 4)
+	_troop_list.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	troop_scroll.add_child(_troop_list)
+
+	_troop_empty_lbl = Label.new()
+	_troop_empty_lbl.text = "（无）"
+	_troop_empty_lbl.add_theme_font_size_override("font_size", 14)
+	_troop_empty_lbl.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65))
+	_troop_empty_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_troop_empty_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_troop_list.add_child(_troop_empty_lbl)
 
 	# ── 训练按钮（置灰）─────────────────────────────────────────────────
 	var train_btn := Button.new()
@@ -315,3 +333,40 @@ func _refresh_content(hero_data: Dictionary,
 	for i in ATTR_KEYS.size():
 		if i < _attr_val_labels.size() and _attr_val_labels[i] != null:
 			_attr_val_labels[i].text = str(int(hero_data.get(ATTR_KEYS[i], 0)))
+
+	_refresh_troops(current_hero_key)
+
+
+# 刷新配属部队列表：从 EmpireDeckStorage 读出该 hero 当前的卡组，按 order 渲染为
+# 「卡名 x 数量」行；空则显示"（无）"。
+func _refresh_troops(hero_key: String) -> void:
+	if _troop_list == null:
+		return
+	for c in _troop_list.get_children():
+		if c == _troop_empty_lbl:
+			continue
+		c.queue_free()
+	if hero_key == "":
+		if _troop_empty_lbl:
+			_troop_empty_lbl.visible = true
+		return
+	var saved: Dictionary = EmpireDeckStorage.load_deck(hero_key)
+	var cards: Dictionary = saved.get("cards", {})
+	if cards.is_empty():
+		if _troop_empty_lbl:
+			_troop_empty_lbl.visible = true
+		return
+	if _troop_empty_lbl:
+		_troop_empty_lbl.visible = false
+	var order: Array = saved.get("order", [])
+	var iter: Array = order if not order.is_empty() else cards.keys()
+	for name in iter:
+		var count: int = int(cards.get(String(name), 0))
+		if count <= 0:
+			continue
+		var lbl := Label.new()
+		lbl.text = "%s x %d" % [String(name), count]
+		lbl.add_theme_font_size_override("font_size", 16)
+		lbl.add_theme_color_override("font_color", Color(0.2, 0.2, 0.2))
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_troop_list.add_child(lbl)

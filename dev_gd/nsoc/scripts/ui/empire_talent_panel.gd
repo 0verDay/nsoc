@@ -52,6 +52,13 @@ var _deployed_heroes_ref: Dictionary = {}
 var _deploy_btn: Button = null
 var _carousel_ref: EmpireCarousel = null
 
+# 当前未被流放的人才池（由 EmpireTest 在 attach 后注入）。
+# 用于：1）轮播过滤 2）拒绝流放最后一人时把按钮置灰。
+var _alive_pool: Array = ["A", "B", "C"]
+# EmpireTest 在 attach 后通过 goto_hero 设定的初始 hero_key，
+# 在 _apply_styles（延迟一帧）执行时用于最终定位，避免 deferred 时序覆盖。
+var _initial_hero: String = ""
+
 
 func _apply_styles() -> void:
 	_load_hero_data()
@@ -76,6 +83,11 @@ func _apply_styles() -> void:
 			child.add_theme_color_override("font_color",         Color.WHITE)
 			child.add_theme_color_override("font_hover_color",   Color.WHITE)
 			child.add_theme_color_override("font_pressed_color", Color.WHITE)
+	# 训练、升级、招募尚未实现，置灰禁用
+	for btn_name in ["TrainBtn", "UpgradeBtn", "RecruitBtn"]:
+		var btn := _right_vbox.get_node_or_null(btn_name) as Button
+		if btn:
+			btn.disabled = true
 
 	if diamond_pnl:
 		_build_diamond_panel(diamond_pnl)
@@ -96,6 +108,12 @@ func _apply_styles() -> void:
 	if carousel:
 		_carousel_ref = carousel
 		carousel.current_hero_changed.connect(_on_hero_changed)
+		# _apply_styles 由 call_deferred 延后，_alive_pool 在此之前可能已由
+		# EmpireTest.set_alive_pool 更新；此处补传确保 carousel 侧也同步过滤。
+		carousel.set_alive_pool(_alive_pool)
+		# 恢复 EmpireTest 指定的初始位置（首次打开 = 第一个 alive，之后 = 上次退出位置）。
+		if not _initial_hero.is_empty():
+			carousel.goto_hero(_initial_hero)
 		_refresh_attr(carousel.current_hero_key())
 
 	_deploy_btn = _right_vbox.get_node_or_null("DeployBtn") as Button
@@ -110,6 +128,22 @@ func set_deployed_state(deployed: Dictionary) -> void:
 	_refresh_deploy_btn()
 
 
+# 由 EmpireTest 在 attach 后调用，注入未被流放的人才池：
+#   - 透传给 carousel 进行轮播过滤
+#   - 当 alive 池仅剩 1 人时，已部署者的"流放"按钮置灰
+# 注：SecondaryPanel._apply_styles 由 call_deferred 延后一帧执行；
+# 此函数可能在 _apply_styles 之前调用，故用节点直访兜底（不依赖 _carousel_ref）。
+func set_alive_pool(arr: Array) -> void:
+	_alive_pool = arr.duplicate()
+	var car: EmpireCarousel = _carousel_ref
+	if car == null:
+		car = get_node_or_null("HeroPnl/Carousel") as EmpireCarousel
+	if car:
+		car.set_alive_pool(_alive_pool)
+		_refresh_attr(car.current_hero_key())
+	_refresh_deploy_btn()
+
+
 func _refresh_deploy_btn() -> void:
 	if _deploy_btn == null:
 		return
@@ -118,6 +152,22 @@ func _refresh_deploy_btn() -> void:
 		hero_key = _carousel_ref.current_hero_key()
 	var is_deployed: bool = _deployed_heroes_ref.has(hero_key)
 	_deploy_btn.text = "流\n放" if is_deployed else "部\n署"
+	# 拒绝流放最后一人：alive 池仅剩 1 人时禁用流放按钮
+	_deploy_btn.disabled = is_deployed and _alive_pool.size() <= 1
+
+
+# 直接跳转到指定 hero_key（外部调用，须在 set_alive_pool 之后调用）。
+# 用节点直访兜底，兼容 _apply_styles 延迟场景。
+# 同时存入 _initial_hero，供 _apply_styles 延迟完成后再次定位。
+func goto_hero(hero_key: String) -> void:
+	_initial_hero = hero_key
+	var car: EmpireCarousel = _carousel_ref
+	if car == null:
+		car = get_node_or_null("HeroPnl/Carousel") as EmpireCarousel
+	if car:
+		car.goto_hero(hero_key)
+		_refresh_attr(hero_key)
+	_refresh_deploy_btn()
 
 
 func _on_deploy_btn_pressed() -> void:

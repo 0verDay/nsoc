@@ -1457,7 +1457,9 @@ PVP 锁步下每端各跑一套 `Game.decks[pid]` / 各盘 `slot.graveyard`，�
 |---|---|---|
 | `factions[]` | 数组 | `{id, name, color(#rrggbb)}`；id=0 固定为"中立"（灰色，不可删） |
 | `shapes[]` | 数组 | 地点节点，每项含 `id, kind, x, y, name, gold, food, faction, category?` |
-| `connections[]` | 数组 | `{from, to}`（地点 id），决定相邻关系 |
+| `connections[]` | 数组 | `{from, to}`（地点 id），决定相邻关系；同时用于行棋合法性校验 |
+
+加载时在 `empire_test.gd` 内建立两张索引：`_connections_data: Array`（原始数组）、`_id_to_node: Dictionary`（`node_id → _MapShapeNode`），供相邻判断与命中测试使用。
 
 **地点类型**（`kind`）：`triangle`（关隘）/ `circle`（村镇）/ `square`（城市，`category` 子类型：1=大都市、2=商业、3=农业、4=军事）。
 
@@ -1466,6 +1468,7 @@ PVP 锁步下每端各跑一套 `Game.decks[pid]` / 各盘 `slot.graveyard`，�
 - `pivot_offset = size * 0.5`，缩放以节点中心为枢轴
 - `_LineLayer extends Node2D`：按 `connections[]` 绘制连接线（蓝色 `#7ec8e3`，2px）
 - 支持鼠标/触屏平移、滚轮/双指捏合缩放；`_clamp_pan` 防止地图出界
+- **行棋期间平移禁用**：`_drag_active=true` 时 `_input` 优先处理拖拽，跳过平移逻辑
 
 **玩家势力**：`PLAYER_FACTION_ID = 1`（Ap）；`_faction_color / _faction_name` 按 `factions[]` 查表。
 
@@ -1473,7 +1476,11 @@ PVP 锁步下每端各跑一套 `Game.decks[pid]` / 各盘 `slot.graveyard`，�
 
 ### 15.2 资源与回合系统
 
-InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮草（己方地点 `food` 快照合计）。"结束回合"按钮仅结算资源，无 AI/敌方行动。
+InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮草（己方地点 `food` 快照合计）。
+
+"**结束回合**"按钮执行：
+1. `_commit_pending_moves()` — 提交当回合所有待生效移动（虚影变实，英雄新位置写入 `_deployed_heroes`）
+2. 资源结算
 
 ---
 
@@ -1482,14 +1489,25 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 将领数据（`data/empire_hero.json`）：`display_name / skill_text / command / force / intelligence / charisma / level / current_exp / next_level_exp / background`。目前三个占位将领（A/B/C）。
 
 **`EmpireCarousel`**（`scripts/ui/empire_carousel.gd`）：竖向无限滑动轮播，读独立的 `empire_hero.json`，使用 `EmpireDeckStorage`，发信号 `current_hero_changed(hero_key)`。
+- **动态过滤**：持有 `_hero_names: Array`（默认 `["A","B","C"]`），`set_alive_pool(arr)` 注入后只轮播未流放将领；`goto_hero(hero_key)` 直接定位
+- **统帅显示**：卡页英雄名右侧（左 62% / 右 38% 分割）展示"统帅 N"标签（棕橙色）
+- `set_alive_pool` / `goto_hero` 均支持在 `_apply_styles` 延迟前被调用（节点直访兜底）
 
-**`EmpireTalentPanel`**（`scripts/ui/empire_talent_panel.gd`）：左侧轮播 + 中间 `_DiamondChart`（菱形四维雷达图）+ 属性列表 + 等级/经验 + 背景文案；右侧"**部署**"/"**流放**"按钮（文案按部署状态切换）。发信号 `deploy_requested(hero_key)` / `recall_requested(hero_key)`；`set_deployed_state(dict)` 由 EmpireTest attach 后注入。
+**`EmpireTalentPanel`**（`scripts/ui/empire_talent_panel.gd`）：左侧轮播 + 中间 `_DiamondChart`（菱形四维雷达图）+ 属性列表 + 等级/经验 + 背景文案；右侧"**部署**"/"**流放**"按钮（文案按部署状态切换）。发信号 `deploy_requested(hero_key)` / `recall_requested(hero_key)`；`set_deployed_state(dict)` / `set_alive_pool(arr)` / `goto_hero(hero_key)` 由 EmpireTest attach 后注入。
+
+**训练/升级/招募按钮**：`_apply_styles` 末尾一律 `disabled=true`（功能待实现）；部署/流放按钮不受影响。
+
+**面板初始位置**：`_talent_last_hero` 存最后查看的 hero_key（运行时内存）。首次打开 → 定位第一个未流放将领；再次打开 → 恢复上次位置（若上次对象已流放则退化到第一个未流放者）。关闭时由 `_trigger_reverse` 开头记录当前 hero_key。
 
 ---
 
 ### 15.4 军队面板（EmpireArmyPanel）
 
-继承 `SecondaryPanel`；卡池 `data/empire_cards.json`（目前仅"填线宝宝"，总量 10）；`_calc_global_taken()` 全局共享牌池；持久化 `EmpireDeckStorage`（`user://empire_decks.json`）。
+继承 `SecondaryPanel`；卡池 `data/empire_cards.json`；`_calc_global_taken()` 全局共享牌池；持久化 `EmpireDeckStorage`（`user://empire_decks.json`）。
+
+**empire_cards.json 格式**：每个条目除基础字段外可含 `"quantity": N`，`_init_card_pool()` 优先读此字段（原始 JSON 单独解析为 qty_map），缺省退回 `TOTAL_PER_CARD=10`。当前牌池：填线宝宝（×20）+ 放箭（×10）。
+
+**统帅上限**：`_current_command()` 读 `_hero_db[hero_key]["command"]`；`_add_to_muster()` 在总张数 ≥ 统帅值时拒绝点兵；`_refresh_muster_list()` 将点兵标题更新为"**点兵 N/M**"（当前/上限）。
 
 ---
 
@@ -1506,47 +1524,101 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 **`_HeroIconBtn extends Control`**（内嵌类，定义于 `empire_test.gd` 末尾）：
 - 36×36px；颜色：normal 白 / hover 蓝白 / selected `#ffe066` / pressed 橙
 - 点击沿父链查找 `EmpireTest._on_hero_icon_clicked(hero_key)`
-- press+release 均 `set_input_as_handled()`，防止事件冒泡到 `_MapShapeNode` 触发地点逻辑
+- press+release 均 `set_input_as_handled()`，防止事件冒泡到 `_MapShapeNode`
+- **拖拽支持**：`_gui_input` 记录按下坐标；`_input`（全局）检测移动距离超 `DRAG_START_THRESHOLD=8px` 后沿父链调 `EmpireTest._on_hero_drag_start`
+- **虚影态**（`_is_ghost=true`）：半透明（`modulate.a=0.45`），`_is_ghost` 为 true 时禁止拖拽；拖拽发起后清除 pressing 状态，release 时不 fire click
+
+**`_MapShapeNode.set_deployed_icons(hero_keys, textures, ghost_flags=[])`**：重建头像横排；`ghost_flags[i]=true` 时对应图标调 `set_ghost(true)`（半透明，不可拖）。
+
+**`_MapShapeNode.set_hero_icon_ghost(hero_key, bool)`**：临时虚化/实化某将领头像（拖拽过程中使用）。
 
 **`_MapShapeNode.set_hero_icon_selected(hero_key, bool)`**：duck-typing 遍历 `_deploy_icon_row` 子节点，调 `set_selected_state`。
 
-**选中互斥**：点地点/点头像/进二级面板，均先清除对方选中态（`set_hero_icon_selected(false)` 或 `set_selected(false)`）再建立新选中，保证地图上同时只有一个选中框。
+**`_refresh_deploy_icons_for(node)`**：
+- 实体图标：`_deployed_heroes[k] == node` 且 `k` 不在 `_pending_moves` 中
+- 虚影图标：`_pending_moves[k] == node`
+- 两组合并排序后调用 `set_deployed_icons(keys, textures, ghost_flags)`
 
-点"**流放**" → `recall_requested` → 撤销部署、清头像（面板不退出）。
-
----
-
-### 15.7 地点详情面板（EmpireLocationPanel）
-
-`scripts/ui/empire_location_panel.gd`，左侧滑入（360px），与人才面板互斥：顶栏地点名+势力、Badge 类型、资源面板、驻军面板（暂空）。**特化按钮**：己方地点（`faction_id==1`）可用，否则隐藏。`_add_res_row` 为 `static` 工具方法，供 EmpireHeroDetailPanel 复用。
+**选中互斥**：点地点/点头像/进二级面板，均先清除对方选中态再建立新选中，保证地图上同时只有一个选中框。
 
 ---
 
-### 15.8 人才详情面板（EmpireHeroDetailPanel）
+### 15.7 流放系统
 
-`scripts/ui/empire_hero_detail_panel.gd`，左侧滑入：顶栏人才名+所在地点势力、`Lv.X` Badge（紫 `#7b68ee`）、四维属性面板（统帅橙/武力红/智力蓝/魅力紫）、配属部队面板（暂空）、**训练按钮**（置灰）。接口同 `EmpireLocationPanel`：`show_for / refresh_for / hide_panel`。
+点"**流放**"（`EmpireTalentPanel`）→ 触发 `recall_requested(hero_key)`：
+
+1. **守门**：当前 alive 池 ≤1 时拒绝（不可流放最后一人；按钮在 `_refresh_deploy_btn` 中相应 `disabled=true`）
+2. 从地图抹去该将领（`_deployed_heroes.erase`，图标重绘）
+3. 加入 `_exiled_heroes` 运行时流放名单（重启后复现）
+4. 清空 `EmpireDeckStorage` 中该将领卡组（`save_deck(key, {})` = 下属单位放回公共牌池）
+5. 若被流放者是当前 `selected_hero`，切到首个未流放将领
+6. 触发 `_trigger_reverse()` 关闭二级人才面板，退回大地图
+
+**轮播过滤时序**（`_apply_styles` 由 `call_deferred` 延迟一帧问题）：
+- `EmpireTest.set_alive_pool` 使用节点直访 (`get_node_or_null`) 兜底，同步注入 carousel
+- `_apply_styles` 中 carousel setup 末尾再次调用 `set_alive_pool(_alive_pool)` 补传
+- `EmpireArmyPanel` 另设 `_alive_pool_pending`，`_install_deck_persistence` 赋值 carousel 后立即补传
 
 ---
 
-### 15.9 地图编辑器工具
+### 15.8 行棋（将领移动）系统
+
+每回合，已部署将领可被拖拽至相邻（1跳）地点：
+
+**拖拽流程**：
+1. 鼠标按下图标，移动 > 8px → `_on_hero_drag_start(hero_key, source_node, pos)`
+2. 起点图标变虚（`set_hero_icon_ghost`）；相邻地点呼吸高亮；创建跟随鼠标的虚影图标（`_drag_ghost`，`top_level=true`，`z_index=1000`，`modulate.a=0.7`）
+3. 鼠标释放 → `_on_hero_drag_end(global_pos)`：
+   - 命中测试（`get_global_transform().affine_inverse() * pos`，兼容地图缩放）
+   - 若落在相邻节点：写入 `_pending_moves[hero_key] = target_node`；起点图标消失，目标地点显示虚影图标（`modulate.a=0.45`）；该将领本回合不可再拖
+   - 否则：取消，起点图标恢复
+
+**提交**：`_on_end_turn` 开头调 `_commit_pending_moves()`：`_deployed_heroes` 更新至目标节点，清空 `_pending_moves`，刷新涉及节点图标（虚影变实）。
+
+**全局输入拦截**（`_input` 内）：`_drag_active` 期间 LMB press/release/motion 均优先处理并 `return`，防止同时触发地图平移；`_on_hero_drag_start` 开头重置 `_pan_active = false` 消除过渡帧微跳。
+
+**驻军计算**（用于地点详情面板）：`_compute_garrison_for(node)` 返回在该节点且不在 `_pending_moves` 中的将领列表（虚影中的将领，无论起点终点，均不计入驻军）。
+
+---
+
+### 15.9 地点详情面板（EmpireLocationPanel）
+
+`scripts/ui/empire_location_panel.gd`，左侧滑入（360px），与人才面板互斥：顶栏地点名+势力、Badge 类型、资源面板、**驻军面板**。**特化按钮**：己方地点（`faction_id==1`）可用，否则隐藏。`_add_res_row` 为 `static` 工具方法，供 EmpireHeroDetailPanel 复用。
+
+**`show_for(node, heroes: Array=[])`**：`heroes` 由 EmpireTest 通过 `_compute_garrison_for` 计算传入，每项 `{name: String, level: int}`。
+
+**驻军列表**（ScrollContainer + VBox）：每行 = display_name（左，展开填充）+ `Lv.N` 紫色圆角 Badge（右，12pt 白字）；无驻军时显示"（无）"。仅显示实体将领（已剔除所有虚影）。
+
+---
+
+### 15.10 人才详情面板（EmpireHeroDetailPanel）
+
+`scripts/ui/empire_hero_detail_panel.gd`，左侧滑入：顶栏人才名+所在地点势力、`Lv.X` Badge（紫 `#7b68ee`）、四维属性面板（统帅橙/武力红/智力蓝/魅力紫）、**配属部队面板**、**训练按钮**（置灰）。接口同 `EmpireLocationPanel`：`show_for / refresh_for / hide_panel`。
+
+**配属部队列表**（ScrollContainer + VBox）：`_refresh_troops(hero_key)` 读 `EmpireDeckStorage.load_deck(hero_key)` 按 `order` 渲染"卡名 x 数量"行（16pt，灰色）；空卡组显示"（无）"。每次 `_refresh_content` 末尾刷新（面板开着切换将领时也同步更新）。
+
+---
+
+### 15.11 地图编辑器工具
 
 `tools/empire_map_tool/empire_map_editor.py`，独立 Python/Tkinter 工具，可视化编辑地点节点与连接线并导出 JSON。详见 `tools/empire_map_tool/README.md`。
 
 ---
 
-### 15.10 当前完成度
+### 15.12 当前完成度
 
 | 模块 | 状态 |
 |---|---|
 | 地图渲染、平移、缩放 | ✅ |
 | 势力 / 资源 / 回合结算 | ⚠️ 基础（无 AI） |
-| 将领轮播 / 属性 | ✅ |
-| 卡组配置（军队面板） | ✅ |
+| 将领轮播 / 属性 / 统帅显示 | ✅ |
+| 卡组配置（军队面板）/ 统帅上限 | ✅ |
 | 部署 / 流放 / 图标交互 | ✅ |
-| 地点详情面板 / 特化按钮 | ✅ |
-| 人才详情面板 / 训练按钮 | ✅ |
+| 将领行棋（拖拽移动 + 回合提交） | ✅ |
+| 地点详情面板 / 驻军列表 | ✅ |
+| 人才详情面板 / 配属部队列表 | ✅ |
 | 方略面板 | ❌ 占位 |
 | AI / 敌方回合 | ❌ 未实现 |
 | 出兵 / 战斗触发 | ❌ 未实现 |
 | 地点争夺 | ❌ 未实现 |
-| 升级 / 经验消耗 | ❌ 占位 |
+| 升级 / 训练 / 招募 | ❌ 占位按钮置灰 |
