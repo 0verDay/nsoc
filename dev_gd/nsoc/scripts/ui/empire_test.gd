@@ -82,6 +82,25 @@ var _connections_data: Array = []
 var _id_to_node: Dictionary = {}
 var _pending_moves: Dictionary = {}
 
+# 出征系统（势力不同的拖入 = 出征意向；支持多线出征）
+# _pending_campaigns：target_id → Array[hero_key]，按拖入顺序。第一项 = 主控将领。
+# _pending_campaign_sources：hero_key → 该 hero 出发前所在的 source node id，
+#   战斗失败后用来把 hero 还原到原位。
+# _battle_select_mode：结束回合按下后置 true，等待玩家点击战斗方框。
+#   多场出征：每打完一场目标移出 _pending_campaigns；若仍非空则保持模式。
+# _faction_overrides：node_id → faction_id。占领后写入。
+# 容量上限：仅约束 hostile target（敌方/中立目标）。
+var _pending_campaigns: Dictionary = {}
+var _pending_campaign_sources: Dictionary = {}
+var _battle_select_mode: bool = false
+var _faction_overrides: Dictionary = {}
+
+const CAMPAIGN_CAPACITY_BY_KIND: Dictionary = {
+	"triangle": 1,  # 关隘
+	"circle":   2,  # 村镇
+	"square":   3,  # 城市
+}
+
 # 当前拖拽状态
 var _drag_active: bool = false
 var _drag_hero_key: String = ""
@@ -556,17 +575,31 @@ func _commit_deploy(target_node) -> void:
 func _refresh_deploy_icons_for(node) -> void:
 	if node == null or not is_instance_valid(node):
 		return
-	# 实体：在此节点 deployed 且没有 pending move 的英雄
-	# 虚影：pending_moves 目标是此节点的英雄
+	# 实体：在此节点 deployed 且没有 pending move/campaign 的英雄
+	# 虚影：pending_moves 目标 / pending_campaigns 任一目标 是此节点的英雄
 	var key_flag: Dictionary = {}  # hero_key → is_ghost
+	# 收集"已被分派出征/行棋"的 hero set，用于过滤实体
+	var dispatched: Dictionary = {}
+	for k in _pending_moves.keys():
+		dispatched[String(k)] = true
+	for tid in _pending_campaigns.keys():
+		for k in _pending_campaigns[tid]:
+			dispatched[String(k)] = true
+
 	for k in _deployed_heroes.keys():
 		var ks: String = String(k)
-		if _deployed_heroes[k] == node and not _pending_moves.has(ks):
+		if _deployed_heroes[k] == node and not dispatched.has(ks):
 			key_flag[ks] = false
 	for k in _pending_moves.keys():
 		var ks: String = String(k)
 		if _pending_moves[k] == node:
 			key_flag[ks] = true
+	# 出征虚影：所有指向本节点的 hero 都显示为 ghost
+	var node_id: int = int(node._id)
+	if _pending_campaigns.has(node_id):
+		for k in _pending_campaigns[node_id]:
+			key_flag[String(k)] = true
+
 	var keys: Array = key_flag.keys()
 	keys.sort()
 	var textures: Array = []
@@ -679,10 +712,40 @@ func _on_hero_drag_end(global_pos: Vector2) -> void:
 	if not _drag_active:
 		return
 	var target = _find_node_at(global_pos)
-	var is_valid: bool = target != null and _drag_adjacent.has(target)
+	var is_adjacent: bool = target != null and _drag_adjacent.has(target)
+	var is_valid: bool = false
+	var is_campaign_drop: bool = false
+
+	if is_adjacent:
+		var tgt_faction: int = int(target._faction_id)
+		if tgt_faction == PLAYER_FACTION_ID:
+			# 同势力：普通行棋
+			is_valid = true
+		else:
+			# 势力不同（含中立）：出征
+			# 容量校验：按 target 的 kind 决定上限；hero 已在该目标列表中视作"重复"，允许（先移除再加，等同覆盖）
+			var tid: int = int(target._id)
+			var cap: int = int(CAMPAIGN_CAPACITY_BY_KIND.get(String(target._kind), 1))
+			var existing: Array = _pending_campaigns.get(tid, [])
+			var already_in_target: bool = existing.has(_drag_hero_key)
+			if already_in_target or existing.size() < cap:
+				is_valid = true
+				is_campaign_drop = true
 
 	if is_valid:
-		_pending_moves[_drag_hero_key] = target
+		# 同 hero 的旧 pending 状态全部清理（普通行棋 + 任意出征列表）
+		_remove_hero_from_all_pending(_drag_hero_key)
+		if is_campaign_drop:
+			var tid: int = int(target._id)
+			var arr: Array = _pending_campaigns.get(tid, [])
+			arr.append(_drag_hero_key)
+			_pending_campaigns[tid] = arr
+			# 记录该 hero 出发前的源节点（_deployed_heroes 仍指向出发位置）
+			var src_node = _deployed_heroes.get(_drag_hero_key, _drag_source_node)
+			if src_node and is_instance_valid(src_node) and "_id" in src_node:
+				_pending_campaign_sources[_drag_hero_key] = int(src_node._id)
+		else:
+			_pending_moves[_drag_hero_key] = target
 
 	# 起点头像若未被刷新移除则恢复实（失败时）；成功时下面 refresh 会重建为"无"
 	if _drag_source_node and is_instance_valid(_drag_source_node):
@@ -700,18 +763,41 @@ func _on_hero_drag_end(global_pos: Vector2) -> void:
 		_drag_ghost.queue_free()
 	_drag_ghost = null
 
-	# 刷新涉及节点：起点（若 pending 写入则该节点会少一个图标）+ 目标（多一个虚影）
+	# 刷新涉及节点：起点 + 目标 + （旧 pending 的目标也已清理，需一并刷新）
 	var refresh_set: Dictionary = {}
 	if _drag_source_node and is_instance_valid(_drag_source_node):
 		refresh_set[_drag_source_node] = true
 	if is_valid and not refresh_set.has(target):
 		refresh_set[target] = true
+	# 全量保险刷新（量级小，可忽略开销）
+	for n in _shape_nodes:
+		if is_instance_valid(n) and not refresh_set.has(n):
+			refresh_set[n] = true
 	for n in refresh_set.keys():
 		_refresh_deploy_icons_for(n)
 
 	_drag_active = false
 	_drag_hero_key = ""
 	_drag_source_node = null
+
+
+# 把 hero 从所有 pending 状态中清除：普通行棋表 + 所有出征列表 + 出征源记录。
+# 用于重新拖拽前的"擦除旧约定"。
+func _remove_hero_from_all_pending(hero_key: String) -> void:
+	_pending_moves.erase(hero_key)
+	var to_remove_keys: Array = []
+	for tid in _pending_campaigns.keys():
+		var arr: Array = _pending_campaigns[tid]
+		var idx: int = arr.find(hero_key)
+		if idx >= 0:
+			arr.remove_at(idx)
+		if arr.is_empty():
+			to_remove_keys.append(tid)
+		else:
+			_pending_campaigns[tid] = arr
+	for tid in to_remove_keys:
+		_pending_campaigns.erase(tid)
+	_pending_campaign_sources.erase(hero_key)
 
 
 # 回合结束统一提交所有待生效移动：虚影变实，hero 解除本回合的移动锁定。
@@ -888,6 +974,14 @@ func _build_side_panel() -> void:
 
 
 func _on_shape_clicked(node) -> void:
+	# 战斗选择模式：仅当点击的是某个 pending_campaigns 目标时进入战斗
+	if _battle_select_mode:
+		if node != null and "_id" in node:
+			var nid: int = int(node._id)
+			if _pending_campaigns.has(nid):
+				_launch_empire_battle(nid)
+		return
+
 	# 部署模式：己方地点 = 部署成功；其他地点 = 取消部署模式
 	if _deploy_mode:
 		if node != null and "_faction_id" in node and int(node._faction_id) == PLAYER_FACTION_ID:
@@ -1014,6 +1108,9 @@ func _build_map(data: Dictionary) -> void:
 	_map_world_size   = content_max - content_min
 	_line_layer.set_bounds(content_min, content_max)
 
+	# 帝国战斗回流：恢复战斗前快照、应用结果、刷新 UI
+	_restore_empire_state_if_any()
+
 
 # 根据势力 id 查颜色，找不到返回 GRAY
 func _faction_color(faction_id: int) -> Color:
@@ -1049,10 +1146,189 @@ func _calc_player_gold_income(shapes_data: Array) -> int:
 
 
 func _on_end_turn(shapes_data: Array) -> void:
+	if _battle_select_mode:
+		return
 	_commit_pending_moves()
-	_player_gold += _calc_player_gold_income(shapes_data)
-	_player_food = _calc_total_food(shapes_data)
+	_player_gold += _calc_player_gold_income_runtime()
+	_player_food = _calc_total_food_runtime()
 	_refresh_info_panel()
+	# 多线出征：置灰按钮，所有出征目标节点显示外框呼吸方框
+	if not _pending_campaigns.is_empty():
+		_enter_battle_select_mode()
+
+
+# 进入/恢复战斗选择模式：禁用结束回合按钮，所有 _pending_campaigns 目标显示外框呼吸。
+# 单场战斗结束后若仍有剩余目标，也由本方法重新点亮剩余目标。
+func _enter_battle_select_mode() -> void:
+	_battle_select_mode = true
+	var btn: Button = get_node_or_null("EndTurnBtn")
+	if btn:
+		btn.disabled = true
+	for tid in _pending_campaigns.keys():
+		var n = _id_to_node.get(int(tid), null)
+		if n and is_instance_valid(n) and n.has_method("set_campaign_frame"):
+			n.set_campaign_frame(true)
+
+
+# 退出战斗选择模式（所有出征已结算）。重置按钮可点击 + 关闭所有方框。
+func _exit_battle_select_mode() -> void:
+	_battle_select_mode = false
+	for n in _shape_nodes:
+		if is_instance_valid(n) and n.has_method("set_campaign_frame"):
+			n.set_campaign_frame(false)
+	var btn: Button = get_node_or_null("EndTurnBtn")
+	if btn:
+		btn.disabled = false
+
+
+# 计算玩家势力当前所有持有地点的资源（按运行时 _shape_nodes._faction_id，含战斗后占领）
+func _calc_total_food_runtime() -> int:
+	var total: int = 0
+	for n in _shape_nodes:
+		if is_instance_valid(n) and "_faction_id" in n and int(n._faction_id) == PLAYER_FACTION_ID:
+			total += int(n._food)
+	return total
+
+
+func _calc_player_gold_income_runtime() -> int:
+	var total: int = 0
+	for n in _shape_nodes:
+		if is_instance_valid(n) and "_faction_id" in n and int(n._faction_id) == PLAYER_FACTION_ID:
+			total += int(n._gold)
+	return total
+
+
+# ── 帝国战斗：进入 / 状态持久化 / 结果回流 ─────────────────────────────────────
+
+# 玩家点击某个出征目标方框 → 保存状态、写入 pending_empire_battle、切到 Main.tscn。
+# target_id：本场战斗对应的目标地点 id。攻方阵容来自 _pending_campaigns[target_id]。
+func _launch_empire_battle(target_id: int) -> void:
+	var attackers: Array = _pending_campaigns.get(target_id, [])
+	if attackers.is_empty():
+		return
+	var attacker_payload: Array = []
+	for hk in attackers:
+		var hd: Dictionary = _empire_hero_db.get(String(hk), {})
+		attacker_payload.append({
+			"hero_key":     String(hk),
+			"hero_force":   int(hd.get("force", 1)),
+			"hero_display": String(hd.get("display_name", hk)),
+		})
+
+	_save_empire_state(target_id)
+	Game.pending_empire_battle = {
+		"target_id": target_id,
+		"attackers": attacker_payload,
+	}
+	Game.empire_battle_result = ""
+	# 延迟切场景：当前帧 _gui_input 链路尚未结束，避免 viewport null 崩溃。
+	get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")
+
+
+# 保存当前地图状态到 Game.empire_state。current_battle_target_id 标记本次出场的目标。
+func _save_empire_state(current_battle_target_id: int) -> void:
+	var deployed: Dictionary = {}
+	for k in _deployed_heroes.keys():
+		var n = _deployed_heroes[k]
+		if is_instance_valid(n) and "_id" in n:
+			deployed[String(k)] = int(n._id)
+	var faction_snap: Dictionary = {}
+	for n in _shape_nodes:
+		if is_instance_valid(n) and "_id" in n and "_faction_id" in n:
+			faction_snap[int(n._id)] = int(n._faction_id)
+	# pending_campaigns 序列化为 {String(target_id): Array[hero_key]}（JSON-friendly）
+	var camps_dump: Dictionary = {}
+	for tid in _pending_campaigns.keys():
+		camps_dump[str(int(tid))] = (_pending_campaigns[tid] as Array).duplicate()
+	Game.empire_state = {
+		"deployed":                  deployed,
+		"exiled":                    _exiled_heroes.duplicate(),
+		"pending_campaigns":         camps_dump,
+		"pending_campaign_sources":  _pending_campaign_sources.duplicate(),
+		"faction_overrides":         faction_snap,
+		"gold":                      _player_gold,
+		"food":                      _player_food,
+		"current_battle_target_id":  int(current_battle_target_id),
+	}
+
+
+# 战斗回流后还原。在 _build_map 完成后调用。
+func _restore_empire_state_if_any() -> void:
+	if Game.empire_state.is_empty():
+		return
+	var snap: Dictionary = Game.empire_state
+	# 1) 节点势力按快照覆盖（含上一场战斗的占领结果）
+	var fmap: Dictionary = snap.get("faction_overrides", {})
+	for nid in fmap.keys():
+		var node = _id_to_node.get(int(nid), null)
+		if node and is_instance_valid(node):
+			var fid: int = int(fmap[nid])
+			node._faction_id = fid
+			node._fill = _faction_color(fid)
+			node._faction_name = _faction_name(fid)
+			node.queue_redraw()
+
+	# 2) 还原 _deployed_heroes
+	_deployed_heroes.clear()
+	var dep: Dictionary = snap.get("deployed", {})
+	for hk in dep.keys():
+		var n = _id_to_node.get(int(dep[hk]), null)
+		if n and is_instance_valid(n):
+			_deployed_heroes[String(hk)] = n
+
+	# 3) 还原 _pending_campaigns / sources / 资源 / exiled
+	_pending_campaigns.clear()
+	var camps_dump: Dictionary = snap.get("pending_campaigns", {})
+	for sid in camps_dump.keys():
+		_pending_campaigns[int(sid)] = (camps_dump[sid] as Array).duplicate()
+	_pending_campaign_sources = (snap.get("pending_campaign_sources", {}) as Dictionary).duplicate()
+	_exiled_heroes = (snap.get("exiled", {}) as Dictionary).duplicate()
+	_player_gold = int(snap.get("gold", 0))
+	_player_food = int(snap.get("food", 0))
+
+	# 4) 应用本场战斗结果（current_battle_target_id 指出哪个目标）
+	var current_tid: int = int(snap.get("current_battle_target_id", -1))
+	_apply_battle_result(current_tid)
+
+	# 5) 全图刷新图标 + 信息面板
+	for n in _shape_nodes:
+		_refresh_deploy_icons_for(n)
+	_refresh_info_panel()
+
+	# 6) 若仍有剩余出征 → 继续战斗选择模式；否则回归正常状态
+	if not _pending_campaigns.is_empty():
+		_enter_battle_select_mode()
+	else:
+		_exit_battle_select_mode()
+
+	# 一次性消费：清空快照与结果
+	Game.empire_state = {}
+	Game.empire_battle_result = ""
+
+
+# 应用单场战斗结果。胜利 → 占领该 target；该列表内全部 hero 进驻 target。
+# 失败 → 全部 hero 留在原 source。任一情况下：把该 target 从 _pending_campaigns 移除，
+# 并清掉该列表内 hero 的 source 记录。
+func _apply_battle_result(target_id: int) -> void:
+	if target_id < 0 or not _pending_campaigns.has(target_id):
+		return
+	var attackers: Array = _pending_campaigns[target_id]
+	var result: String = String(Game.empire_battle_result)
+	var target = _id_to_node.get(target_id, null)
+
+	if result == "win" and target != null and is_instance_valid(target):
+		target._faction_id = PLAYER_FACTION_ID
+		target._fill = _faction_color(PLAYER_FACTION_ID)
+		target._faction_name = _faction_name(PLAYER_FACTION_ID)
+		target.queue_redraw()
+		for hk in attackers:
+			_deployed_heroes[String(hk)] = target
+	# 失败：_deployed_heroes 已经是 source（出征前未变更），无需操作
+
+	# 清掉该场出征记录
+	_pending_campaigns.erase(target_id)
+	for hk in attackers:
+		_pending_campaign_sources.erase(String(hk))
 
 
 func _refresh_info_panel() -> void:
@@ -1328,6 +1604,45 @@ class _MapShapeNode extends Control:
 			_breathing_tween = null
 			scale = Vector2.ONE
 
+	# 出征战斗方框：节点外圈方形描边 + 呼吸缩放，用于结算阶段提示玩家点击进入战斗。
+	# 与 set_breathing 不同：set_breathing 缩放节点本身；本方法独立子节点，描边由子节点自身呼吸缩放，
+	# 不影响节点已有 hero icon 的相对位置。
+	const CAMPAIGN_FRAME_MARGIN: float = 14.0
+	const CAMPAIGN_FRAME_COLOR: Color = Color("#ff5555")
+	const CAMPAIGN_FRAME_WIDTH: float = 3.0
+	const CAMPAIGN_FRAME_BREATH_SCALE: Vector2 = Vector2(1.12, 1.12)
+	const CAMPAIGN_FRAME_PERIOD: float = 1.0
+	var _campaign_frame: Control = null
+	var _campaign_frame_tween: Tween = null
+
+	func set_campaign_frame(active: bool) -> void:
+		if active:
+			if _campaign_frame != null and is_instance_valid(_campaign_frame):
+				return
+			var frame := _CampaignFrame.new()
+			frame.line_color = CAMPAIGN_FRAME_COLOR
+			frame.line_width = CAMPAIGN_FRAME_WIDTH
+			frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var inset: float = -CAMPAIGN_FRAME_MARGIN
+			frame.size = size + Vector2(CAMPAIGN_FRAME_MARGIN * 2.0, CAMPAIGN_FRAME_MARGIN * 2.0)
+			frame.position = Vector2(inset, inset)
+			frame.pivot_offset = frame.size * 0.5
+			add_child(frame)
+			_campaign_frame = frame
+			_campaign_frame_tween = create_tween().set_loops()
+			_campaign_frame_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+			_campaign_frame_tween.tween_property(frame, "scale",
+				CAMPAIGN_FRAME_BREATH_SCALE, CAMPAIGN_FRAME_PERIOD * 0.5)
+			_campaign_frame_tween.tween_property(frame, "scale",
+				Vector2.ONE, CAMPAIGN_FRAME_PERIOD * 0.5)
+		else:
+			if _campaign_frame_tween != null and _campaign_frame_tween.is_valid():
+				_campaign_frame_tween.kill()
+			_campaign_frame_tween = null
+			if _campaign_frame != null and is_instance_valid(_campaign_frame):
+				_campaign_frame.queue_free()
+			_campaign_frame = null
+
 	# 重建节点上方的人才头像横排。
 	# hero_keys 和 textures 平行数组，长度相同。
 	# ghost_flags 可选，对应位置 true 时图标显示为虚影（不可拖、半透明）。
@@ -1421,6 +1736,15 @@ class _FactionDot extends Control:
 		var c := Vector2(size.x * 0.5, size.y * 0.5)
 		draw_circle(c, r, _color)
 		draw_arc(c, r, 0.0, TAU, 32, Color(1, 1, 1, 0.7), 1.5, true)
+
+
+# ── 出征战斗方框：节点外侧矩形描边，呼吸缩放靠 _MapShapeNode 的 tween ─────────
+class _CampaignFrame extends Control:
+	var line_color: Color = Color("#ff5555")
+	var line_width: float = 3.0
+
+	func _draw() -> void:
+		draw_rect(Rect2(Vector2.ZERO, size), line_color, false, line_width)
 
 
 # ── 人才头像按钮：可点击的图标，点击后沿父链回调 EmpireTest ──────────────────────

@@ -47,6 +47,8 @@ var _surrender_action: Callable
 # 可选：额外按钮列表。每项为 { "label": String, "action": Callable }，插入在"设置"与"退回菜单"之间。
 var _extra_buttons: Array = []
 var _button_align: String = "left"   # "left" | "right"
+# hide_exit = true 时不渲染"退回菜单"按钮（帝国出征战斗中使用）。
+var _hide_exit: bool = false
 
 func setup(parent: Control, config: Dictionary = {}) -> void:
 	_parent = parent
@@ -64,6 +66,7 @@ func setup(parent: Control, config: Dictionary = {}) -> void:
 		_extra_buttons = config["extra_buttons"]
 	if config.has("button_align"):
 		_button_align = String(config["button_align"])
+	_hide_exit = bool(config.get("hide_exit", false))
 	if bool(config.get("create_trigger_button", true)):
 		_build_button()
 	_build_overlay_and_panel()
@@ -176,7 +179,8 @@ func _build_overlay_and_panel() -> void:
 
 	var exit_btn := _make_button(_exit_label)
 	exit_btn.pressed.connect(_on_exit_pressed)
-	vbox.add_child(exit_btn)
+	if not _hide_exit:
+		vbox.add_child(exit_btn)
 
 	_build_config_vbox()
 

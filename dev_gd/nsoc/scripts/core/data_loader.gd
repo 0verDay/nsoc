@@ -17,6 +17,7 @@ const HERO_JSON := "res://data/hero.json"
 const CAMPAIGNS_JSON := "res://data/campaigns.json"
 const BATTLE_CARDS_JSON := "user://battle_cards.json"
 const LEVEL_JSON := "res://data/test_level.json"
+const EMPIRE_CARDS_JSON := "res://data/empire_cards.json"
 
 # 读取并 parse 一个 JSON 文件。失败返回 null（带 push_error）。
 static func _read_json(path: String):
@@ -487,3 +488,31 @@ static func _write_battle_cards(arr: Array) -> void:
 		return
 	f.store_string(JSON.stringify(arr, "\t"))
 	f.close()
+
+
+# 帝国模式版：从 EmpireDeckStorage 读取 hero_key 的卡组（cname → count），
+# 反查 empire_cards.json 原型库拼出本局牌堆，写入 user://battle_cards.json。
+# 与 generate_battle_cards(hero_key) 平行：那个走 DeckStorage + all_cards.json，
+# 本路径走 EmpireDeckStorage + empire_cards.json，与主菜单备战完全隔离。
+static func generate_battle_cards_from_empire(hero_key: String) -> void:
+	var deck_meta: Dictionary = EmpireDeckStorage.load_deck(hero_key)
+	var deck: Dictionary = deck_meta.get("cards", {})
+	var raw = _read_json(EMPIRE_CARDS_JSON)
+	var index: Dictionary = {}
+	if typeof(raw) == TYPE_ARRAY:
+		for p in raw:
+			if typeof(p) == TYPE_DICTIONARY and p.has("name"):
+				index[String(p["name"])] = p
+	var out: Array = []
+	for cname in deck.keys():
+		var cnt: int = int(deck[cname])
+		if cnt <= 0:
+			continue
+		var proto = index.get(String(cname), null)
+		if proto == null:
+			push_warning("generate_battle_cards_from_empire: card not in empire_cards: " + String(cname))
+			continue
+		var copy: Dictionary = proto.duplicate(true)
+		copy["count"] = cnt
+		out.append(copy)
+	_write_battle_cards(out)
