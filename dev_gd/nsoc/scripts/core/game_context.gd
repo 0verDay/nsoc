@@ -149,6 +149,26 @@ var pending_level_path: String = ""
 var pending_fade_in_from_black: bool = false
 var pending_fade_in_from_white: bool = false
 
+# ── 帝国模式：将领出征对战 ───────────────────────────────────────────────────
+# pending_empire_battle：进入战斗前由 EmpireTest 写入。bootstrap() 检测后走帝国分支：
+#   - 玩家英雄血量 = hero_force（武力值），名字 = hero_display
+#   - 敌方英雄 = 占位 10 血
+#   - 玩家牌组 = EmpireDeckStorage.load_deck(hero_key)，原型库 = empire_cards.json
+#   - 敌方 spawner：每回合在 enemy_main 后排（row=0）生一个填线宝宝
+#   字段：{hero_key, hero_force, hero_display}
+# bootstrap 末尾消费清零，避免脏读。
+var pending_empire_battle: Dictionary = {}
+# 战斗结束后由 main.gd 写入："win" / "lose"。EmpireTest._ready 消费后清空。
+var empire_battle_result: String = ""
+# EmpireTest 进入战斗前持久化的全图状态。结构：
+#   {"deployed": {hero_key: node_id},
+#    "exiled":   {hero_key: true},
+#    "pending_campaign": {hero_key, source_id, target_id},
+#    "faction_overrides": {node_id: faction_id},
+#    "gold": int, "food": int}
+# 重新加载 EmpireTest 时按此还原。空字典 = 未在战斗回流。
+var empire_state: Dictionary = {}
+
 # 由 main.gd 创建后注入。cell._can_drop_data 通过 Game.play 查询规则，避免对 main 的反向耦合。
 var play: PlayController
 
@@ -280,6 +300,11 @@ func _install_default_font() -> void:
 	push_warning("Game: 未找到中文字体，安卓端中文将显示为方块。请放置 NotoSansSC 到 res://assets/fonts/")
 
 func bootstrap() -> void:
+	# 帝国模式出征：在所有标准 PVE 装载之前走专属分支
+	if not pending_empire_battle.is_empty():
+		_bootstrap_empire(pending_empire_battle)
+		pending_empire_battle = {}
+		return
 	# 战斗启动：
 	#   1. 关卡：先解析 level（含战役章节专属字段 hero_key / initial_mana）
 	#   2. 玩家英雄 = hero.json[hero_key]，hero_key 来自章节 JSON；缺失回退 BATTLE_HERO_KEY
@@ -388,6 +413,153 @@ func bootstrap() -> void:
 	is_pvp = false
 	local_player_id = "player_main"
 	clear_extra_decks_and_manas()
+
+
+# ── 帝国模式战斗装配 ─────────────────────────────────────────────────────────
+# 由 EmpireTest 在写入 pending_empire_battle 后通过 bootstrap() 触发。
+#   ctx：{ "target_id": int, "attackers": Array[{hero_key, hero_force, hero_display}] }
+# 与标准 PVE bootstrap 的差异：
+#   - 多棋盘按 N=len(attackers) 启用：N=1 仅主对主；N=2 加 ally_left/enemy_left；N=3 全部 6 盘
+#   - 玩家主棋盘 = attackers[0]：hp = hero_force，可出牌；其余 aux 玩家盘 hp = 各自 force，
+#     仅作 spawner 占位（不参与玩家主动出牌；但盘体仍存在以便游戏推进）
+#   - 所有敌方棋盘 hero hp = 10，无技能
+#   - 所有启用棋盘各自底线（玩家盘 row=2，敌方盘 row=0）每回合生 1 张填线宝宝
+#   - 玩家牌组 = EmpireDeckStorage.load_deck(主将 hero_key)，原型库 = empire_cards.json
+#   - card_db 仍用 all_cards.json（spawner 召唤填线宝宝按 name 反查）
+#   - 跳过 Objectives / Events / 章节 hero/牌堆 路径
+const _EMPIRE_PLAYER_BOARD_IDS: Array = ["ally_left", "player_main", "ally_right"]
+const _EMPIRE_ENEMY_BOARD_IDS:  Array = ["enemy_left", "enemy_main", "enemy_right"]
+# slot 索引：上排 0/1/2 = enemy_left/main/right，下排 3/4/5 = ally_left/player_main/ally_right
+const _EMPIRE_PLAYER_SLOT_IDX:  Array = [3, 4, 5]
+const _EMPIRE_ENEMY_SLOT_IDX:   Array = [0, 1, 2]
+# N=1 主对主；N=2 主+左；N=3 全启用。这里给出每个 N 启用的棋盘下标（0=left, 1=main, 2=right）。
+const _EMPIRE_ENABLE_BY_N: Dictionary = {
+	1: [1],
+	2: [1, 0],
+	3: [1, 0, 2],
+}
+
+
+func _bootstrap_empire(ctx: Dictionary) -> void:
+	is_pvp = false
+	local_player_id = "player_main"
+	clear_extra_decks_and_manas()
+
+	var attackers: Array = ctx.get("attackers", [])
+	if attackers.is_empty():
+		push_error("_bootstrap_empire: empty attackers")
+		return
+	var n: int = clampi(attackers.size(), 1, 3)
+	var enable_indices: Array = _EMPIRE_ENABLE_BY_N.get(n, [1])
+
+	var main_attacker: Dictionary = attackers[0]
+	var main_hero_key: String = String(main_attacker.get("hero_key", ""))
+	var main_hero_display: String = String(main_attacker.get("hero_display", main_hero_key))
+
+	hero_specs.clear()
+
+	# 每个启用棋盘构造 hero 配置 + spawner（己方底线 row=2 / 敌方底线 row=0）
+	var boards: Dictionary = {}
+	for i in range(n):
+		var slot_idx_in_layout: int = int(enable_indices[i])
+		var att: Dictionary = attackers[i]
+		var p_id: String = _EMPIRE_PLAYER_BOARD_IDS[slot_idx_in_layout]
+		var e_id: String = _EMPIRE_ENEMY_BOARD_IDS[slot_idx_in_layout]
+		var p_hp: int = max(int(att.get("hero_force", 1)), 1)
+		var p_name: String = String(att.get("hero_display", att.get("hero_key", p_id)))
+		var p_role: String = "main_player" if slot_idx_in_layout == 1 else "ally"
+		var e_role: String = "main_enemy"  if slot_idx_in_layout == 1 else "enemy"
+		# 主棋盘 = 玩家可出牌的那块（slot_idx_in_layout==1，即 player_main）
+		boards[p_id] = {
+			"id": p_id, "faction": 0, "role": p_role,
+			"slot_index": _EMPIRE_PLAYER_SLOT_IDX[slot_idx_in_layout],
+			"enabled": true,
+			"hero": {},
+			"initial_units": [],
+			"spawners": [{
+				"name": "填线宝宝",
+				"faction": 0,
+				"positions": [Vector2(2, 1)],
+				"interval": 1,
+			}],
+			"spell_casters": [],
+		}
+		boards[e_id] = {
+			"id": e_id, "faction": 1, "role": e_role,
+			"slot_index": _EMPIRE_ENEMY_SLOT_IDX[slot_idx_in_layout],
+			"enabled": true,
+			"hero": {},
+			"initial_units": [],
+			"spawners": [{
+				"name": "填线宝宝",
+				"faction": 1,
+				"positions": [Vector2(0, 1)],
+				"interval": 1,
+			}],
+			"spell_casters": [],
+		}
+		# hero_specs 由下方统一注入（按 board id 索引）
+		hero_specs[p_id] = {
+			"hp": p_hp,
+			"name_short": p_name,
+			"name_full": p_name,
+			"abilities": [],
+		}
+		hero_specs[e_id] = {
+			"hp": 10,
+			"name_short": "占位敌将",
+			"name_full": "占位敌将",
+			"abilities": [],
+		}
+
+	# 合成 level_data
+	level_data = {
+		"boards": boards,
+		"initial_units": [],
+		"spawners": [],
+		"board_events": [],
+		"triggers": [],
+		"hero_key": "",
+		"initial_mana": 1,
+		"mana_max_cap": 0,
+		"objective": {},
+		"name": "帝国出征",
+	}
+
+	# card_db：原型库走 all_cards.json（spawner 与卡片回退同源）
+	var all_cards := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
+	card_db.clear()
+	for c in all_cards:
+		card_db[c.name] = c
+
+	# 玩家牌组：从 EmpireDeckStorage 拿主将的卡组配置，反查 empire_cards.json 原型，
+	# 写入 user://battle_cards.json。仅主将卡组生效（其余攻方仅 spawner）。
+	DataLoader.generate_battle_cards_from_empire(main_hero_key)
+	var deck_cards := DataLoader.load_cards(DataLoader.BATTLE_CARDS_JSON)
+	cards_loaded.emit(deck_cards)
+	level_loaded.emit(level_data)
+
+	deck.setup(deck_cards)
+	mana.setup(1, ManaSystem.MAX_MANA_CAP)
+	counters.clear()
+	if has_node("/root/HeroAbilities"):
+		HeroAbilities.reset_turn_usage()
+	if has_node("/root/Equipments"):
+		Equipments.clear_all()
+	if turn != null:
+		turn.is_running = false
+		turn.turn_number = 0
+
+	# 帝国模式不走章节胜利目标 / 脚本化事件
+	if has_node("/root/Objectives"):
+		Objectives.setup_for_battle({})
+	if has_node("/root/Events"):
+		Events.setup_for_battle(level_data)
+
+	pending_chapter_config = ""
+	pending_level_path = ""
+	_target_selector_node = null
+	_hand_picker_node     = null
 
 
 # ── PVP 战斗装配（联机入口）──────────────────────────────────────────

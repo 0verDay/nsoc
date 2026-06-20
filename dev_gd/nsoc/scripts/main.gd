@@ -93,6 +93,8 @@ func _ready() -> void:
 		"exit_action": Callable(self, "_on_exit_to_menu"),
 		# PVE 战役也提供投降（面板自动高度适配）
 		"surrender_action": Callable(self, "_on_surrender"),
+		# 帝国出征模式：隐藏"返回菜单"按钮（结束战斗由胜负面板统一处理）
+		"hide_exit": not Game.empire_state.is_empty(),
 	})
 	_create_settings_button()
 
@@ -289,6 +291,9 @@ func _on_enemy_hero_died() -> void:
 func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利" if is_enemy else "失败"
+	# 帝国出征模式：写回结果，主菜单退出路径会改走回 EmpireTest.tscn
+	if not Game.empire_state.is_empty():
+		Game.empire_battle_result = "win" if is_enemy else "lose"
 	# 威震华夏章节：曹仁死亡时先播结尾对话，再弹胜利面板
 	var chapter_name: String = String(Game.level_data.get("name", ""))
 	if is_enemy and chapter_name == "威震华夏":
@@ -359,6 +364,13 @@ func _on_exit_to_menu() -> void:
 
 	# 标记下一个场景接力播放 白→透明
 	Game.pending_fade_in_from_white = true
+	# 帝国出征模式：返回 EmpireTest 而非主菜单。
+	# 若结果未在 _on_hero_died 写入（如设置面板退出 / 投降），按失败处理。
+	if not Game.empire_state.is_empty():
+		if Game.empire_battle_result == "":
+			Game.empire_battle_result = "lose"
+		get_tree().change_scene_to_file("res://scenes/EmpireTest.tscn")
+		return
 	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
 
 func _show_game_over(victory: bool) -> void:

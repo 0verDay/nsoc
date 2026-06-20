@@ -122,9 +122,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 | `pvp_dead_players` | `Array` | 本局已阵亡玩家 uuid 列表 |
 
-**Game PVP 方法**：
-
-- `bootstrap_pvp(local_pid, all_player_ids, per_player_deck_cards, all_cards_db, rng_seed, per_player_heroes, match_type, teams_map, slot_layout)` — PVP 专用初始化；第三参数兼容旧 Array 格式；`match_type` = "1v1" / "1v3" / "3v3" / "3v3" / "3v3"；`teams_map` = `{ team_id: [pid,...] }`；`slot_layout` = `[{slot_id, owner_pid, team_id, slot_index},...]`；缺失 pid 的 hero_key 回退 `DeckStorage.get_selected_hero()`
+**Game PVP 方法**：；第三参数兼容旧 Array 格式；`match_type` = "1v1" / "1v3" / "3v3" / "3v3" / "3v3"；`teams_map` = `{ team_id: [pid,...] }`；`slot_layout` = `[{slot_id, owner_pid, team_id, slot_index},...]`；缺失 pid 的 hero_key 回退 `DeckStorage.get_selected_hero()`
 
 - `get_battle_hero_key() -> String` — 静态方法，返回 `DeckStorage.get_selected_hero()`，PVE bootstrap 通过此方法动态读取玩家携带英雄（而非硬编码 "A"）
 
@@ -187,6 +185,21 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 - `sorted_by_x()` — 按视觉 x 升序排序（TurnSystem 相位遍历用）
 
 **Game 辅助方法**：`main_player_slot()` / `player_hero()` / `enemy_main_hero()` / `enemy_main_slot()`
+
+**Game 帝国模式字段**（`scripts/core/game_context.gd`）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `pending_empire_battle` | `Dictionary` | EmpireTest 进入战斗前写入；bootstrap 检测到后走 `_bootstrap_empire` 分支，消费后清空。字段：`target_id(int)` + `attackers: Array[{hero_key, hero_force, hero_display}]` |
+| `empire_battle_result` | `String` | main.gd 战斗结束后写入 `"win"` 或 `"lose"`；EmpireTest._ready 消费后清空 |
+| `empire_state` | `Dictionary` | EmpireTest 进入战斗前快照全图状态，场景切换后在 EmpireTest._ready 中还原并应用结果。字段：`deployed / exiled / pending_campaigns / pending_campaign_sources / faction_overrides / gold / food / current_battle_target_id` |
+
+**`_bootstrap_empire(ctx)` 方法**：EmpireTest 触发，根据 `attackers` 数量 N（clamp 到 1–3）：
+- **6-slot 布局**：N=1 仅启用主对主（player_main + enemy_main，slot 4/1）；N=2 加左翼（ally_left + enemy_left，slot 3/0）；N=3 全部 6 盘启用
+- **Hero 规格**：主将（attackers[0]）hp=force，deck=EmpireDeckStorage；aux 玩家盘 hp=各自 force；所有敌方 hp=10 占位
+- **Spawner**：所有启用棋盘各自底线（玩家侧 row=2/col=1，敌方侧 row=0/col=1）每回合生 1 张填线宝宝，`interval=1`
+- **card_db** 仍用 all_cards.json；玩家牌组通过 `DataLoader.generate_battle_cards_from_empire` 写入 battle_cards.json
+- 跳过章节 Objectives/Events；消费 pending_chapter_config / pending_level_path
 
 **BoardSlotFactory**（`scripts/core/board_slot_factory.gd`）：集中封装"建 BoardModel + 实例化 cell + 挂入 grid + 配 spawners + 摆初始单位"步骤：
 
@@ -290,7 +303,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 - 附盘 hp 面板（`SideBoardUi.build`）水平拉伸至整盘宽度（`BOARD_HALF_W * 2 = 460`），与主敌方 `EnemyHpPnl` 拉伸后的布局保持一致。
 
-- `SettingsPanelController` — 选项面板，`z_index=200` 覆盖所有 UI；参数化 resume/exit/can_open
+- `SettingsPanelController` — 选项面板，`z_index=200` 覆盖所有 UI；参数化 resume/exit/can_open；新增 `hide_exit: bool`（传入 `config["hide_exit"]=true` 时不渲染"退回菜单"按钮，帝国出征战斗专用）
 
 - `ThemeFactory / EffectBadgeFactory` — 视觉工厂
 
@@ -342,7 +355,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
   - `triggers: Array` — 格式 `[{"id","when":{"type","n"/"threshold"/"name"/"faction"/"board",...},"once","cooldown","actions"}]`；`Events.setup_for_battle` 注册，条件类型见 §3.14
 
-- `data_loader.gd` 静态读 JSON → CardBase/CardUnit/CardSpell/**CardEquipment** + 关卡字典 + 英雄字典
+- `data_loader.gd` 静态读 JSON → CardBase/CardUnit/CardSpell/**CardEquipment** + 关卡字典 + 英雄字典；新增常量 `EMPIRE_CARDS_JSON = "res://data/empire_cards.json"` 与静态方法 `generate_battle_cards_from_empire(hero_key: String)`（从 `EmpireDeckStorage.load_deck(hero_key)` 取卡组配置，反查 `empire_cards.json` 原型库，写入 `user://battle_cards.json`；与 `generate_battle_cards` 并行但走独立存档路径）
 
 - 卡牌 JSON health 字段以**玩家视角** top/bottom/left/right 书写；`DataLoader._parse_card` 调 `Orientation.health_player_abs_to_side` 转为 side（front/back/left/right）后存入 `CardUnit.health`
 
@@ -1445,7 +1458,7 @@ PVP 锁步下每端各跑一套 `Game.decks[pid]` / 各盘 `slot.graveyard`，�
 
 ## 15. 帝国模式（Empire Mode）
 
-帝国模式是独立于战役/多人对战的**大战略层**原型。入口场景 `scenes/EmpireTest.tscn`，脚本 `scripts/ui/empire_test.gd`（`extends Control`）。当前版本完成可交互大地图骨架，战略玩法核心（出兵/战斗衔接/AI 回合/地点争夺）尚未实现。
+帝国模式是独立于战役/多人对战的**大战略层**原型。入口场景 `scenes/EmpireTest.tscn`，脚本 `scripts/ui/empire_test.gd`（`extends Control`）。当前版本已完成可交互大地图骨架与**出征战斗系统**（将领拖入敌方/中立相邻地点 → 回合结算 → 进入多棋盘 PVE 战斗 → 胜负占领/撤退）。
 
 ---
 
@@ -1480,7 +1493,9 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 
 "**结束回合**"按钮执行：
 1. `_commit_pending_moves()` — 提交当回合所有待生效移动（虚影变实，英雄新位置写入 `_deployed_heroes`）
-2. 资源结算
+2. 资源结算（`_calc_player_gold_income_runtime()` / `_calc_total_food_runtime()`，按运行时 `_shape_nodes._faction_id` 计算，支持战斗后占领动态更新）
+3. 若 `_pending_campaigns` 非空 → `_enter_battle_select_mode()`（见 §15.13）
+4. 全量回合结束后（所有出征结算完毕）按钮恢复可点
 
 ---
 
@@ -1535,8 +1550,8 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 **`_MapShapeNode.set_hero_icon_selected(hero_key, bool)`**：duck-typing 遍历 `_deploy_icon_row` 子节点，调 `set_selected_state`。
 
 **`_refresh_deploy_icons_for(node)`**：
-- 实体图标：`_deployed_heroes[k] == node` 且 `k` 不在 `_pending_moves` 中
-- 虚影图标：`_pending_moves[k] == node`
+- 实体图标：`_deployed_heroes[k] == node` 且 `k` 不在 `_pending_moves` 中，且不在任何 `_pending_campaigns` 列表中
+- 虚影图标：`_pending_moves[k] == node`，或 `_pending_campaigns[node._id]` 列表包含 k（多个出征 hero 全部显示为虚影）
 - 两组合并排序后调用 `set_deployed_icons(keys, textures, ghost_flags)`
 
 **选中互斥**：点地点/点头像/进二级面板，均先清除对方选中态再建立新选中，保证地图上同时只有一个选中框。
@@ -1570,10 +1585,12 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 2. 起点图标变虚（`set_hero_icon_ghost`）；相邻地点呼吸高亮；创建跟随鼠标的虚影图标（`_drag_ghost`，`top_level=true`，`z_index=1000`，`modulate.a=0.7`）
 3. 鼠标释放 → `_on_hero_drag_end(global_pos)`：
    - 命中测试（`get_global_transform().affine_inverse() * pos`，兼容地图缩放）
-   - 若落在相邻节点：写入 `_pending_moves[hero_key] = target_node`；起点图标消失，目标地点显示虚影图标（`modulate.a=0.45`）；该将领本回合不可再拖
+   - **同势力相邻节点**：写入 `_pending_moves[hero_key] = target_node`；起点图标消失，目标显示虚影；该将领本回合不可再拖
+   - **异势力/中立相邻节点（出征）**：容量校验（`CAMPAIGN_CAPACITY_BY_KIND`：square=3 / circle=2 / triangle=1）→ 未超容 → 写入 `_pending_campaigns[target_id]`（按追加顺序，第一项为主控将领）；记录 `_pending_campaign_sources[hero_key] = source_id`；起点显示虚影，目标显示攻方虚影（可多个）
    - 否则：取消，起点图标恢复
+4. `_remove_hero_from_all_pending(hero_key)` 在重新拖拽前自动清除旧约定（`_pending_moves` + 所有 `_pending_campaigns` 列表 + `_pending_campaign_sources`）
 
-**提交**：`_on_end_turn` 开头调 `_commit_pending_moves()`：`_deployed_heroes` 更新至目标节点，清空 `_pending_moves`，刷新涉及节点图标（虚影变实）。
+**提交**：`_on_end_turn` 开头调 `_commit_pending_moves()`（仅提交普通行棋，不提交出征）；出征结果由战斗胜负决定落点。
 
 **全局输入拦截**（`_input` 内）：`_drag_active` 期间 LMB press/release/motion 均优先处理并 `return`，防止同时触发地图平移；`_on_hero_drag_start` 开头重置 `_pan_active = false` 消除过渡帧微跳。
 
@@ -1605,20 +1622,91 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 
 ---
 
-### 15.12 当前完成度
+### 15.12 出征战斗系统
+
+#### 15.12.1 出征意向（`_pending_campaigns`）
+
+| 数据结构 | 说明 |
+|---|---|
+| `_pending_campaigns: Dictionary` | `target_node_id(int) → Array[hero_key]`；按拖入顺序，第一项为本场主控将领 |
+| `_pending_campaign_sources: Dictionary` | `hero_key → source_node_id`；记录出征前的驻扎位置，失败时将领保留在此 |
+| `CAMPAIGN_CAPACITY_BY_KIND` | `{triangle:1, circle:2, square:3}`；仅对敌方/中立目标生效，决定最多几名将领可同时出征该地点 |
+
+**容量校验**（`_on_hero_drag_end`）：`_pending_campaigns[target_id].size() < cap` 才允许追加；同一 hero 重拖视为幂等（容量=已占时允许）。
+
+**多线出征**：一回合内玩家可对任意数量的不同异势力地点分别设置出征意向（各自遵循容量上限）。
+
+#### 15.12.2 战斗选择模式（`_battle_select_mode`）
+
+结束回合按钮按下后：
+1. `_commit_pending_moves()` — 提交当回合所有普通行棋
+2. 资源结算
+3. 若 `_pending_campaigns` 非空 → `_enter_battle_select_mode()`：按钮置灰，所有出征目标节点显示**红色外框方块 + 呼吸缩放**（`_CampaignFrame`，±14px margin，`#ff5555`，1.12 缩放，1s 周期）
+
+`_on_shape_clicked` 在 `_battle_select_mode` 期间：仅点击 `_pending_campaigns.has(node_id)` 的节点触发 `_launch_empire_battle(target_id)`。
+
+`_exit_battle_select_mode()`：所有出征结算完毕后调用，关闭所有方框，恢复按钮可点。
+
+#### 15.12.3 战斗启动（`_launch_empire_battle(target_id)`）
+
+1. 从 `_pending_campaigns[target_id]` + `_empire_hero_db` 组装 `attacker_payload`
+2. 调 `_save_empire_state(target_id)` → 序列化全图状态写入 `Game.empire_state`
+3. 写 `Game.pending_empire_battle = {target_id, attackers}`
+4. `get_tree().call_deferred("change_scene_to_file", "res://scenes/Main.tscn")`（延迟切场景，避免 `_gui_input` 链路 viewport 提前销毁崩溃）
+
+#### 15.12.4 战斗内部结构（`_bootstrap_empire`）
+
+| N（出征人数） | 启用棋盘 |
+|---|---|
+| 1 | player_main(slot=4) + enemy_main(slot=1) |
+| 2 | + ally_left(slot=3) + enemy_left(slot=0) |
+| 3 | + ally_right(slot=5) + enemy_right(slot=2) |
+
+- **主将**（attackers[0]）：player_main，hp=force，卡组=EmpireDeckStorage，可出牌
+- **辅助将**（attackers[1..]）：对应 ally 盘，hp=各自 force，不参与出牌，仅 spawner 出单位
+- **敌方所有 hero**：hp=10 占位，无技能
+- **Spawner**：全部启用棋盘各自底线每回合 1 张填线宝宝（玩家盘 row=2/col=1；敌方盘 row=0/col=1，interval=1）
+- **胜负**：仅 player_main hero 死 = 失败；enemy_main hero 死 = 胜利
+
+#### 15.12.5 战斗结果回流
+
+战斗结束 → `_on_exit_to_menu`：检测 `not Game.empire_state.is_empty()` → 跳转 EmpireTest.tscn（代替 MainMenu）。
+
+**`_restore_empire_state_if_any()`**（`_build_map` 末尾）：
+1. 按 `faction_overrides` 恢复节点势力
+2. 恢复 `_deployed_heroes / _pending_campaigns / _pending_campaign_sources / exiled / gold / food`
+3. `_apply_battle_result(current_battle_target_id)`：**胜** → target 势力变玩家 + 列表内所有 hero 进驻；**败** → 所有 hero 留原位；双向均移除该 target 出 `_pending_campaigns`
+4. 若 `_pending_campaigns` 仍非空 → `_enter_battle_select_mode()`（续灯剩余目标）；否则 `_exit_battle_select_mode()`（自动进入下回合）
+5. 清空 `Game.empire_state / empire_battle_result`
+
+#### 15.12.6 选项面板适配
+
+帝国战斗期间 `Game.empire_state.is_empty() == false`；`main.gd` setup SettingsPanelController 传 `"hide_exit": true`，不渲染"返回菜单"按钮；胜负叠层点击为唯一退出路径。
+
+---
+
+### 15.13 地图编辑器工具
+
+`tools/empire_map_tool/empire_map_editor.py`，独立 Python/Tkinter 工具，可视化编辑地点节点与连接线并导出 JSON。详见 `tools/empire_map_tool/README.md`。
+
+### 15.14 当前完成度
 
 | 模块 | 状态 |
 |---|---|
 | 地图渲染、平移、缩放 | ✅ |
-| 势力 / 资源 / 回合结算 | ⚠️ 基础（无 AI） |
+| 势力 / 资源 / 回合结算 | ✅（运行时 faction 计算，含占领影响） |
 | 将领轮播 / 属性 / 统帅显示 | ✅ |
 | 卡组配置（军队面板）/ 统帅上限 | ✅ |
 | 部署 / 流放 / 图标交互 | ✅ |
-| 将领行棋（拖拽移动 + 回合提交） | ✅ |
+| 将领行棋（普通移动 + 回合提交） | ✅ |
+| 出征意向（多线 / 容量限制） | ✅ |
+| 战斗选择模式（外框呼吸方块） | ✅ |
+| 出征战斗（Main.tscn 多棋盘 PVE） | ✅（测试占位逻辑） |
+| 战斗状态快照 / 场景切换回流 | ✅ |
+| 战斗结果占领 / 将领失败回原位 | ✅ |
+| 多场出征逐场独立结算 | ✅ |
 | 地点详情面板 / 驻军列表 | ✅ |
 | 人才详情面板 / 配属部队列表 | ✅ |
 | 方略面板 | ❌ 占位 |
 | AI / 敌方回合 | ❌ 未实现 |
-| 出兵 / 战斗触发 | ❌ 未实现 |
-| 地点争夺 | ❌ 未实现 |
 | 升级 / 训练 / 招募 | ❌ 占位按钮置灰 |
