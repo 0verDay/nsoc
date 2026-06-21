@@ -90,6 +90,8 @@ func _ready() -> void:
 		ThemeFactory.panel(Color(0.94, 0.95, 0.96, 1.0), Color(1, 1, 1, 1.0), 1, 20, false)
 	)
 	_apply_progress_bar_style()
+	SafeArea.shift_panel(desc_pnl)
+	SafeArea.shift_panel(progress_bar)
 
 	# 装填内容（不依赖 size，可在 process_frame 前完成）。
 	var cfg := _load_config()
@@ -184,7 +186,7 @@ func _build_start_zone() -> void:
 	var hit := Control.new()
 	hit.name = "StartHit"
 	hit.set_anchors_preset(Control.PRESET_BOTTOM_WIDE, false)
-	hit.offset_left = _START_OFFSET_LEFT
+	hit.offset_left = _START_OFFSET_LEFT + SafeArea.left_inset
 	hit.offset_right = _START_OFFSET_RIGHT
 	hit.offset_top = _START_OFFSET_TOP
 	hit.offset_bottom = _START_OFFSET_BOTTOM

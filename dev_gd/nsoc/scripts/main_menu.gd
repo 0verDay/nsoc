@@ -77,6 +77,7 @@ func _ready() -> void:
 	_style_left_nav_buttons()
 	_build_options_button()
 	_build_settings_controller()
+	_apply_safe_area_insets()
 	if _test_btn:
 		_test_btn.pressed.connect(_on_test_pressed)
 		if _new_test_btn:
@@ -87,6 +88,21 @@ func _ready() -> void:
 	call_deferred("_setup_transition")
 	# 退出到菜单的接力淡入（白→透明）
 	_maybe_play_fade_in()
+
+# 读取安全区域偏移，将左侧面板右移，避免被全面屏摄像头遮挡。
+# 仅在 Android / iOS 生效（SafeArea autoload 在 PC 上 left_inset=0）。
+func _apply_safe_area_insets() -> void:
+	var extra: float = SafeArea.left_inset
+	if extra <= 0.0:
+		return
+	var profile_pnl: Panel = $ProfilePnl
+	if profile_pnl:
+		profile_pnl.offset_left += extra
+		profile_pnl.offset_right += extra
+	var left_nav_pnl: Panel = $LeftNavPnl
+	if left_nav_pnl:
+		left_nav_pnl.offset_left += extra
+		left_nav_pnl.offset_right += extra
 
 # 由 main / test_main 在退出时设置 Game.pending_fade_in_from_white=true，
 # 本场景 _ready 接力播放白色 overlay 渐隐，组成"渐白→切场景→白淡出"无黑闪过渡。

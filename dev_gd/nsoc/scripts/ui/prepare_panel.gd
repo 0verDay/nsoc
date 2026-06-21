@@ -109,6 +109,7 @@ func _apply_styles() -> void:
 	# HeroPnl 不应用样式：作为透明裁剪容器，由 HeroCarousel 内的每个 page
 	# 各自携带相同样式，整张面板随滑动一起位移。
 	hero_pnl.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	SafeArea.shift_panel(hero_pnl)
 	review_pnl.add_theme_stylebox_override("panel", pnl_style)
 	# FilterPnl 不再当面板用，仅作为排序按钮的容器，背景透明。
 	filter_pnl.add_theme_stylebox_override("panel", StyleBoxEmpty.new())

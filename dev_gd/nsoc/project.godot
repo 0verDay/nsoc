@@ -20,6 +20,7 @@ config/icon="res://assets/game_logo.png"
 
 [autoload]
 
+SafeArea="*res://scripts/core/safe_area.gd"
 Effects="*res://scripts/core/effect_registry.gd"
 HeroAbilities="*res://scripts/core/hero_ability_registry.gd"
 Equipments="*res://scripts/core/equipment_manager.gd"

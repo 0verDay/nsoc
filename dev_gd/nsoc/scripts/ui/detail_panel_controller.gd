@@ -72,12 +72,13 @@ func _current_width() -> float:
 	return PANEL_WIDTH
 
 func _build_panel() -> void:
+	var safe_left: float = SafeArea.left_inset
 	_clip = Control.new()
 	_clip.name = "DetailPanelClip"
 	_parent.add_child(_clip)
 	_clip.set_anchors_preset(Control.PRESET_LEFT_WIDE, false)
-	_clip.offset_left = PANEL_LEFT_INSET
-	_clip.offset_right = PANEL_LEFT_INSET + PANEL_WIDTH
+	_clip.offset_left = PANEL_LEFT_INSET + safe_left
+	_clip.offset_right = PANEL_LEFT_INSET + safe_left + PANEL_WIDTH
 	_clip.offset_top = 10
 	_clip.offset_bottom = -10
 	_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE

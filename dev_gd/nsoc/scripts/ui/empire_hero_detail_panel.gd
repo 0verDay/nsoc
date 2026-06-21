@@ -70,6 +70,7 @@ func _build_panel() -> void:
 	_clip.clip_contents = true
 	_clip.visible       = false
 	_clip.z_index       = 200
+	SafeArea.shift_left_clip(_clip, PANEL_LEFT_INSET, PANEL_WIDTH)
 
 	# ── 主面板 ──────────────────────────────────────────────────────────────
 	_panel = Panel.new()

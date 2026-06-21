@@ -119,6 +119,8 @@ func _ready() -> void:
 	_apply_review_pnl_style(top_review_pnl, false)
 	_apply_review_pnl_style(bottom_review_pnl, false)
 	_apply_progress_bar_style()
+	SafeArea.shift_panel(desc_pnl)
+	SafeArea.shift_panel(progress_bar)
 
 	_build_desc(_selected)
 	_build_review_panel(top_review_pnl, "马谡", "masu")
@@ -210,7 +212,7 @@ func _build_start_zone() -> void:
 	var hit := Control.new()
 	hit.name = "StartHit"
 	hit.set_anchors_preset(Control.PRESET_BOTTOM_WIDE, false)
-	hit.offset_left = _START_OFFSET_LEFT
+	hit.offset_left = _START_OFFSET_LEFT + SafeArea.left_inset
 	hit.offset_right = _START_OFFSET_RIGHT
 	hit.offset_top = _START_OFFSET_TOP
 	hit.offset_bottom = _START_OFFSET_BOTTOM

@@ -147,6 +147,7 @@ func _apply_styles() -> void:
 	# CampaignPnl 不应用样式：作为透明裁剪容器，由 CampaignCarousel 内的每个 page
 	# 自带"白底 + 边框 + 圆角 + 阴影"，与 PreparePanel.HeroPnl 一致。
 	campaign_pnl.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	SafeArea.shift_panel(campaign_pnl)
 
 	# ChapterPnl / DescPnl 与备战界面 ReviewPnl 同款：白底 + 浅边 + 圆角 + 投影。
 	var pnl_style := ThemeFactory.panel(Color.WHITE, Color(1, 1, 1, 0.6), 1, 20, true)
