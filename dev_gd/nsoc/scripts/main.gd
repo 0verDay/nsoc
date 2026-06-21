@@ -61,11 +61,12 @@ const BOARD_CENTER_GAP: float = 40.0 # 上下棋盘间距
 var _main_enemy_nodes: Array = []
 
 func _ready() -> void:
-	# 整个根 Control 先隐藏，等入场动画把节点移到屏外起点后再显示，
-	# 避免 anchor 解析帧期间渲染出完整 UI（"闪一下"）。
 	visible = false
 	await _apply_editor_window_scale()
-	# pending_level_path / pending_chapter_config 由外部注入；若均为空则走默认关卡。
+	# bootstrap 前记录：有 chapter config/level_path 且不是帝国出征 = 战役模式（不接 AI）
+	var _is_campaign: bool = (
+		Game.pending_chapter_config != "" or Game.pending_level_path != ""
+	) and Game.pending_empire_battle.is_empty()
 	Game.bootstrap()
 
 	_apply_styles()
@@ -140,6 +141,7 @@ func _ready() -> void:
 	# HeroActionBar 内部自检；boot 后再刷一次确保 player_hero 就绪。
 	if hero_action_bar != null:
 		hero_action_bar._refresh_all()
+	_setup_ai_agents(_is_campaign)
 	var enemy_main_slot: BoardSlot = Game.registry.get_by_id("enemy_main") if Game.registry != null else null
 	if enemy_main_slot != null:
 		enemy_side_panels.set_slot(enemy_main_slot)
@@ -170,6 +172,58 @@ func _ready() -> void:
 
 	# 入场动画：滑入 → 渐显 → 按序摸牌。摸牌动画末尾才允许玩家操作。
 	_play_intro_animation()
+
+# ── AI 装配 ─────────────────────────────────────────────────────────────────
+# PVE 专用：为每个 FACTION_ENEMY slot 装配独立 deck + mana + AiAgent。
+# 牌库从 Game.card_db 直接取（bootstrap 后已填充），无需额外 JSON。
+func _setup_ai_agents(is_campaign: bool = false) -> void:
+	if Game.is_pvp or is_campaign:
+		return
+	AiManager.clear()
+	var ai_deck_names: Array = [
+		"填线宝宝", "填线宝宝", "填线宝宝", "填线宝宝", "填线宝宝",
+		"放箭", "放箭", "放箭", "放箭", "放箭",
+	]
+	var ai_proto_cards: Array = []
+	for cname in ai_deck_names:
+		var c = Game.get_card(cname)
+		if c != null:
+			ai_proto_cards.append(c)
+	if ai_proto_cards.is_empty():
+		push_warning("main: AI deck empty, AiAgents not created")
+		return
+	for slot in Game.registry.slots:
+		# 敌方全盘 + 帝国模式友军盘（ROLE_ALLY）均接入 AI
+		var is_enemy_slot: bool = (slot.faction == BoardSlot.FACTION_ENEMY)
+		var is_ally_slot: bool = (slot.faction == BoardSlot.FACTION_PLAYER \
+			and slot.role == BoardSlot.ROLE_ALLY)
+		if not is_enemy_slot and not is_ally_slot:
+			continue
+		var ai_pid: String = "ai_" + String(slot.id)
+		slot.owner_player_id = ai_pid
+		var ai_deck: DeckManager = Game.add_deck(ai_pid)
+		ai_deck.setup(ai_proto_cards.duplicate())
+		var ai_mana: ManaSystem = Game.add_mana(ai_pid)
+		ai_mana.setup(1, 5)
+		# 英雄面板：主盘用 _main_ui，侧盘用 _side_ui["hp_panel"]，最终 fallback $EnemyHpPnl
+		var hero_src: Node = null
+		var slot_id_str: String = String(slot.id)
+		if board_orchestrator._main_ui.has(slot_id_str):
+			hero_src = board_orchestrator._main_ui[slot_id_str].get("hero_panel")
+		elif board_orchestrator._side_ui.has(slot_id_str):
+			hero_src = board_orchestrator._side_ui[slot_id_str].get("hp_panel")
+		if hero_src == null:
+			hero_src = $EnemyHpPnl
+		var sink := LocalActionSink.new()
+		sink.setup(slot_id_str, self, hero_src)
+		var agent := AiAgent.new()
+		agent.name = "AiAgent_" + slot_id_str
+		add_child(agent)
+		agent.setup(slot_id_str, ai_deck, ai_mana, HeuristicStrategy.new(), sink)
+		AiManager.register(slot_id_str, agent)
+
+func _exit_tree() -> void:
+	AiManager.clear()
 
 # ── 控制器装配 ───────────────────────────────────────────────────────
 func _install_controllers() -> void:

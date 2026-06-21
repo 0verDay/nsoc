@@ -177,6 +177,8 @@ func _ready() -> void:
 	if Game.is_pvp:
 		_setup_pvp_slots()
 		Net.message_received.connect(_on_pvp_message)
+	else:
+		_setup_ai_agents()
 	if hero_action_bar != null:
 		hero_action_bar._refresh_all()
 	# boot 后把主敌盘 slot 注入 enemy_side_panels 作数据源
@@ -225,6 +227,54 @@ const FrontRowSelectorScript        = preload("res://scripts/ui/front_row_select
 const HeroPanelDragControllerScript = preload("res://scripts/ui/hero_panel_drag_controller.gd")
 const TargetSelectorScript          = preload("res://scripts/ui/target_selector_controller.gd")
 const HandPickerScript              = preload("res://scripts/ui/hand_picker_controller.gd")
+
+# ── AI 装配（PVE 专用）────────────────────────────────────────────────────────
+func _setup_ai_agents() -> void:
+	AiManager.clear()
+	var ai_deck_names: Array = [
+		"填线宝宝", "填线宝宝", "填线宝宝", "填线宝宝", "填线宝宝",
+		"放箭", "放箭", "放箭", "放箭", "放箭",
+	]
+	var ai_proto_cards: Array = []
+	for cname in ai_deck_names:
+		var c = Game.get_card(cname)
+		if c != null:
+			ai_proto_cards.append(c)
+	if ai_proto_cards.is_empty():
+		push_warning("test_main: AI deck empty, AiAgents not created")
+		return
+	for slot in Game.registry.slots:
+		# 敌方全盘 + 友军盘（非玩家主盘）均接入 AI
+		var is_enemy_slot: bool = (slot.faction == BoardSlot.FACTION_ENEMY)
+		var is_ally_slot: bool = (slot.faction == BoardSlot.FACTION_PLAYER \
+			and slot.role == BoardSlot.ROLE_ALLY)
+		if not is_enemy_slot and not is_ally_slot:
+			continue
+		var ai_pid: String = "ai_" + String(slot.id)
+		slot.owner_player_id = ai_pid
+		var ai_deck: DeckManager = Game.add_deck(ai_pid)
+		ai_deck.setup(ai_proto_cards.duplicate())
+		var ai_mana: ManaSystem = Game.add_mana(ai_pid)
+		ai_mana.setup(1, 5)   # cap=5，避免后期爆费
+		# 英雄面板：主盘用 _main_ui，侧盘用 _side_ui["hp_panel"]，最终 fallback
+		var hero_src: Node = null
+		var slot_id_str: String = String(slot.id)
+		if board_orchestrator._main_ui.has(slot_id_str):
+			hero_src = board_orchestrator._main_ui[slot_id_str].get("hero_panel")
+		elif board_orchestrator._side_ui.has(slot_id_str):
+			hero_src = board_orchestrator._side_ui[slot_id_str].get("hp_panel")
+		if hero_src == null:
+			hero_src = $EnemyHpPnl
+		var sink := LocalActionSink.new()
+		sink.setup(slot_id_str, self, hero_src)
+		var agent := AiAgent.new()
+		agent.name = "AiAgent_" + slot_id_str
+		add_child(agent)
+		agent.setup(slot_id_str, ai_deck, ai_mana, HeuristicStrategy.new(), sink)
+		AiManager.register(slot_id_str, agent)
+
+func _exit_tree() -> void:
+	AiManager.clear()
 
 func _install_controllers() -> void:
 	front_row_selector = FrontRowSelectorScript.new()
