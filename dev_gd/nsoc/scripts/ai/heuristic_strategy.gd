@@ -205,20 +205,26 @@ func _most_advanced_target(view: AiGameView, excluded: Array = []):
 				best = cell
 	return best
 
-# 己方单位中攻击力最高的（强化/buff 目标）
+# 己方攻击力最高的单位，含已跨盘到其他棋盘的己方单位（owner_slot_id == own_slot.id）
 func _best_own_unit(view: AiGameView):
 	var best = null
 	var best_score: float = -1.0
 	var own := view.own_slot()
-	if own == null or own.board == null:
+	if own == null:
 		return null
-	for cell in own.board.grid_cells.values():
-		if not is_instance_valid(cell) or not cell.has_card:
+	if not Engine.get_main_loop().root.has_node("/root/Game") or Game.registry == null:
+		return null
+	for slot in Game.registry.slots:
+		if slot.board == null:
 			continue
-		if not view.is_own_unit(cell):
-			continue
-		var score: float = float(cell.attack)
-		if score > best_score:
-			best_score = score
-			best = cell
+		for cell in slot.board.grid_cells.values():
+			if not is_instance_valid(cell) or not cell.has_card:
+				continue
+			# 用 owner_slot_id 精确识别归属，支持已跨盘单位
+			if cell.owner_slot_id != own.id:
+				continue
+			var score: float = float(cell.attack)
+			if score > best_score:
+				best_score = score
+				best = cell
 	return best

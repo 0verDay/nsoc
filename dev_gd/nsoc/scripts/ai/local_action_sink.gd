@@ -77,6 +77,8 @@ func _cast_spell(action: AiAction) -> bool:
 		return true
 	var ctx := Game.make_effect_context()
 	ctx.target_cell = target_cell
+	var caster_slot: BoardSlot = Game.registry.get_by_id(_slot_id)
+	ctx.caster_is_enemy = (caster_slot != null and caster_slot.faction == BoardSlot.FACTION_ENEMY)
 	var destination := "graveyard"
 	for eff in card.effects:
 		var dest := Effects.resolve_destination(String(eff), card, ctx)

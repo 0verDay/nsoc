@@ -18,9 +18,9 @@ func on_play(_card_data, ctx) -> bool:
 	var cell = ctx.target_cell
 	if cell == null or not cell.has_card:
 		return true
-	var local_team: String = ctx.game.team_of_player(ctx.game.local_player_id) \
-		if ctx.game != null else ""
-	if cell.is_hostile_to(local_team):
+	# caster_is_enemy=true（AI 施法）时，友方 = is_enemy=true；
+	# 默认（玩家施法）时，友方 = is_enemy=false（兼容原逻辑）
+	if cell.is_enemy != ctx.caster_is_enemy:
 		return true
 	cell.attack += BUFF
 	if cell.has_method("_update_atk_label"):
