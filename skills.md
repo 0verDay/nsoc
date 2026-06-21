@@ -86,6 +86,8 @@ QuitConfirm   (autoload) 全局退出确认弹窗
 
 Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP 专用）
 
+AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{slot_id → AiAgent}`，供 TurnSystem 查询
+
 ```
 
 **Game PVP 专属字段**（`scripts/core/game_context.gd`）：
@@ -231,7 +233,11 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 ### 3.5 回合驱动（多棋盘）
 
-`TurnSystem.run`：玩家阶段 → 刷怪 → 敌方阶段 → reset_attack_flags（主棋盘+所有额外棋盘）。
+`TurnSystem.run`：**友军 AI 出牌** → 玩家阶段 → 刷怪 → **敌方 AI 出牌** → 敌方阶段 → reset_attack_flags（主棋盘+所有额外棋盘）。
+
+- `_run_ai_phase_for_faction(faction)` — PVE 专属；按 `faction` 过滤 `AiManager.all_agents()` 中对应阵营的 Agent，依次调 `agent.mana.start_new_turn()` + `await agent.take_turn()`；`is_pvp == true` 时跳过
+  - `faction = FACTION_PLAYER`（友军 AI）在 PLAYER 阶段**之前**运行 → 本回合立即可行动
+  - `faction = FACTION_ENEMY`（敌方 AI）在 ENEMY 阶段**之前**运行 → 本回合立即推进
 
 `_run_phase(faction)` 先遍历主棋盘，再按注册顺序遍历 `_extra_board_configs`，每块棋盘调用 `_run_phase_on_board(faction, board, hero_resolver)`：
 
@@ -267,7 +273,7 @@ Net           (autoload "network_manager.gd") WebSocket 客户端网络层（PVP
 
 | 攻方双向 | "attacker" | 任意 | `_enemy_auto_cross` 自动跨守方盘（`_can_cross_board` 覆盖"到达 front_row"和"冲锋提前到达"） |
 
-| PVE/1v1 PLAYER | "" | PLAYER | `_run_front_row_selection` UI 选盘 |
+| PVE/1v1 PLAYER | "" | PLAYER | 若 `AiManager.is_ai_slot(slot.id)` → 随机选一个敌方盘自动跨；否则 `_run_front_row_selection` UI 选盘 |
 
 | PVE/1v1 ENEMY | "" | ENEMY | `_enemy_auto_cross`（修正：用 `_can_cross_board` 替代 `cell.row == front_row`；让 charge 单位在路径全空时也能跨盘，修复"对手视角下冲锋单位只移到自家前排不跨盘"的 PVP 锁步 desync） |
 
@@ -1708,5 +1714,117 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 | 地点详情面板 / 驻军列表 | ✅ |
 | 人才详情面板 / 配属部队列表 | ✅ |
 | 方略面板 | ❌ 占位 |
-| AI / 敌方回合 | ❌ 未实现 |
+| AI / 敌方回合 | ✅ 战斗场景已接入（见 §16）|
 | 升级 / 训练 / 招募 | ❌ 占位按钮置灰 |
+
+---
+
+## 16. AI 对战系统
+
+### 16.1 架构总览
+
+```text
+scripts/ai/
+├── ai_action.gd          # AiAction：行动数据载体（PLAY_UNIT / PLAY_SPELL / CROSS_BOARD / END_TURN + 工厂方法）
+├── game_view.gd          # AiGameView：只读棋局快照（手牌 / 费用 / 己方盘 / 对手盘 / 威胁值 / is_own_unit / is_target_unit）
+├── ai_strategy.gd        # AiStrategy：决策抽象接口（decide / choose_cross_target）
+├── heuristic_strategy.gd # HeuristicStrategy：默认规则启发式（见 §16.4）
+├── ai_action_sink.gd     # AiActionSink：落地抽象接口（apply / submit_cross_choice）
+├── local_action_sink.gd  # LocalActionSink：PVE 落地（含飞牌动画）
+├── net_action_sink.gd    # NetActionSink：PVP 骨架（P5 待实现）
+├── ai_agent.gd           # AiAgent：单盘回合驱动（摸牌 → decide → apply → STEP_DELAY）
+└── ai_manager.gd         # AiManager（autoload）：注册中心 {slot_id → AiAgent}
+```
+
+**AiManager autoload** — 全局持有所有 Agent，`_exit_tree` 后由各场景调 `clear()` 清理。
+
+### 16.2 接入场景
+
+| 场景 | 文件 | AI 初始化时机 | 覆盖棋盘 |
+|---|---|---|---|
+| 标准测试战斗 | `main.gd` | `board_orchestrator.boot()` 后 `_setup_ai_agents()` | 全部 FACTION_ENEMY + ROLE_ALLY 盘 |
+| TestMain 多棋盘测试 | `test_main.gd` | 同上（`is_pvp == false` 分支） | 同上（enemy_left / enemy_main / enemy_right / ally_left / ally_right）|
+| 帝国出征战斗 | `main.gd` (同) | 同上（`_bootstrap_empire` 装配的盘 N=1/2/3） | 按启用盘数量 |
+
+**英雄面板（飞牌源节点）查找优先级**：
+1. `board_orchestrator._main_ui[slot_id].get("hero_panel")`
+2. `board_orchestrator._side_ui[slot_id].get("hp_panel")`
+3. fallback `$EnemyHpPnl`
+
+### 16.3 回合驱动（TurnSystem.run 新流程）
+
+```
+_run_ai_phase_for_faction(FACTION_PLAYER)   ← 友军 AI 出牌（出牌后立即参与本回合 PLAYER 阶段）
+_run_phase(PLAYER)
+_run_spawn_phase()
+_run_ai_phase_for_faction(FACTION_ENEMY)    ← 敌方 AI 出牌（出牌后立即参与本回合 ENEMY 阶段）
+_run_phase(ENEMY)
+```
+
+每个 Agent 执行流：`mana.start_new_turn()` → `agent.take_turn()`。
+
+`take_turn()`：摸 1 张牌（上限 `MAX_HAND_SIZE=5`）→ `strategy.decide(view)` → 顺序 `await sink.apply(action)` + `STEP_DELAY=0.3s` 间隔。
+
+### 16.4 HeuristicStrategy 决策逻辑
+
+**decide() 流程**：
+1. `mana >= 2`：先施法（高费优先，不重复选同格目标）
+2. 出单位：高费优先，每次选最优空格
+3. 剩余 1 费再补 1 张法术
+
+**`_best_deploy_cell` 评分**（阵营感知，ENEMY/ALLY 均正确）：
+
+| 评分项 | 权重 |
+|---|---|
+| 行流水线：该行越空越优先（分散到各行，持续输出）| ×3 |
+| 前排加成：`dist_to_front_row` 越小越好（ENEMY front=row2，PLAYER/ALLY front=row0）| ×1 |
+| 净空列：对手该列无单位 → 直通英雄 | +6 |
+| 列分散：该列己方单位越少越好 | ×1.5 |
+| 本回合同列已落子 | -3 |
+
+**法术目标**：`_most_advanced_target(excluded)` — 对手盘中推进最深（`dist_to_opp_front` 最小）且 `excluded` 中未锁定的单位；友军 AI 用 `is_target_unit(cell)` 正确识别敌方单位（`cell.is_enemy == true`）。
+
+**阵营感知** — `AiGameView.is_own_unit(cell)` / `is_target_unit(cell)` 按 `own_slot.faction` 判断，敌方 AI 与友军 AI 均正确：
+
+| 阵营 | own unit | target unit |
+|---|---|---|
+| 敌方 AI（FACTION_ENEMY） | `cell.is_enemy == true` | `cell.is_enemy == false`（玩家单位）|
+| 友军 AI（FACTION_PLAYER）| `cell.is_enemy == false` | `cell.is_enemy == true`（敌方单位）|
+
+### 16.5 LocalActionSink
+
+**`_place_unit`**：取 slot.faction 决定 `place_as_enemy`（敌方=true，友军=false）→ `cell.set_card(...)` → `cell.owner_slot_id = slot.id` → `await Effects.trigger_play` 逐 eff 异步链。
+
+**`_cast_spell`**：`await _animate_card_to_cell` → **动画后重验证目标**（`has_card == false` 且 `target != ""` → 放弃施法入墓）→ `await Effects.trigger_play` → `ai_deck.send_to_graveyard / banish`。
+
+**飞牌动画（`_animate_card_to_cell`）**：从 `_source_node`（AI 英雄面板）中心飞 `Panel(80×56)` + `Label(card_name)` 到目标格中心，`FLY_DURATION=1.2s` Quad 缓动，落地前 30% 时间淡出；`_source_node == null` 时跳过动画但仍正常落子。
+
+### 16.6 AI 资源装配（_setup_ai_agents）
+
+所有场景均从 `Game.card_db` 直接拼 AI 牌库（无单独 JSON），当前默认：
+
+```
+5× 填线宝宝 + 5× 放箭
+```
+
+每个 AI slot 独立 `DeckManager` + `ManaSystem`（`setup(1, 5)` — 起始费 1，上限 5），`owner_player_id = "ai_" + slot_id`，单位死亡通过 `handle_unit_death` → `owner_slot.owner_player_id` → `Game.decks["ai_xxx"].graveyard` 入对应 AI 墓地。
+
+### 16.7 跨盘处理
+
+- **敌方 AI 盘**：FACTION_ENEMY + team_id="" 时走旧"自动跨盘"路径（`_enemy_auto_cross`），无需额外介入
+- **友军 AI 盘**：到达 front_row 时检查 `AiManager.is_ai_slot(slot.id)` → 随机选一个 `enemy_slots` 作为目标，不弹玩家 UI
+
+### 16.8 已实现 / 待实现
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| P0 | 骨架（9个文件）| ✅ |
+| P1 | PVE Deck+Mana 装配 + AiManager | ✅ |
+| P2 | TurnSystem 双阶段接入 + LocalActionSink 单位部署 + 飞牌动画 | ✅ |
+| P3 | HeuristicStrategy 单位评分 + 法术施放 + 目标去重 | ✅ |
+| P4 | 友军 AI 跨盘随机选目标 | ✅ |
+| P5 | NetActionSink + PVP 人机托管 | ❌ 骨架存在，逻辑未实现 |
+| P6 | 难度参数化（spell_value_threshold / 故意失误率 / 策略工厂）| ❌ 接口预留，未配置 |
+| — | 帝国专属牌库（按守军节点区分 AI 牌组）| ❌ 未实现 |
+| — | 多盘 ENEMY 跨盘 `on_cross_requested` 智能择盘 | ❌ 未实现 |
+

@@ -20,9 +20,7 @@
 	  "name": "填线宝宝",
 	  "faction": 1,
 	  "positions": [
-		{ "row": 1, "col": 0 },
-		{ "row": 1, "col": 1 },
-		{ "row": 1, "col": 2 }
+		{ "row": 1, "col": 1 }
 	  ],
 	  "interval": 3
 	},
@@ -30,9 +28,7 @@
 	  "name": "灰烬填线宝宝",
 	  "faction": 1,
 	  "positions": [
-		{ "row": 0, "col": 0 },
-		{ "row": 0, "col": 1 },
-		{ "row": 0, "col": 2 }
+		{ "row": 0, "col": 1 }
 	  ],
 	  "interval": 3
 	}

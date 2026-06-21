@@ -151,11 +151,19 @@ func run() -> void:
 	# 确保所有棋盘就位后再处理单位行动。
 	if has_node("/root/Events") and Events.is_inside_tree():
 		await Events.run_turn_events_and_wait(turn_number)
+	await _run_ai_phase_for_faction(BoardSlot.FACTION_PLAYER)
+	if _combat == null or _combat.aborted:
+		is_running = false
+		return
 	await _run_phase(PLAYER)
 	if _combat == null or _combat.aborted:
 		is_running = false
 		return
 	await _run_spawn_phase()
+	if _combat == null or _combat.aborted:
+		is_running = false
+		return
+	await _run_ai_phase_for_faction(BoardSlot.FACTION_ENEMY)
 	if _combat == null or _combat.aborted:
 		is_running = false
 		return
@@ -492,8 +500,13 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 			and slot.faction == BoardSlot.FACTION_PLAYER \
 			and not enemy_slots.is_empty() \
 			and _can_cross_board(cell, slot):
-		# PVE / 1v1 旧 UI 路径
-		front_row_target_id = await _run_front_row_selection(cell)
+		# AI 友军盘：自动随机选目标，不弹 UI
+		if has_node("/root/AiManager") and AiManager.is_ai_slot(slot.id):
+			var ai_idx: int = randi() % enemy_slots.size()
+			front_row_target_id = String(enemy_slots[ai_idx].id)
+		else:
+			# PVE / 1v1 旧 UI 路径（玩家自己的盘）
+			front_row_target_id = await _run_front_row_selection(cell)
 
 	if front_row_target_id != "" and _front_row_resolve.is_valid():
 		var result = await _front_row_resolve.call(cell, front_row_target_id)
@@ -883,6 +896,29 @@ func _can_cross_board(cell, slot: BoardSlot) -> bool:
 			return false
 		r += step
 	return true
+
+# ── AI 部署阶段 ───────────────────────────────────────────────────────────────
+# faction=FACTION_PLAYER：友军 AI，在 PLAYER 阶段前调用（出牌→当回合行动）
+# faction=FACTION_ENEMY ：敌方 AI，在 ENEMY 阶段前调用（出牌→当回合推进）
+# PVE 专属；is_pvp 时不运行。
+func _run_ai_phase_for_faction(faction: int) -> void:
+	if not has_node("/root/Game") or Game.is_pvp:
+		return
+	if not has_node("/root/AiManager"):
+		return
+	for agent in AiManager.all_agents():
+		if _combat == null or _combat.aborted:
+			return
+		if not is_instance_valid(agent):
+			continue
+		var slot: BoardSlot = Game.registry.get_by_id(agent.slot_id) \
+			if Game.registry != null else null
+		if slot == null or slot.faction != faction:
+			continue
+		agent.mana.start_new_turn()
+		await agent.take_turn()
+		if _combat == null or _combat.aborted:
+			return
 
 # ── 前排选择等待 ──────────────────────────────────────────────────────
 func _run_front_row_selection(cell: Node) -> String:
