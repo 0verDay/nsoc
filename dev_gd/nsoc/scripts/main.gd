@@ -183,6 +183,7 @@ func _setup_ai_agents(is_campaign: bool = false) -> void:
 	var ai_deck_names: Array = [
 		"填线宝宝", "填线宝宝", "填线宝宝", "填线宝宝", "填线宝宝",
 		"放箭", "放箭", "放箭", "放箭", "放箭",
+		"鼓舞", "鼓舞", "鼓舞", "鼓舞", "鼓舞",
 	]
 	var ai_proto_cards: Array = []
 	for cname in ai_deck_names:

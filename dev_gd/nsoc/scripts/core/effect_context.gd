@@ -11,6 +11,9 @@ var game: Node                       # GameContext 引用
 var target_cell = null               # 法术指向目标 cell（无目标法术为 null）
 var dying_is_enemy: bool = false     # 进入 on_death 流程时由 PlayController 设置；
 									  # banish_card / send_to_graveyard 据此路由阵营牌堆。
+# AI 施法标志：LocalActionSink._cast_spell 时注入，让 inspire 等效果以施法者阵营为基准
+# 而非硬编码 local_player_id 视角。false = 玩家施法（默认），true = 敌方 AI 施法。
+var caster_is_enemy: bool = false
 # 英雄技能上下文
 var hand_view = null                 # HandView 引用（restart 等技能用）
 var hero: HeroState = null           # 本次激活的 HeroState
