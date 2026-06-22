@@ -1,4 +1,9 @@
 {
+  "scenario": {
+    "id": 1,
+    "name": "囊关之战",
+    "description": "这是囊关之战的剧本描述"
+  },
   "factions": [
     {
       "id": 0,

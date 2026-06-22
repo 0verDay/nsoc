@@ -98,6 +98,9 @@ class MapEditor:
         self._next_faction_id = 1  # neutral is 0; custom factions start at 1
         self.factions = [dict(NEUTRAL_FACTION)]  # deep copy
 
+        # Scenario metadata for this map
+        self.scenario = {"id": "", "name": "", "description": ""}
+
         self.toolbar = tk.Frame(root, bg="#2b2b2b", height=40)
         self.toolbar.pack(side=tk.TOP, fill=tk.X)
 
@@ -126,6 +129,11 @@ class MapEditor:
                                 padx=10, command=self.open_faction_manager)
         faction_btn.pack(side=tk.RIGHT, padx=5, pady=5)
 
+        scenario_btn = tk.Button(self.toolbar, text="剧本管理",
+                                 bg="#2e8b57", fg="white", relief=tk.FLAT,
+                                 padx=10, command=self.open_scenario_manager)
+        scenario_btn.pack(side=tk.RIGHT, padx=5, pady=5)
+
         self.canvas = tk.Canvas(root, bg="#1e1e2e", cursor="crosshair")
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
@@ -151,6 +159,83 @@ class MapEditor:
 
         self._bind_events()
         self._draw()
+
+    # ── Scenario manager window ───────────────────────────────────────────────
+
+    def open_scenario_manager(self):
+        win = tk.Toplevel(self.root)
+        win.title("剧本管理")
+        win.resizable(False, False)
+        win.grab_set()
+
+        pad = {"padx": 12, "pady": 6}
+
+        # ── 序列号 ────────────────────────────────────────────────────────────
+        tk.Label(win, text="序列号：", anchor="w").grid(
+            row=0, column=0, sticky="w", **pad)
+        id_var = tk.StringVar(value=self.scenario["id"])
+        id_entry = tk.Entry(win, textvariable=id_var, width=12)
+        id_entry.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=6)
+        tk.Label(win, text="（唯一整数，如 1001）", fg="#888888", anchor="w").grid(
+            row=0, column=2, sticky="w", padx=(0, 12), pady=6)
+
+        # ── 剧本名字 ──────────────────────────────────────────────────────────
+        tk.Label(win, text="剧本名字：", anchor="w").grid(
+            row=1, column=0, sticky="w", **pad)
+        name_var = tk.StringVar(value=self.scenario["name"])
+        name_entry = tk.Entry(win, textvariable=name_var, width=28)
+        name_entry.grid(row=1, column=1, columnspan=2, sticky="ew",
+                        padx=(0, 12), pady=6)
+
+        # ── 剧本描述 ──────────────────────────────────────────────────────────
+        tk.Label(win, text="剧本描述：", anchor="nw").grid(
+            row=2, column=0, sticky="nw", padx=12, pady=(6, 0))
+        desc_frame = tk.Frame(win)
+        desc_frame.grid(row=2, column=1, columnspan=2, sticky="nsew",
+                        padx=(0, 12), pady=6)
+        desc_scroll = tk.Scrollbar(desc_frame, orient=tk.VERTICAL)
+        desc_text = tk.Text(desc_frame, width=40, height=8,
+                            wrap=tk.WORD, yscrollcommand=desc_scroll.set)
+        desc_scroll.config(command=desc_text.yview)
+        desc_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        desc_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        if self.scenario["description"]:
+            desc_text.insert("1.0", self.scenario["description"])
+
+        win.columnconfigure(1, weight=1)
+        win.rowconfigure(2, weight=1)
+
+        # ── 按钮 ──────────────────────────────────────────────────────────────
+        def _save():
+            sid  = id_var.get().strip()
+            sname = name_var.get().strip()
+            sdesc = desc_text.get("1.0", tk.END).strip()
+            if not sid:
+                messagebox.showwarning("剧本管理", "序列号不能为空。", parent=win)
+                return
+            if not sid.lstrip("-").isdigit():
+                messagebox.showwarning("剧本管理", "序列号必须为整数。", parent=win)
+                return
+            if not sname:
+                messagebox.showwarning("剧本管理", "剧本名字不能为空。", parent=win)
+                return
+            if not sdesc:
+                messagebox.showwarning("剧本管理", "剧本描述不能为空。", parent=win)
+                return
+            self.scenario["id"]          = sid
+            self.scenario["name"]        = sname
+            self.scenario["description"] = sdesc
+            messagebox.showinfo("剧本管理", "剧本信息已保存。", parent=win)
+            win.destroy()
+
+        btn_frame = tk.Frame(win)
+        btn_frame.grid(row=3, column=0, columnspan=3, pady=(4, 12))
+        tk.Button(btn_frame, text="保存", width=10, command=_save,
+                  bg="#2e8b57", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_frame, text="取消", width=10, command=win.destroy,
+                  bg="#555577", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=8)
+
+        id_entry.focus_set()
 
     # ── Faction helpers ───────────────────────────────────────────────────────
 
@@ -805,6 +890,14 @@ class MapEditor:
         self.connections.clear()
         self.selected_shape = None
 
+        # ── Restore scenario metadata ─────────────────────────────────────────
+        sc = data.get("scenario", {})
+        self.scenario = {
+            "id":          str(sc.get("id", "")),
+            "name":        str(sc.get("name", "")),
+            "description": str(sc.get("description", "")),
+        }
+
         # ── Restore factions ─────────────────────────────────────────────────
         self.factions = [dict(NEUTRAL_FACTION)]
         self._next_faction_id = 1
@@ -859,6 +952,22 @@ class MapEditor:
             messagebox.showwarning("Export", "No shapes to export.")
             return
 
+        # ── Scenario metadata validation ─────────────────────────────────────
+        missing = []
+        if not self.scenario["id"].strip():
+            missing.append("序列号")
+        if not self.scenario["name"].strip():
+            missing.append("剧本名字")
+        if not self.scenario["description"].strip():
+            missing.append("剧本描述")
+        if missing:
+            messagebox.showwarning(
+                "Export",
+                f"以下剧本信息尚未填写，请先点击「剧本管理」完善后再导出：\n"
+                + "、".join(missing)
+            )
+            return
+
         unclassified = [s for s in self.shapes if s.kind == 'square' and s.category is None]
         if unclassified:
             ids = ", ".join(str(s.id) for s in unclassified)
@@ -889,6 +998,11 @@ class MapEditor:
         min_y = min(s.wy for s in self.shapes)
 
         data = {
+            "scenario": {
+                "id":          int(self.scenario["id"].strip()),
+                "name":        self.scenario["name"].strip(),
+                "description": self.scenario["description"].strip(),
+            },
             "factions": [
                 {"id": f["id"], "name": f["name"], "color": f["color"]}
                 for f in self.factions
@@ -936,6 +1050,8 @@ class MapEditor:
             # Reset factions to default (neutral only)
             self.factions = [dict(NEUTRAL_FACTION)]
             self._next_faction_id = 1
+            # Reset scenario metadata
+            self.scenario = {"id": "", "name": "", "description": ""}
             self._draw()
 
 

@@ -1,4 +1,10 @@
+class_name EmpireTest
 extends Control
+
+# 进入前由调用方写入目标地图路径；空串则回退到默认测试地图。
+static var pending_map_path: String = ""
+# 载入存档时由调用方（YanyiPanel）写入槽 id；空串 = 普通新游戏。
+static var pending_load_slot: String = ""
 
 const MAP_PATH := "res://data/empire_maps/test_map.json"
 const PROFILE_PANEL_SCENE := preload("res://scenes/ProfileSubPanel.tscn")
@@ -142,6 +148,10 @@ const ZOOM_STEP: float = 1.12
 var _map_world_size: Vector2 = Vector2.ZERO
 var _map_world_origin: Vector2 = Vector2.ZERO
 
+# 存读档相关
+var _turn_number: int = 0
+var _current_map_path: String = ""   # _load_map 时记录，供快照使用
+
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -166,7 +176,7 @@ func _ready() -> void:
 		"resume_label": "继续",
 		"exit_label": "退回菜单",
 		"extra_buttons": [
-			{"label": "存档", "action": Callable()},
+			{"label": "存档", "action": Callable(self, "_on_manual_save_pressed"), "embed": true},
 		],
 	})
 
@@ -1014,9 +1024,12 @@ func _on_shape_clicked(node) -> void:
 
 
 func _load_map() -> void:
-	var file := FileAccess.open(MAP_PATH, FileAccess.READ)
+	var path: String = EmpireTest.pending_map_path if EmpireTest.pending_map_path != "" else MAP_PATH
+	EmpireTest.pending_map_path = ""
+	_current_map_path = path
+	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		push_error("EmpireTest: cannot open " + MAP_PATH)
+		push_error("EmpireTest: cannot open " + path)
 		return
 	var json := JSON.new()
 	if json.parse(file.get_as_text()) != OK:
@@ -1111,6 +1124,16 @@ func _build_map(data: Dictionary) -> void:
 	# 帝国战斗回流：恢复战斗前快照、应用结果、刷新 UI
 	_restore_empire_state_if_any()
 
+	# 存档载入 / 新游戏分支（仅当非战斗回流时生效）
+	if Game.empire_state.is_empty():
+		if EmpireTest.pending_load_slot != "":
+			var slot_id: String = EmpireTest.pending_load_slot
+			EmpireTest.pending_load_slot = ""
+			_apply_save_slot(slot_id)
+		else:
+			# 新游戏：清空军队缓存（避免继承上次的卡组配置）
+			EmpireDeckStorage.reset_session()
+
 
 # 根据势力 id 查颜色，找不到返回 GRAY
 func _faction_color(faction_id: int) -> Color:
@@ -1151,10 +1174,14 @@ func _on_end_turn(shapes_data: Array) -> void:
 	_commit_pending_moves()
 	_player_gold += _calc_player_gold_income_runtime()
 	_player_food = _calc_total_food_runtime()
+	_turn_number += 1
 	_refresh_info_panel()
 	# 多线出征：置灰按钮，所有出征目标节点显示外框呼吸方框
 	if not _pending_campaigns.is_empty():
 		_enter_battle_select_mode()
+	else:
+		# 回合结束自动存档（无出征时立即写；有出征在 _exit_battle_select_mode 后写）
+		_write_save_slot(EmpireSaveStorage.SLOT_AUTO)
 
 
 # 进入/恢复战斗选择模式：禁用结束回合按钮，所有 _pending_campaigns 目标显示外框呼吸。
@@ -1172,6 +1199,7 @@ func _enter_battle_select_mode() -> void:
 
 # 退出战斗选择模式（所有出征已结算）。重置按钮可点击 + 关闭所有方框。
 func _exit_battle_select_mode() -> void:
+	var was_active: bool = _battle_select_mode
 	_battle_select_mode = false
 	for n in _shape_nodes:
 		if is_instance_valid(n) and n.has_method("set_campaign_frame"):
@@ -1179,6 +1207,9 @@ func _exit_battle_select_mode() -> void:
 	var btn: Button = get_node_or_null("EndTurnBtn")
 	if btn:
 		btn.disabled = false
+	# 出征全部结算完毕 → 写自动存档
+	if was_active:
+		_write_save_slot(EmpireSaveStorage.SLOT_AUTO)
 
 
 # 计算玩家势力当前所有持有地点的资源（按运行时 _shape_nodes._faction_id，含战斗后占领）
@@ -1227,29 +1258,148 @@ func _launch_empire_battle(target_id: int) -> void:
 
 # 保存当前地图状态到 Game.empire_state。current_battle_target_id 标记本次出场的目标。
 func _save_empire_state(current_battle_target_id: int) -> void:
+	var snap := _build_full_snapshot()
+	snap["current_battle_target_id"] = int(current_battle_target_id)
+	Game.empire_state = snap
+
+
+# ── 完整快照 / 存读档 ────────────────────────────────────────────────────────
+
+# 构建可序列化的全量快照字典（不含 current_battle_target_id，由各调用方按需追加）。
+func _build_full_snapshot() -> Dictionary:
 	var deployed: Dictionary = {}
 	for k in _deployed_heroes.keys():
 		var n = _deployed_heroes[k]
 		if is_instance_valid(n) and "_id" in n:
 			deployed[String(k)] = int(n._id)
+
 	var faction_snap: Dictionary = {}
 	for n in _shape_nodes:
 		if is_instance_valid(n) and "_id" in n and "_faction_id" in n:
 			faction_snap[int(n._id)] = int(n._faction_id)
-	# pending_campaigns 序列化为 {String(target_id): Array[hero_key]}（JSON-friendly）
+
 	var camps_dump: Dictionary = {}
 	for tid in _pending_campaigns.keys():
 		camps_dump[str(int(tid))] = (_pending_campaigns[tid] as Array).duplicate()
-	Game.empire_state = {
-		"deployed":                  deployed,
-		"exiled":                    _exiled_heroes.duplicate(),
-		"pending_campaigns":         camps_dump,
-		"pending_campaign_sources":  _pending_campaign_sources.duplicate(),
-		"faction_overrides":         faction_snap,
-		"gold":                      _player_gold,
-		"food":                      _player_food,
-		"current_battle_target_id":  int(current_battle_target_id),
+
+	var moves_dump: Dictionary = {}
+	for hk in _pending_moves.keys():
+		var mn = _pending_moves[hk]
+		if is_instance_valid(mn) and "_id" in mn:
+			moves_dump[String(hk)] = int(mn._id)
+
+	# 卡组快照：完整 dump 当前会话缓存（含 selected_hero）
+	var decks_snap: Dictionary = EmpireDeckStorage.dump_for_save()
+
+	return {
+		"deployed":                 deployed,
+		"exiled":                   _exiled_heroes.duplicate(),
+		"pending_campaigns":        camps_dump,
+		"pending_campaign_sources": _pending_campaign_sources.duplicate(),
+		"pending_moves":            moves_dump,
+		"battle_select_mode":       _battle_select_mode,
+		"faction_overrides":        faction_snap,
+		"gold":                     _player_gold,
+		"food":                     _player_food,
+		"turn_number":              _turn_number,
+		"talent_last_hero":         _talent_last_hero,
+		"map_path":                 _current_map_path,
+		"decks":                    decks_snap,
 	}
+
+
+# 把快照写入指定槽位（附带 meta 摘要）。
+# 供手动存档（设置面板按钮）和自动存档（回合结束）调用。
+func _write_save_slot(slot_id: String) -> void:
+	var snap := _build_full_snapshot()
+	# 解析 scenario 信息（从 map_path 对应的 JSON 中）
+	var scenario_id: String = ""
+	var scenario_name: String = ""
+	var file := FileAccess.open(_current_map_path, FileAccess.READ)
+	if file != null:
+		var j := JSON.new()
+		if j.parse(file.get_as_text()) == OK:
+			var sc: Dictionary = (j.get_data() as Dictionary).get("scenario", {})
+			scenario_id   = str(sc.get("id",   ""))
+			scenario_name = str(sc.get("name", ""))
+		file.close()
+	var meta: Dictionary = {
+		"timestamp":     Time.get_unix_time_from_system(),
+		"scenario_id":   scenario_id,
+		"scenario_name": scenario_name,
+		"map_path":      _current_map_path,
+		"turn_number":   _turn_number,
+		"gold":          _player_gold,
+		"food":          _player_food,
+		"hero_count":    _alive_hero_keys().size(),
+	}
+	EmpireSaveStorage.save_slot(slot_id, meta, snap)
+
+
+# 从指定槽位读取并应用快照（仅在地图构建完成后调用）。
+func _apply_save_slot(slot_id: String) -> void:
+	var entry := EmpireSaveStorage.load_slot(slot_id)
+	if entry.is_empty():
+		return
+	var snap: Dictionary = entry.get("state", {})
+	if snap.is_empty():
+		return
+
+	# --- 恢复卡组（注入到会话缓存）---
+	var decks_snap: Dictionary = snap.get("decks", {})
+	EmpireDeckStorage.inject_from_save(decks_snap)
+
+	# --- 节点势力 ---
+	var fmap: Dictionary = snap.get("faction_overrides", {})
+	for nid in fmap.keys():
+		var node = _id_to_node.get(int(nid), null)
+		if node and is_instance_valid(node):
+			var fid: int = int(fmap[nid])
+			node._faction_id = fid
+			node._fill       = _faction_color(fid)
+			node._faction_name = _faction_name(fid)
+			node.queue_redraw()
+
+	# --- 部署 ---
+	_deployed_heroes.clear()
+	var dep: Dictionary = snap.get("deployed", {})
+	for hk in dep.keys():
+		var n = _id_to_node.get(int(dep[hk]), null)
+		if n and is_instance_valid(n):
+			_deployed_heroes[String(hk)] = n
+
+	# --- 流放 / 出征 / 行棋 ---
+	_exiled_heroes = (snap.get("exiled", {}) as Dictionary).duplicate()
+
+	_pending_campaigns.clear()
+	var camps_dump: Dictionary = snap.get("pending_campaigns", {})
+	for sid in camps_dump.keys():
+		_pending_campaigns[int(sid)] = (camps_dump[sid] as Array).duplicate()
+	_pending_campaign_sources = (snap.get("pending_campaign_sources", {}) as Dictionary).duplicate()
+
+	_pending_moves.clear()
+	var moves_dump: Dictionary = snap.get("pending_moves", {})
+	for hk in moves_dump.keys():
+		var n = _id_to_node.get(int(moves_dump[hk]), null)
+		if n and is_instance_valid(n):
+			_pending_moves[String(hk)] = n
+
+	# --- 资源 / 回合 ---
+	_player_gold   = int(snap.get("gold", 0))
+	_player_food   = int(snap.get("food", 0))
+	_turn_number   = int(snap.get("turn_number", 0))
+	_talent_last_hero = String(snap.get("talent_last_hero", ""))
+
+	# --- 全量刷新图标 + 信息面板 ---
+	for n in _shape_nodes:
+		_refresh_deploy_icons_for(n)
+	_refresh_info_panel()
+
+	# --- 战斗选择模式 ---
+	if bool(snap.get("battle_select_mode", false)) and not _pending_campaigns.is_empty():
+		_enter_battle_select_mode()
+	else:
+		_exit_battle_select_mode()
 
 
 # 战斗回流后还原。在 _build_map 完成后调用。
@@ -1306,9 +1456,233 @@ func _restore_empire_state_if_any() -> void:
 	Game.empire_battle_result = ""
 
 
-# 应用单场战斗结果。胜利 → 占领该 target；该列表内全部 hero 进驻 target。
-# 失败 → 全部 hero 留在原 source。任一情况下：把该 target 从 _pending_campaigns 移除，
-# 并清掉该列表内 hero 的 source 记录。
+# ── 手动存档（设置面板「存档」按钮）────────────────────────────────────────────
+
+func _on_manual_save_pressed() -> void:
+	if _battle_select_mode or _drag_active:
+		return
+	# 构建内嵌存档槽内容（3 个手动槽，适配选项面板尺寸）
+	var container := _build_save_embed_view()
+	_settings.show_embedded_view(container)
+
+
+func _build_save_embed_view() -> Control:
+	var container := Control.new()
+	container.mouse_filter = Control.MOUSE_FILTER_PASS
+
+	var vb := VBoxContainer.new()
+	vb.name = "SaveEmbedVBox"
+	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vb.offset_left   = 30;  vb.offset_right  = -30
+	vb.offset_top    = 25;  vb.offset_bottom = -25
+	vb.add_theme_constant_override("separation", 14)
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.mouse_filter = Control.MOUSE_FILTER_PASS
+	container.add_child(vb)
+
+	# 标题
+	var title := Label.new()
+	title.text = "选择存档槽"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 28)
+	title.add_theme_color_override("font_color", Color("#1c7ed6"))
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(title)
+
+	var sep := HSeparator.new()
+	var sep_style := StyleBoxFlat.new()
+	sep_style.bg_color = Color("#d1d9e0")
+	sep_style.content_margin_top = 1; sep_style.content_margin_bottom = 1
+	sep.add_theme_stylebox_override("separator", sep_style)
+	vb.add_child(sep)
+
+	# 3 个手动槽
+	var entries := _get_save_slot_entries()
+	for entry in entries:
+		var row := _make_save_slot_row(entry, container)
+		vb.add_child(row)
+
+	# 取消按钮
+	var cancel_btn := Button.new()
+	cancel_btn.text = "取消"
+	cancel_btn.custom_minimum_size = Vector2(280, 70)
+	cancel_btn.add_theme_font_size_override("font_size", 26)
+	ThemeFactory.apply_button_styles(cancel_btn, ThemeFactory.settings_button_styles())
+	cancel_btn.add_theme_color_override("font_color",         Color.WHITE)
+	cancel_btn.add_theme_color_override("font_hover_color",   Color.WHITE)
+	cancel_btn.add_theme_color_override("font_pressed_color", Color.WHITE)
+	cancel_btn.pressed.connect(func(): _settings.hide_embedded_view())
+	vb.add_child(cancel_btn)
+
+	return container
+
+
+func _make_save_slot_row(entry: Dictionary, container: Control) -> Button:
+	var exists: bool = bool(entry.get("exists", false))
+	var row := Button.new()
+	row.custom_minimum_size = Vector2(0, 70)
+	row.flat = false
+	row.focus_mode = Control.FOCUS_NONE
+	row.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var normal_c := Color.WHITE if exists else Color("#e9ecef")
+	var styles := {
+		"normal":   ThemeFactory.panel(normal_c,         Color("#ced4da"), 1, 12, true),
+		"hover":    ThemeFactory.panel(Color("#d0ebff"), Color("#74c0fc"), 1, 12, true),
+		"pressed":  ThemeFactory.panel(Color("#a5d8ff"), Color("#4dabf7"), 1, 12, true),
+		"disabled": ThemeFactory.panel(Color("#e9ecef"), Color("#dee2e6"), 1, 12, false),
+	}
+	ThemeFactory.apply_button_styles(row, styles)
+
+	# 左标签 + 右摘要 HBox
+	var hb := HBoxContainer.new()
+	hb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hb.offset_left = 16; hb.offset_right = -16
+	hb.offset_top  = 0;  hb.offset_bottom = 0
+	hb.add_theme_constant_override("separation", 10)
+	hb.alignment = BoxContainer.ALIGNMENT_CENTER
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(hb)
+
+	var lbl_name := Label.new()
+	lbl_name.text = str(entry.get("label", ""))
+	lbl_name.add_theme_font_size_override("font_size", 24)
+	lbl_name.add_theme_color_override("font_color", Color("#1f2937") if exists else Color("#adb5bd"))
+	lbl_name.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	lbl_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(lbl_name)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(spacer)
+
+	var lbl_meta := Label.new()
+	lbl_meta.text = str(entry.get("meta_text", "（空）"))
+	lbl_meta.add_theme_font_size_override("font_size", 18)
+	lbl_meta.add_theme_color_override("font_color", Color("#6c757d") if exists else Color("#ced4da"))
+	lbl_meta.size_flags_horizontal = Control.SIZE_SHRINK_END
+	lbl_meta.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(lbl_meta)
+
+	var sid: String = str(entry.get("slot_id", ""))
+	row.pressed.connect(func(): _on_save_row_pressed(sid, exists, container))
+	return row
+
+
+func _on_save_row_pressed(slot_id: String, exists: bool, container: Control) -> void:
+	if exists:
+		_show_overwrite_confirm(slot_id, container)
+	else:
+		_write_save_slot(slot_id)
+		_settings.hide_embedded_view()
+		_settings.close()
+
+
+func _show_overwrite_confirm(slot_id: String, container: Control) -> void:
+	# 覆盖确认弹层，附加在 _panel 内（z_index 高于 container）
+	var co := Control.new()
+	co.set_anchors_preset(Control.PRESET_FULL_RECT)
+	co.mouse_filter = Control.MOUSE_FILTER_STOP
+	co.z_index = 50
+	container.add_child(co)
+
+	var bg := Panel.new()
+	bg.add_theme_stylebox_override("panel",
+		ThemeFactory.panel(Color(0.96, 0.97, 0.98, 0.96), Color("#d1d9e0"), 1, 20, false))
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP
+	co.add_child(bg)
+
+	var vb := VBoxContainer.new()
+	vb.set_anchors_preset(Control.PRESET_CENTER, false)
+	vb.offset_left = -140; vb.offset_right  = 140
+	vb.offset_top  = -80;  vb.offset_bottom = 80
+	vb.add_theme_constant_override("separation", 20)
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	co.add_child(vb)
+
+	var lbl := Label.new()
+	lbl.text = "覆盖已有存档？"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 26)
+	lbl.add_theme_color_override("font_color", Color("#1f2937"))
+	vb.add_child(lbl)
+
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 20)
+	hb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_child(hb)
+
+	var ok_btn := Button.new()
+	ok_btn.text = "覆盖"
+	ok_btn.custom_minimum_size = Vector2(140, 64)
+	ok_btn.add_theme_font_size_override("font_size", 24)
+	ThemeFactory.apply_button_styles(ok_btn, ThemeFactory.primary_button_styles())
+	ok_btn.add_theme_color_override("font_color",         Color.WHITE)
+	ok_btn.add_theme_color_override("font_hover_color",   Color.WHITE)
+	ok_btn.add_theme_color_override("font_pressed_color", Color.WHITE)
+	ok_btn.pressed.connect(func():
+		_write_save_slot(slot_id)
+		_settings.hide_embedded_view()
+		_settings.close())
+	hb.add_child(ok_btn)
+
+	var no_btn := Button.new()
+	no_btn.text = "返回"
+	no_btn.custom_minimum_size = Vector2(140, 64)
+	no_btn.add_theme_font_size_override("font_size", 24)
+	ThemeFactory.apply_button_styles(no_btn, ThemeFactory.settings_button_styles())
+	no_btn.add_theme_color_override("font_color",         Color.WHITE)
+	no_btn.add_theme_color_override("font_hover_color",   Color.WHITE)
+	no_btn.add_theme_color_override("font_pressed_color", Color.WHITE)
+	no_btn.pressed.connect(func(): co.queue_free())
+	hb.add_child(no_btn)
+
+
+# 槽位信息列表，供 picker 渲染。每项：
+#   {slot_id, label, meta_text, is_auto, exists}
+func _get_save_slot_entries() -> Array:
+	var out: Array = []
+	var all_slots := EmpireSaveStorage.list_slots()
+	var slot_meta: Dictionary = {}
+	for item in all_slots:
+		slot_meta[String(item["slot_id"])] = item.get("meta", {})
+
+	var manual_ids: Array = [
+		EmpireSaveStorage.SLOT_1,
+		EmpireSaveStorage.SLOT_2,
+		EmpireSaveStorage.SLOT_3,
+	]
+	for i in manual_ids.size():
+		var sid: String = manual_ids[i]
+		var meta: Dictionary = slot_meta.get(sid, {})
+		out.append({
+			"slot_id":   sid,
+			"label":     "存档 " + str(i + 1),
+			"meta_text": _format_meta(meta) if not meta.is_empty() else "（空）",
+			"is_auto":   false,
+			"exists":    not meta.is_empty(),
+		})
+	return out
+
+
+func _format_meta(meta: Dictionary) -> String:
+	if meta.is_empty():
+		return "（空）"
+	var ts: float = float(meta.get("timestamp", 0.0))
+	var dt := Time.get_datetime_dict_from_unix_time(int(ts))
+	var date_str: String = "%04d-%02d-%02d %02d:%02d" % [
+		int(dt.get("year", 0)), int(dt.get("month", 0)), int(dt.get("day", 0)),
+		int(dt.get("hour", 0)), int(dt.get("minute", 0)),
+	]
+	var scenario: String = str(meta.get("scenario_name", ""))
+	var turn: int = int(meta.get("turn_number", 0))
+	var gold: int = int(meta.get("gold", 0))
+	var food: int = int(meta.get("food", 0))
+	return "%s  %s  第%d回合  金:%d 粮:%d" % [date_str, scenario, turn, gold, food]
+
+
 func _apply_battle_result(target_id: int) -> void:
 	if target_id < 0 or not _pending_campaigns.has(target_id):
 		return
