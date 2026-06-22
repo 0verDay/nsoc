@@ -647,6 +647,17 @@ AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{s
 
 - 章节场景列表来自 `campaigns.json`，由 `DataLoader` 静态读取。
 
+**主菜单二级面板路由**（`main_menu.gd`）：`SECONDARY_PANEL_SCENES` 字典将按钮名映射到对应场景；`JourneyBtn` → `YanyiPanel.tscn`（演义）。
+
+**跨场景返回机制**（`class_name MainMenu`）：
+
+| 静态变量 | 类型 | 说明 |
+|---|---|---|
+| `pending_open_btn` | `String` | 场景切回前写入目标按钮名；`_maybe_auto_open()` 在 `_setup_transition` 完成后触发对应面板 |
+| `pending_open_instant` | `bool` | `true` 时跳过展开动画，直接呈现展开态 + 挂载二级面板（`_apply_expanded_instant`）；用于从子场景（如 EmpireMain）无动画返回 |
+
+`_maybe_auto_open` 在 `_ready` 中 `call_deferred("_setup_transition")` 之后 `call_deferred("_maybe_auto_open")` 以保证 layout 稳定。
+
 ## 5. 备战界面（PreparePanel）
 
 HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + MusterPnl。手势分流：SCROLL / DRAG / 长按三态互斥。卡组持久化：切英雄前存旧卡组，tree_exiting 兜底保存。
@@ -1628,7 +1639,70 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 
 ---
 
-### 15.12 出征战斗系统
+### 15.12 剧本选择流程（YanyiPanel → EmpireScenarioView → EmpireTest）
+
+#### 入口
+
+`MainMenu` → 右下 `JourneyBtn`（"演义"）→ 面板展开 → `YanyiPanel`（二级面板）：
+
+- 右侧 `RightActionPnl`：帝国 / 游历两个模式按钮（`ModeBtn0 / ModeBtn1`）
+- 左侧 `LeftContentPnl`：主内容区，当前选中模式的内容
+- 帝国模式下：左上标题 + 右侧「载入 / 开始 / 继续」操作按钮列
+
+#### 进入剧本选择（点击「开始」）
+
+`YanyiPanel._on_empire_start_pressed()`：
+
+1. 淡出 `right_action_pnl` + `left_content_pnl`（0.3s），完成后 `hide()` 防止透明节点拦截鼠标
+2. 实例化 `EmpireScenarioView.tscn`，填满 YanyiPanel（PRESET_FULL_RECT），`move_child(view, 0)` 置底层
+3. 淡入剧本视图；`_in_scenario_view = true`
+
+**递层返回**：`back_btn.pressed` 接管为 `_on_back_btn_pressed`：
+- `_in_scenario_view == true` → `_exit_scenario_view()`（淡出剧本视图 → 重建帝国内容 → 淡入旧面板）
+- `false` → `back_pressed.emit()`（返回主菜单）
+
+#### EmpireScenarioView（`scripts/ui/empire_scenario_view.gd`，`scenes/EmpireScenarioView.tscn`）
+
+填满 YanyiPanel 全区域（无额外底板）；内含：
+
+| 子面板 | 位置 | 内容 |
+|---|---|---|
+| `MapThumbPnl` | 右半顶区，顶部避让 BackBtn（BACKBTN_H + GAP） | `_MapThumbnail` 内嵌类，从地图 JSON 绘制缩略图 |
+| `DescPnl` | 全宽，顶区下方 | 剧本描述文字（左上对齐） |
+| `CarouselPnl` | 全宽，描述下方 | `_ElasticHScroll` 水平弹性轮播（rubber band + 0.28s 回弹） |
+
+**剧本加载**：扫描 `res://data/empire_maps/`，读取含 `scenario` 键的 JSON，按 `scenario.id` 升序排列，生成对应数量的轮播按钮（文字 = 剧本名）。
+
+**选择交互**：
+- 首次点击 → 选中（蓝色高亮），更新 DescPnl 文字 + MapThumbPnl 缩略图
+- 再次点击已选中 → `_enter_map(idx)`：写 `EmpireTest.pending_map_path`，`change_scene_to_file(EmpireTest.tscn)`
+
+#### EmpireTest 接入
+
+`class_name EmpireTest`，新增：
+
+| 静态变量 | 说明 |
+|---|---|
+| `static var pending_map_path: String` | 进入前写入目标地图路径；`_load_map()` 读取后立即清空；空串则回退默认 `test_map.json` |
+
+玩家默认 Ap 势力（`PLAYER_FACTION_ID = 1`，已硬编码）。
+
+#### 地图 JSON 格式（含剧本字段）
+
+```json
+{
+  "scenario": {
+    "id": 1,
+    "name": "囊关之战",
+    "description": "剧本描述文字..."
+  },
+  "factions": [...],
+  "shapes": [...],
+  "connections": [...]
+}
+```
+
+---
 
 #### 15.12.1 出征意向（`_pending_campaigns`）
 
@@ -1695,7 +1769,7 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 
 `tools/empire_map_tool/empire_map_editor.py`，独立 Python/Tkinter 工具，可视化编辑地点节点与连接线并导出 JSON。详见 `tools/empire_map_tool/README.md`。
 
-### 15.14 当前完成度
+### 15.15 当前完成度
 
 | 模块 | 状态 |
 |---|---|
@@ -1713,6 +1787,10 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 | 多场出征逐场独立结算 | ✅ |
 | 地点详情面板 / 驻军列表 | ✅ |
 | 人才详情面板 / 配属部队列表 | ✅ |
+| 剧本选择界面（YanyiPanel 二级） | ✅（扫描 empire_maps/ 自动读取剧本） |
+| 地图缩略图（从 JSON 运行时绘制） | ✅ |
+| 剧本轮播（水平弹性滚动） | ✅ |
+| 剧本进入战斗（EmpireTest.pending_map_path） | ✅ |
 | 方略面板 | ❌ 占位 |
 | AI / 敌方回合 | ✅ 战斗场景已接入（见 §16）|
 | 升级 / 训练 / 招募 | ❌ 占位按钮置灰 |

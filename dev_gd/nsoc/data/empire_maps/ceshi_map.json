@@ -1,0 +1,279 @@
+{
+  "scenario": {
+    "id": 2,
+    "name": "测试剧本",
+    "description": "这是一个测试剧本\n阿巴阿巴\n咕咕嘎嘎\n歪比巴卜"
+  },
+  "factions": [
+    {
+      "id": 0,
+      "name": "中立",
+      "color": "#808080"
+    },
+    {
+      "id": 1,
+      "name": "Ap",
+      "color": "#4A90D9"
+    },
+    {
+      "id": 2,
+      "name": "Bp",
+      "color": "#FF2429"
+    }
+  ],
+  "shapes": [
+    {
+      "id": 1,
+      "kind": "triangle",
+      "x": 233.93,
+      "y": 192.24,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 2,
+      "kind": "circle",
+      "x": 731.08,
+      "y": 339.28,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 3,
+      "kind": "square",
+      "x": 292.01,
+      "y": 570.27,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0,
+      "category": 1
+    },
+    {
+      "id": 4,
+      "kind": "triangle",
+      "x": 1291.96,
+      "y": 833.1,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 5,
+      "kind": "circle",
+      "x": 545.59,
+      "y": 593.73,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 2
+    },
+    {
+      "id": 6,
+      "kind": "triangle",
+      "x": 674.83,
+      "y": 53.98,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 1
+    },
+    {
+      "id": 7,
+      "kind": "square",
+      "x": 1341.32,
+      "y": 102.66,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0,
+      "category": 1
+    },
+    {
+      "id": 8,
+      "kind": "triangle",
+      "x": 1159.02,
+      "y": 374.74,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 9,
+      "kind": "triangle",
+      "x": 1013.21,
+      "y": 532.99,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 10,
+      "kind": "circle",
+      "x": 775.41,
+      "y": 1064.6,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 11,
+      "kind": "square",
+      "x": 452.35,
+      "y": 1012.43,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0,
+      "category": 1
+    },
+    {
+      "id": 12,
+      "kind": "triangle",
+      "x": 162.5,
+      "y": 924.86,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 13,
+      "kind": "circle",
+      "x": 54.55,
+      "y": 655.37,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 14,
+      "kind": "square",
+      "x": 0.0,
+      "y": 432.2,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0,
+      "category": 1
+    },
+    {
+      "id": 15,
+      "kind": "square",
+      "x": 97.77,
+      "y": 0.0,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0,
+      "category": 1
+    },
+    {
+      "id": 16,
+      "kind": "triangle",
+      "x": 398.03,
+      "y": 371.47,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    },
+    {
+      "id": 17,
+      "kind": "circle",
+      "x": 900.84,
+      "y": 48.79,
+      "name": "",
+      "gold": 0,
+      "food": 0,
+      "faction": 0
+    }
+  ],
+  "connections": [
+    {
+      "from": 15,
+      "to": 1
+    },
+    {
+      "from": 14,
+      "to": 1
+    },
+    {
+      "from": 14,
+      "to": 13
+    },
+    {
+      "from": 3,
+      "to": 13
+    },
+    {
+      "from": 12,
+      "to": 3
+    },
+    {
+      "from": 16,
+      "to": 6
+    },
+    {
+      "from": 6,
+      "to": 1
+    },
+    {
+      "from": 7,
+      "to": 17
+    },
+    {
+      "from": 17,
+      "to": 6
+    },
+    {
+      "from": 2,
+      "to": 6
+    },
+    {
+      "from": 8,
+      "to": 2
+    },
+    {
+      "from": 2,
+      "to": 5
+    },
+    {
+      "from": 3,
+      "to": 5
+    },
+    {
+      "from": 5,
+      "to": 11
+    },
+    {
+      "from": 5,
+      "to": 9
+    },
+    {
+      "from": 4,
+      "to": 10
+    },
+    {
+      "from": 10,
+      "to": 5
+    },
+    {
+      "from": 4,
+      "to": 9
+    },
+    {
+      "from": 6,
+      "to": 5
+    }
+  ]
+}

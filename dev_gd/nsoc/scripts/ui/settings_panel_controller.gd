@@ -45,10 +45,15 @@ var _can_open: Callable
 # 可选：投降按钮（仅 PVP 模式注入）。Callable 有效则在"设置"与"退回菜单"之间插入红色"投降"按钮。
 var _surrender_action: Callable
 # 可选：额外按钮列表。每项为 { "label": String, "action": Callable }，插入在"设置"与"退回菜单"之间。
+# embed: true 时点击后不关闭面板，直接调 action（用于原地展开子视图）。
 var _extra_buttons: Array = []
 var _button_align: String = "left"   # "left" | "right"
 # hide_exit = true 时不渲染"退回菜单"按钮（帝国出征战斗中使用）。
 var _hide_exit: bool = false
+
+# 当前嵌入的子视图（show_embedded_view 时写入，hide_embedded_view 清除）
+var _embedded_view: Control = null
+var _embed_tween: Tween
 
 func setup(parent: Control, config: Dictionary = {}) -> void:
 	_parent = parent
@@ -174,7 +179,11 @@ func _build_overlay_and_panel() -> void:
 			var eb := _make_button(String(entry["label"]))
 			if entry.has("action") and entry["action"] is Callable:
 				var action: Callable = entry["action"]
-				eb.pressed.connect(func(): close(); action.call())
+				if bool(entry.get("embed", false)):
+					# embed 模式：不关闭面板，直接调 action（action 负责调 show_embedded_view）
+					eb.pressed.connect(func(): action.call())
+				else:
+					eb.pressed.connect(func(): close(); action.call())
 			vbox.add_child(eb)
 
 	var exit_btn := _make_button(_exit_label)
@@ -353,6 +362,10 @@ func open() -> void:
 	_config_vbox.visible = false
 	_config_vbox.modulate.a = 1.0
 	_restore_offsets(_config_vbox, _config_offsets)
+	# 嵌入视图未清理时（例如上次未正常关闭），强制移除
+	if _embedded_view != null and is_instance_valid(_embedded_view):
+		_embedded_view.queue_free()
+	_embedded_view = null
 	_animate_open()
 
 # 居中面板打开：overlay 淡入 + panel 缩放放大 + 淡入。
@@ -404,7 +417,11 @@ func _animate_close() -> void:
 		_menu_vbox.modulate.a = 1.0
 		_config_vbox.modulate.a = 1.0
 		_restore_offsets(_menu_vbox, _menu_offsets)
-		_restore_offsets(_config_vbox, _config_offsets))
+		_restore_offsets(_config_vbox, _config_offsets)
+		# 嵌入视图复位
+		if _embedded_view != null and is_instance_valid(_embedded_view):
+			_embedded_view.queue_free()
+		_embedded_view = null)
 
 func is_open() -> bool:
 	return _is_open
@@ -414,3 +431,50 @@ func is_open() -> bool:
 # 仅当 setup 时 create_trigger_button=true（游玩场景）时返回非 null。
 func get_trigger_button() -> Button:
 	return _btn
+
+
+# 在面板内原地展开一个子视图（填满面板内容区）。
+# content 由调用方构建并传入；取消时调用方负责调 hide_embedded_view()。
+func show_embedded_view(content: Control) -> void:
+	if _embedded_view != null:
+		return
+	_embedded_view = content
+	content.modulate.a = 0.0
+	content.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_panel.add_child(content)
+
+	if _embed_tween and _embed_tween.is_valid():
+		_embed_tween.kill()
+	_embed_tween = get_tree().create_tween()
+	# 先淡出菜单按钮
+	_embed_tween.tween_property(_menu_vbox, "modulate:a", 0.0, SUBMENU_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	_embed_tween.tween_callback(func(): _menu_vbox.visible = false)
+	# 再淡入子视图
+	_embed_tween.tween_property(content, "modulate:a", 1.0, SUBMENU_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+
+# 关闭当前内嵌子视图，恢复菜单按钮。
+func hide_embedded_view() -> void:
+	if _embedded_view == null or not is_instance_valid(_embedded_view):
+		_embedded_view = null
+		return
+	var view: Control = _embedded_view
+	_embedded_view = null
+
+	if _embed_tween and _embed_tween.is_valid():
+		_embed_tween.kill()
+	# 先淡出子视图
+	_embed_tween = get_tree().create_tween()
+	_embed_tween.tween_property(view, "modulate:a", 0.0, SUBMENU_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	_embed_tween.tween_callback(func():
+		view.queue_free()
+		# 恢复菜单
+		_restore_offsets(_menu_vbox, _menu_offsets)
+		_menu_vbox.modulate.a = 0.0
+		_menu_vbox.visible = true)
+	# 再淡入菜单
+	_embed_tween.tween_property(_menu_vbox, "modulate:a", 1.0, SUBMENU_DURATION) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)

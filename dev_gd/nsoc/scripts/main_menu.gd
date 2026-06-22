@@ -1,4 +1,10 @@
+class_name MainMenu
 extends Control
+
+# 返回时自动打开的二级面板按钮名（由其他场景在切回前写入）。
+static var pending_open_btn: String = ""
+# true = 跳过展开动画，直接呈现展开态（用于从子场景返回，避免重复播放转场）。
+static var pending_open_instant: bool = false
 
 # MainMenu —— 启动后首个场景。
 # - 中央 test 按钮 → 进入主游玩场景
@@ -85,6 +91,8 @@ func _ready() -> void:
 		_options_btn.pressed.connect(_on_options_pressed)
 	# 延迟一帧待 layout 稳定后记录初始状态、装配转场。
 	call_deferred("_setup_transition")
+	# 若有返回自动打开请求，在 _setup_transition 后触发。
+	call_deferred("_maybe_auto_open")
 	# 退出到菜单的接力淡入（白→透明）
 	_maybe_play_fade_in()
 
@@ -515,6 +523,98 @@ func _collect_buttons_in(root: Node) -> Array:
 # 复用 _transition_targets 的 dir：左侧节点从屏左滑入、右侧从屏右滑入；
 # 各面板内按钮先 alpha=0，等面板归位后再淡入（与反向同节奏）。
 const INTRO_DURATION: float = 0.55
+
+# 检查 pending_open_btn，若非空则自动触发对应二级面板的转场。
+# 在 _setup_transition 完成后（同帧 deferred）调用。
+func _maybe_auto_open() -> void:
+	var key := MainMenu.pending_open_btn
+	if key.is_empty():
+		return
+	MainMenu.pending_open_btn = ""
+	var instant := MainMenu.pending_open_instant
+	MainMenu.pending_open_instant = false
+
+	const BTN_TO_PANEL_PATH: Dictionary = {
+		"CampaignBtn": "RightSidePnl",
+		"JourneyBtn":  "RightSidePnl",
+		"SparringBtn": "RightSidePnl",
+		"GrowBtn":     "LeftNavPnl",
+		"PrepareBtn":  "LeftNavPnl",
+		"FriendBtn":   "LeftNavPnl",
+		"CollectionBtn": "LeftNavPnl",
+		"CustomBtn":   "LeftNavPnl",
+	}
+	const BTN_NODE_PATH: Dictionary = {
+		"CampaignBtn":   "RightSidePnl/VBox/TopRow/CampaignBtn",
+		"JourneyBtn":    "RightSidePnl/VBox/TopRow/JourneyBtn",
+		"SparringBtn":   "RightSidePnl/VBox/SparringBtn",
+		"GrowBtn":       "LeftNavPnl/VBox/GrowBtn",
+		"PrepareBtn":    "LeftNavPnl/VBox/PrepareBtn",
+		"FriendBtn":     "LeftNavPnl/VBox/FriendBtn",
+		"CollectionBtn": "LeftNavPnl/VBox/CollectionBtn",
+		"CustomBtn":     "LeftNavPnl/VBox/CustomBtn",
+	}
+	var panel_path: String = BTN_TO_PANEL_PATH.get(key, "")
+	var btn_path:   String = BTN_NODE_PATH.get(key, "")
+	if panel_path.is_empty() or btn_path.is_empty():
+		return
+	var origin_panel: Control = get_node_or_null(panel_path)
+	var btn_node: Control     = get_node_or_null(btn_path)
+	if origin_panel == null or btn_node == null:
+		return
+
+	_origin_btn = btn_node
+
+	if instant:
+		_apply_expanded_instant(origin_panel)
+	else:
+		_trigger_transition(origin_panel, btn_node)
+
+
+# 跳过展开动画，直接将主菜单置于展开态并挂载二级面板。
+# 用于从子场景（如 EmpireMain）返回时，避免重新播放转场。
+func _apply_expanded_instant(origin_panel: Control) -> void:
+	var screen: Vector2 = get_viewport_rect().size
+
+	# 其余面板/按钮瞬间移至屏幕外 + 透明
+	for entry in _transition_targets:
+		var node: Control = entry.node
+		if node == null or node == origin_panel:
+			continue
+		var dir: int = entry.dir
+		node.modulate.a = 0.0
+		if dir > 0:
+			node.position.x = screen.x
+		elif dir < 0:
+			node.position.x = -node.size.x - 40.0
+
+	# 冻结 origin_panel 内按钮并透明
+	var fade_targets: Array = _collect_buttons_in(origin_panel)
+	_frozen_children = fade_targets.duplicate()
+	_frozen_state.clear()
+	for c in fade_targets:
+		var gpos: Vector2 = c.global_position
+		var csize: Vector2 = c.size
+		_frozen_state[c] = {"gpos": gpos, "size": csize}
+		c.top_level = true
+		c.global_position = gpos
+		c.size = csize
+		c.modulate.a = 0.0
+		if c is Control:
+			(c as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	# origin_panel 直接展开到全屏
+	var expanded_size: Vector2 = screen - Vector2(EXPANDED_MARGIN * 2.0, EXPANDED_MARGIN * 2.0)
+	var expanded_pos: Vector2  = Vector2(EXPANDED_MARGIN, EXPANDED_MARGIN)
+	origin_panel.size         = expanded_size
+	origin_panel.position     = expanded_pos
+	origin_panel.pivot_offset = expanded_size * 0.5
+	origin_panel.move_to_front()
+
+	_is_transitioning = false
+	_is_expanded      = true
+	_spawn_secondary_panel(origin_panel)
+
 
 func _play_intro_animation() -> void:
 	if _initial_state.is_empty():
