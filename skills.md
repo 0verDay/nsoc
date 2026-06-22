@@ -233,6 +233,17 @@ AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{s
 
 ### 3.5 回合驱动（多棋盘）
 
+`TurnSystem` 信号：
+
+| 信号 | 触发时机 |
+|---|---|
+| `turn_started` | 每回合开始（`run()` 开头，`turn_number` 已自增） |
+| `turn_ended` | 每回合结束（全部单位行动完毕） |
+| `phase_started(faction: int)` | 每阵营行动阶段开始（`TurnSystem.PLAYER=0` / `TurnSystem.ENEMY=1`） |
+| `phase_ended(faction: int)` | 每阵营行动阶段结束 |
+| `front_row_action_requested(cell)` | 玩家前排单位即将跨盘，等待 `resolve_front_row_selection(target_id)` 后继续 |
+| `slot_action_started(slot)` | 当前正在处理的 slot 切换时发出（每 slot 第一个有效单位时 emit，行动顺序指示器用） |
+
 `TurnSystem.run`：**友军 AI 出牌** → 玩家阶段 → 刷怪 → **敌方 AI 出牌** → 敌方阶段 → reset_attack_flags（主棋盘+所有额外棋盘）。
 
 - `_run_ai_phase_for_faction(faction)` — PVE 专属；按 `faction` 过滤 `AiManager.all_agents()` 中对应阵营的 Agent，依次调 `agent.mana.start_new_turn()` + `await agent.take_turn()`；`is_pvp == true` 时跳过
@@ -318,6 +329,32 @@ AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{s
 - `HeroActionBar` (`scripts/ui/hero_action_bar.gd`) — 玩家英雄行动条（挂在 LeftSidePnl 内），顶部英雄技能按钮 + 下方已装备按钮列表；装备打出/耐久归零时触发三阶段面板扩展/收缩动画（渐隐→位移→渐显）；监听 `Equipments.equipment_added/removed/changed` 信号动态增删按钮
 
   **HeroActionBar 装备按钮**：每行改为 `HBoxContainer`（宽 `BTN_W=240`）= 黄色耐久 `Label`（`ThemeFactory.pill(#fcc419)`，固定宽 32px，显示剩余耐久数字）+ `Button`（`SIZE_EXPAND_FILL`，文字仅装备名）。`_equip_buttons` 存 HBoxContainer，`_equip_dur_labels` 存 Label，刷新时各自更新；动画遍历改为 `is Button or is HBoxContainer`。
+
+- `ObjectiveDrawer` (`scripts/ui/objective_drawer.gd`，`class_name ObjectiveDrawer extends PanelContainer`) — 章节目标抽屉，战役章节战斗中在屏幕左上角常驻：
+
+  - 布局：VBox（章节名蓝色 22pt + 目标描述黑 18pt + 进度文本金 16pt + 分隔线 + 耳朵区 EAR_H=30px）
+  - 收起态：`position.y = -(PANEL_H - EAR_H)` 仅耳朵（`⌄` 箭头）可见；展开态：`position.y = 0`
+  - 手势：耳朵区向下滑 > `DRAG_THRESHOLD=20px` → 展开；面板任意处向上滑 → 收起；动画期间忽略新手势
+  - 展开后 `AUTO_CLOSE_SEC=4.0s` 自动收起（`Timer`）
+  - `setup(level_data)` — 填充章节名 + 目标描述 + 进度；`turn_ended` 信号驱动 `_update_progress()`
+  - 使用全局 `_input()`（非 `_gui_input`），热区固定为 `Rect2(DRAWER_X=12, 0, DRAWER_W=360, PANEL_H=160)`，与面板实际位置解耦
+
+- `TurnOrderIndicator` (`scripts/ui/turn_order_indicator.gd`，`class_name TurnOrderIndicator extends Control`) — 单棋盘行动顺序徽章 + 转圈光环：
+
+  - 由 `BoardOrchestrator` 在每个 slot 的 `bg_panel` 内部创建
+  - 徽章：圆形 `Panel`（32×32px，灰底灰边），中心数字 `Label`；自动定位到 bg_panel 上/下沿中点（视棋盘在视口上半/下半而定，不依赖 faction）
+  - 光环（`_Ring extends Control`）：270° 弧段旋转，颜色按 `slot.team_id`（team_a 蓝 / team_b 红 / defender 金 / attacker 橙）或 faction（PLAYER 蓝 / ENEMY 红）
+  - `set_order(num)` — 设置数字；`set_active(bool)` — 显示/隐藏光环 + 徽章透明度
+  - PVE 信号驱动：`phase_started(faction)` → 同阵营 slot 亮、异阵营灭；`turn_ended` → 回到 PLAYER 盘亮
+  - PVP：跳过信号驱动，由 `BoardOrchestrator.preview_active_pvp_slots()` 统一管理
+
+- `ActionOrderBar` (`scripts/ui/action_order_bar.gd`，`class_name ActionOrderBar extends HBoxContainer`) — 多队伍 PVP 顶部行动顺序状态条：
+
+  - PVE / 1v1 不显示（`hide()`）；`is_multi_team_pvp()` 为 true 时才显示
+  - 按 `pvp_action_order` 顺序排列玩家昵称 Label；当前行动者橙色 `▶ 昵称`；阵亡者灰色删除线
+  - 3v3：team_a 蓝色 / team_b 红色
+  - `refresh()` — `pvp_advance_turn` 后调用
+  - 昵称取 `Net.get_room_players()` 中对应 uuid 的 nickname，无则用 pid 后 4 位
 
 **TestMain 专属控制器（已抽出独立文件，可未来迁移到 main）：**
 
@@ -421,9 +458,16 @@ AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{s
 
 - 无 `type` 字段或 type 不存在时静默忽略（旧关卡兼容）
 
+- `current_description() -> String` — 当前激活目标的描述文本（供 `ObjectiveDrawer` 等 UI 使用）
+
+- `current_progress_text() -> String` — 当前激活目标的进度文本（如 `"1 / 3"`）；无进度概念或无激活目标时返回 `""`
+
+- `has_active() -> bool` — 是否有激活目标
+
 **Objective 基类**（`scripts/objectives/objective.gd`）：
 
 - `id() / description(params) / setup(params) / is_completed(params) -> bool`
+- `progress_text(params) -> String` — 当前进度文本（如 `"1 / 3"`），无进度概念时返回 `""`；由 `ObjectiveDrawer` 在 `turn_ended` 时调用刷新
 
 **内置目标类型**：
 
@@ -431,9 +475,11 @@ AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{s
 
 |---|---|---|---|
 
-| `survive_turns` | `survive_turns.gd` | `turn_ended` | `turn_number >= turns`（每 `turn_ended` 时 turn_number 已自增） |
+| `survive_turns` | `survive_turns.gd` | `turn_ended` | `turn_number >= turns`（每 `turn_ended` 时 turn_number 已自增）；`progress_text` 返回 `"当前 / 目标"` |
 
 | `kill_enemy_hero` | `kill_enemy_hero.gd` | 击杀敌方英雄（`HeroState.died` 信号）| 指定 `slot` 英雄死亡时即达成；无 `slot` 字段则任意敌方英雄死亡均达成 |
+
+> **注**：`kill_enemy_hero` 目标类型当前仅在主分支 `nsoc/` 中实现，`dev_gd/nsoc/scripts/objectives/` 下尚未迁入；dev_gd 目前只有 `survive_turns`。
 
 `survive_turns` 示例（坚守 1 回合）：玩家点第 1 次"结束回合" → run() 完毕 → `turn_ended`（turn_number=1）→ `1 >= 1` → 胜利。
 
@@ -1639,6 +1685,58 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 
 ---
 
+### 15.13 帝国存档系统
+
+**`EmpireSaveStorage`**（`scripts/core/empire_save_storage.gd`，全静态方法）：
+
+持久化文件 `user://empire_saves.json`，槽位：
+
+| 槽位 | 说明 |
+|---|---|
+| `"auto"` | 自动档（回合结束时写入） |
+| `"slot_1"` / `"slot_2"` / `"slot_3"` | 手动档（玩家主动存档） |
+
+文件结构：`{"version": 1, "slots": {"<slot_id>": {"meta": {...}, "state": {...}}}}`
+
+- `save_slot(slot_id, meta, state)` / `load_slot(slot_id) -> Dictionary`
+- `delete_slot(slot_id)` / `list_slots() -> Array` — 返回 `[{slot_id, meta}, ...]`，auto 优先
+- `has_auto_save() -> bool`
+
+**`EmpireStateIO`**（`scripts/core/empire_state_io.gd`，全静态方法）：
+
+帝国模式快照序列化/反序列化，与 `EmpireTest` 解耦（通过参数传入运行时状态，不持有节点引用）：
+
+- `build_snapshot(deployed, exiled, campaigns, campaign_sources, moves, shape_nodes, battle_select_mode, gold, food, turn_number, talent_last_hero, map_path) -> Dictionary` — 把运行时状态打包；快照含 `deployed / exiled / pending_campaigns / pending_campaign_sources / pending_moves / faction_overrides / gold / food / turn_number / talent_last_hero / map_path / decks`
+
+- `write_save_slot(slot_id, snap, map_path, turn_number, gold, food, alive_hero_count)` — 附加 meta（timestamp / scenario_id / scenario_name / map_path / turn_number / gold / food / hero_count）后调 `EmpireSaveStorage.save_slot`
+
+- `apply_snapshot(snap, id_to_node, faction_color_fn, faction_name_fn) -> Dictionary` — 反序列化：恢复节点势力 + deployed + exiled + 出征 + 行棋 + 卡组（`EmpireDeckStorage.inject_from_save`）；返回恢复后的运行时字典，由调用方写回自身成员
+
+- `read_scenario_meta(map_path) -> Dictionary` — 从 map JSON 读 scenario.id/name（仅元数据，不加载完整地图）
+
+**`EmpireSavePanel`**（`scripts/ui/empire_save_panel.gd`，`class_name EmpireSavePanel extends RefCounted`）：
+
+帝国模式手动存档 UI 构建器：
+
+- `build_embed_view(on_save_cb, on_cancel_cb) -> Control` — 构建可嵌入 `SettingsPanelController` 的存档选择视图
+- 展示 3 个手动档槽位行（含已有存档摘要：剧本名/回合数/金/食/将领数），点击写盘后回调 `on_save_cb(slot_id)`
+- 依赖 `EmpireSaveStorage.list_slots()` 读取现有摘要；不存在的槽位显示"（空）"
+- 通过 `save_requested(slot_id)` 信号把槽位 id 回传给调用方
+
+**`EmpireTransitionController`**（`scripts/ui/empire_transition_controller.gd`，`class_name EmpireTransitionController extends RefCounted`）：
+
+从 `EmpireTest` 抽离的大地图 ↔ 二级面板转场控制器，不持有场景树引用：
+
+- `setup(owner, map_root, secondary_panel_scenes, profile_panel_scene)` — 注入依赖
+- `register_target(node, dir)` — 注册参与转场的节点（`dir: -1=左滑 / 1=右滑`）
+- `trigger(origin_panel, origin_btn)` — 发起正向转场（地图收缩 → 面板展开）
+- `trigger_reverse()` — 发起反向转场（面板收起 → 地图恢复）
+- `install_info_panel_button(pnl)` — 为 InfoPanel 安装透明点击代理按钮
+- 信号：`secondary_attached(panel)` / `reverse_finished`；代理转发 `deploy_requested(hero_key)` / `recall_requested(hero_key)`
+- `talent_last_hero: String` — 人才最后查看记录（由 `EmpireTest` 注入/读取）
+
+---
+
 ### 15.12 剧本选择流程（YanyiPanel → EmpireScenarioView → EmpireTest）
 
 #### 入口
@@ -1765,10 +1863,6 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 
 ---
 
-### 15.13 地图编辑器工具
-
-`tools/empire_map_tool/empire_map_editor.py`，独立 Python/Tkinter 工具，可视化编辑地点节点与连接线并导出 JSON。详见 `tools/empire_map_tool/README.md`。
-
 ### 15.15 当前完成度
 
 | 模块 | 状态 |
@@ -1791,6 +1885,7 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 | 地图缩略图（从 JSON 运行时绘制） | ✅ |
 | 剧本轮播（水平弹性滚动） | ✅ |
 | 剧本进入战斗（EmpireTest.pending_map_path） | ✅ |
+| 自动档 / 手动存档（EmpireSaveStorage + EmpireStateIO + EmpireSavePanel） | ✅（3槽位手动档 + 自动档，含 `EmpireTransitionController` 存档入口，见 §15.13） |
 | 方略面板 | ❌ 占位 |
 | AI / 敌方回合 | ✅ 战斗场景已接入（见 §16）|
 | 升级 / 训练 / 招募 | ❌ 占位按钮置灰 |
