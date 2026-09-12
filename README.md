@@ -8,15 +8,11 @@ neo soul of card
 https://github.com/qfwj-lyy/soc
 ```
 
-现依据ai进行重置，当前游戏名可能不是最终版游戏名
-
-当前仓库：`https://github.com/0verDay/nsoc`
+现依据ai进行重置，当前游戏名可能不是最终版游戏名，本README为纯手搓，用于记录更新
 
 ## 开发者
 
 - 轶名 @yuyi-yutie
-
-## 仓库结构
 
 ## dev1
 
