@@ -18,14 +18,6 @@ https://github.com/qfwj-lyy/soc
 
 ## 仓库结构
 
-| 路径 | 内容 | 技术栈 |
-|---|---|---|
-| `dev_gd/nsoc/` | **当前主开发工程**（游戏本体） | Godot 4.7.2 / GDScript |
-| `server/` | 多人联机中继服务器（房间 + 消息转发，无持久化） | Go 1.21 + gorilla/websocket |
-| `dev_gd/tools/empire_map_tool/` | 帝国（演义）模式地图编辑器 | Python 3 + tkinter |
-| `dev1/` | 早期网页原型，已冻结，仅作存档 | 原生 HTML/CSS/JavaScript |
-| 根目录 `*.md` | 架构与机制总结（`skills.md`）、AI 设计（`ai_dev.md`）、多人联机规划（`multiplay_*.md`）、3v3 清单（`dev3v3.md`）等 | — |
-
 ## dev1
 
 （命名dev为develop版本）
