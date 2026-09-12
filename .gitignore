@@ -1,2 +1,3 @@
-# Godot 导出产物
+# Godot 导出产物（当前导出预设输出到 dev_gd/nsoc/exports/）
 dev_gd/nsoc/export/
+dev_gd/nsoc/exports/
