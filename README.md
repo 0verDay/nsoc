@@ -202,12 +202,9 @@ https://github.com/qfwj-lyy/soc
 2. 实装了剧本选择系统，同步更新了地图编辑器
 3. 适当给大文件解了下耦
 
-### 2026.9.12文档对齐（非游戏更新）
-> 本节是文档维护补记：此前更新日志遗漏了以下**早已实装**的模块，按代码核实后补录，不代表当日有新功能上线。
-
-1. 补齐此前日志未记录的已实装模块（仅记录代码中可核实的部分）：
-   - 移动端适配与触摸操作：横屏手持配置与鼠标模拟触摸（`dev_gd/nsoc/project.godot`）；帝国地图支持单指拖拽平移、双指捏合缩放、触摸点击地点与人才头像（`scripts/ui/empire_test.gd`、`scripts/ui/empire_map_shape_node.gd`、`scripts/ui/drag_scroll_helper.gd`）
-   - 选项面板统一由 `SettingsPanelController` 实现：一级「继续 / 设置 / 退回菜单（PVP 额外插入投降）」，二级含主音量滑条与可嵌入子视图，游玩场景、主菜单与帝国模式共用（`scripts/ui/settings_panel_controller.gd`）
-   - 数据驱动内容加载：卡牌、英雄、战役章节与关卡均由 JSON 读取（`scripts/core/data_loader.gd`、`data/all_cards.json`、`data/hero.json`、`data/campaigns.json`）
-   - 本地玩家身份与服务器配置持久化：`user://profile.json`（uuid / 昵称）与 `user://server.json`（host / port），多人界面可修改服务器地址（`scripts/net/profile_manager.gd`、`scripts/ui/sparring_panel.gd`）
-2. 备注：帝国模式「方略」按钮对应的 `scenes/EmpireStrategyPanel.tscn` 目前只有返回按钮，功能尚未实装。
+### 2026.9.12修补
+1. **暑假放完了，接着来更新**
+2. 引擎版本升级为4.7.2
+3. 用ai改了下文档，并正式将ds设为本项目御用ai
+4. 更改了调试分辨率
+5. 修复了帝国模式中地点详情界面展开与收回逻辑错误的bug
