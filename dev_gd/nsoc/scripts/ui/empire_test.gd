@@ -270,6 +270,8 @@ func _init_transition() -> void:
 	_transition.setup(self, _map_root, SECONDARY_PANEL_SCENES, PROFILE_PANEL_SCENE)
 	_transition.reverse_finished.connect(_on_reverse_finished)
 	_transition.secondary_attached.connect(_on_secondary_panel_attached)
+	# InfoPanel 的点击由控制器内部处理，需注入转场前回调，才能同样走清理逻辑。
+	_transition.pre_trigger = _trigger_transition
 
 	var side_panel := get_node_or_null("SidePanel")
 	var end_btn    := get_node_or_null("EndTurnBtn")
@@ -291,7 +293,9 @@ func _init_transition() -> void:
 		for btn_name in ["ArmyBtn", "TalentBtn", "StrategyBtn"]:
 			var btn: Button = side_panel.get_node_or_null("SideVBox/" + btn_name)
 			if btn:
-				btn.pressed.connect(func(b = btn): _transition.trigger(side_panel, b))
+				# 必须走 _trigger_transition：先进二级面板前清掉地点/人才选中态，
+				# 否则地点详情面板会停留在展开后的二级面板之上（直接调 _transition.trigger 会漏掉清理）。
+				btn.pressed.connect(func(b = btn): _trigger_transition(side_panel, b))
 
 
 func _install_info_panel_button(pnl: Panel) -> void:

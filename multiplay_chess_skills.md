@@ -7,13 +7,14 @@
 > 本文记录 PVP 1v3（守方 1 vs 攻方 3）与 3v3 多棋盘模式的全部开发决策与任务清单。
 
 
-> 1v3 为优先实现目标，3v3 在末尾作为后续拓展章节预设。
+> 1v3 为优先实现目标；**3v3 已实装**（增量设计与状态见 §12 与 `dev3v3.md`）。
 
 
 > 当前 1v1 PVP 已完成，本文以 `dev_gd/nsoc/` 为基线扩展。
 
 
-> 最后更新：2026-06。
+> 最后更新：2026-06（状态与字段已按代码复核）。
+> **状态复核说明**：1v1 / 1v3 / 3v3 均已实装。§3 / §4 的字段与 payload 描述已按当前代码校正；§5~§9 中的代码片段是当时的实施设计稿（不代表当前代码），实际实现以 `dev_gd/nsoc/` 为准。
 
 
 
@@ -49,7 +50,7 @@
 | 网络架构 | **纯中继**（沿用现 1v1 架构），客户端权威，发送方锁步 |
 
 
-| 服务器改造 | `room/create` 加 `match_type` 字段；`game/start` 按 match_type 生成 action_order + slot_layout |
+| 服务器改造 | `room/create` 加 `match_type` 字段（缺省 `"1v1"`，按 `MaxPlayersForType` 限人数，另支持 `room/update_config`）；**实际未由服务器生成 action_order / slot_layout** —— 二者由房主客户端生成并随 `game/start` 广播，服务器仅中继（`sparring_panel.gd:1274-1358`、`server/hub.go:348-389`） |
 
 
 | 房间人数 | 4 人（1 守 + 3 攻） |
@@ -94,7 +95,7 @@
 | 棋盘尺寸 | 6 行 × 3 列（与 PVE / 1v1 一致，不加宽） |
 
 
-| 大厅位置 | 4 槽位顺序固定为：1 号守方 + 2/3/4 号攻方左/中/右；4 玩家视角下的攻方布局据此映射 |
+| 大厅位置 | 计划固定为：1 号守方 + 2/3/4 号攻方左/中/右；**实际实现**为房主固定 defender、其余 3 人随机排序（`sparring_panel.gd:1284-1299`），屏幕盘位由 `BoardLayoutResolver` 按 `slot_index` 决定 |
 
 
 
@@ -115,7 +116,7 @@
 | 总顺序 | **1 方先走 → 3 方依次轮转** |
 
 
-| 3 方内部顺序 | 房主开始时按大厅 2/3/4 号槽位次序固定（攻方左 → 中 → 右） |
+| 3 方内部顺序 | 计划按大厅 2/3/4 号槽位次序固定（攻方左 → 中 → 右）；**实际实现**为房主开始时把其余 3 人洗牌后排序（`sparring_panel.gd:1286-1291`） |
 
 
 | 一轮回合 | 守方 1 次 + 攻方 3 次 = 完成一轮 |
@@ -304,10 +305,10 @@
 # board_slot.gd 新增字段
 
 
-var team_id: String = ""        # "defender" / "attacker"
+var team_id: String = ""        # 1v3："defender" / "attacker"；3v3："team_a" / "team_b"；PVE 为空串
 
 
-var slot_index: int = 0          # 全局序号，决定行动顺序与跨盘相邻
+var slot_index: int = 0          # 屏幕水平槽位 0..N-1，用于排序与布局（行动顺序由 pvp_action_order 决定，非本字段）
 
 
 # owner_player_id 已存在，保留
@@ -340,7 +341,7 @@ var slot_index: int = 0          # 全局序号，决定行动顺序与跨盘相
 # cell.gd 新增字段
 
 
-var team_id: String = ""         # 继承自所在 slot.team_id
+var team_id: String = ""         # 继承自「归属盘」slot.team_id（按 owner_slot_id 反查，不是当前所在盘）
 
 
 # is_enemy 字段保留（PVE 兼容），PVP 模式下新逻辑走 team_id
@@ -355,7 +356,10 @@ var team_id: String = ""         # 继承自所在 slot.team_id
 func is_hostile_to(viewer_team_id: String) -> bool:
 
 
-    return team_id != "" and team_id != viewer_team_id
+    # 任一 team_id 为空（PVE）→ 回退 is_enemy
+    if team_id == "" or viewer_team_id == "":
+        return is_enemy
+    return team_id != viewer_team_id
 
 
 
@@ -364,7 +368,9 @@ func is_hostile_to(viewer_team_id: String) -> bool:
 func is_friendly_to(viewer_team_id: String) -> bool:
 
 
-    return team_id != "" and team_id == viewer_team_id
+    if team_id == "" or viewer_team_id == "":
+        return not is_enemy
+    return team_id == viewer_team_id
 
 
 ```
@@ -373,7 +379,7 @@ func is_friendly_to(viewer_team_id: String) -> bool:
 
 
 
-`set_card / load_dict` 写入 team_id（从 owner_slot 反查）。
+`set_card`（cell.gd:159-178，从归属盘 `owner_slot_id` 反查 `slot.team_id`）与 `from_dict`（cell.gd:361-368）写入 team_id。
 
 
 
@@ -391,7 +397,7 @@ func is_friendly_to(viewer_team_id: String) -> bool:
 # game_context.gd 新增字段
 
 
-var pvp_match_type: String = ""    # "1v1" / "1v3"
+var pvp_match_type: String = ""    # "1v1" / "1v3" / "3v3"；空串 = PVE
 
 
 var pvp_teams: Dictionary = {}     # { team_id: [player_id, ...] }
@@ -493,18 +499,6 @@ func adjacent_enemy_slots(viewer_pid: String, col: int) -> Array
     "action_order": [pid_def, pid_atk_l, pid_atk_m, pid_atk_r],
 
 
-    "teams": {
-
-
-      "defender": [pid_def],
-
-
-      "attacker": [pid_atk_l, pid_atk_m, pid_atk_r]
-
-
-    },
-
-
     "per_player_heroes": { pid: hero_key, ... },
 
 
@@ -541,16 +535,22 @@ func adjacent_enemy_slots(viewer_pid: String, col: int) -> Array
 
 
 
+> **实现校正**：实际 `game/start` payload 由房主客户端生成（`sparring_panel.gd:1350-1358`），字段为
+> `match_type` / `action_order` / `per_player_decks` / `per_player_heroes` / `rng_seed` / `slot_layout`；
+> **没有 `teams` 字段** —— 队伍映射由 `bootstrap_pvp` 从 `slot_layout` 的 `team_id` 推断（`game_context.gd:684-698`），
+> 服务器对 `game/start` 只做中继（`server/hub.go:348-389`）。
+
+
 ### 4.2 action/play_card payload 扩展
 
 
 
 
 
-- 现有 `sender_slot_id` 字段保留
+- 实际 payload 字段为 `card_name` / `card_type` / `slot_id`；多队伍 PVP 追加绝对坐标 `abs_row` / `abs_col`，1v1 走 `row` / `col`。**没有 `sender_slot_id` 字段**（仅出现在注释里）
 
 
-- 接收端不再用硬编码翻转表，改查 `slot_layout`：发送方 slot_id → 接收方根据本端视角同名渲染（坐标改用绝对坐标 + 视角翻转）
+- 接收端：多队伍 PVP（1v3/3v3）按 `slot_id` + 绝对坐标直查，不再用翻转表（`play_controller.gd:370-375`）；1v1 仍保留镜像翻转表作为兼容路径（`play_controller.gd:376-387`）
 
 
 
@@ -562,7 +562,10 @@ func adjacent_enemy_slots(viewer_pid: String, col: int) -> Array
 
 
 
-- 改为广播 `to: "all"`，所有客户端按 `pvp_action_order` 推进
+- 改为广播 `to: "all"`，所有客户端按 `pvp_action_order` 推进（`test_main.gd:549-552`）
+
+
+- 实际 payload：`{"player_id": <uuid>, "turn_number": <int>}`
 
 
 - 取消 1v1 时点对点路由
@@ -580,7 +583,8 @@ func adjacent_enemy_slots(viewer_pid: String, col: int) -> Array
 ```json
 
 
-{ "type": "disconnect/notify", "payload": { "dead_player_id": "uuid" } }
+{ "type": "disconnect/notify", "payload": {
+    "uuid": "uuid", "dead_player_id": "uuid", "nickname": "...", "new_host_uuid": "uuid" } }
 
 
 ```
@@ -589,7 +593,7 @@ func adjacent_enemy_slots(viewer_pid: String, col: int) -> Array
 
 
 
-接收端按 dead_player_id → `slot_<uuid>` → damage_hero(100)。
+接收端按 `dead_player_id`（回退旧字段 `uuid`）→ `Game.registry.by_owner(uuid)` → `slot.damage_hero(100, "triggered")`；1v1 找不到 owner 时回退 `by_role(ROLE_MAIN_ENEMY)`（`test_main.gd:1317-1338`）。服务端由 `server/hub.go:94-104` 追加 `nickname` / `new_host_uuid`。
 
 
 
@@ -637,16 +641,16 @@ func adjacent_enemy_slots(viewer_pid: String, col: int) -> Array
 
 
 
-- 4 人房支持：现槽位 UI 已为 2×3，仅启用前 4 槽
+- 槽位 UI 为 2×3：1v1 开放 2 格（上中/下中）、1v3 开放 4 格、3v3 开放全部 6 格（`sparring_panel.gd:336-347`）
 
 
-- `room/create` payload 加 `match_type: "1v3"`
+- `room/create` payload 加 `match_type`（`"1v1"` / `"1v3"` / `"3v3"`；缺省 `"1v1"`）（`server/hub.go:136-144`）
 
 
-- 服务器约束加入人数 ≤ 4
+- 服务器按 `MaxPlayersForType` 约束加入人数：1v1=2 / 1v3=4 / 3v3=6（`server/room.go:37-45`、`server/hub.go:202-208`）；房主可发 `room/update_config` 动态改模式，服务器广播 `room/config_updated`（`server/hub.go:314-341`）
 
 
-- 槽位与队伍绑定：1 号 = defender，2/3/4 号 = attacker（左 / 中 / 右）
+- 槽位与队伍：1v3 房主固定为 defender、其余 3 人**随机**排序为 attacker（`sparring_panel.gd:1284-1299`）；3v3 全员随机分两队各 3 人，team_a slot_index 0/1/2、team_b 3/4/5（`sparring_panel.gd:1300-1328`）
 
 
 
@@ -1420,7 +1424,7 @@ if cell.is_hostile_to(activator_team): ...
 
 
 
-PVE 模式下 cell.team_id 为空，`is_hostile_to` 返回 false，需额外回退 `is_enemy` 判定（保留兼容路径）。
+PVE 模式下 `cell.team_id` 为空，`is_hostile_to` / `is_friendly_to` 内部已直接回退到 `is_enemy`（`cell.gd:40-48`），调用方无需再额外判断。
 
 
 
@@ -1668,6 +1672,13 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 
 ## 10. 工作量分解与推进路径
 
+> **状态复核**：§10 各表是当时的**工作量规划**（含"新建 XXX"预命名），实施结果与预命名可能不同，文件名/字段以代码为准。
+> 已核对差异：`TeammateSidePanel` **未实现**（无 `scripts/ui/teammate_side_panel.gd`），1v3/3v3 的多盘侧栏由
+> `scripts/ui/ally_side_panel_manager.gd` 与 `scripts/ui/enemy_side_panel_manager.gd` 承担；
+> §10.2 表中 `teams` 并非 `game/start` payload 字段（由 `slot_layout` 推断，见 §4.1），
+> `disconnect/notify` 的 `dead_player_id` 由服务器 `server/hub.go` 追加而非 `network_manager.gd`；
+> §10.1 表中 Game 的实际字段名为 `pvp_match_type` / `pvp_teams` / `pvp_dead_players`。其余计划项均已落地。
+
 
 
 
@@ -1807,7 +1818,7 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 | BoardOrchestrator 按 resolver 装配 | `board_orchestrator.gd` |
 
 
-| TeammateSidePanel（队友公开信息面板） | 新建 `scripts/ui/teammate_side_panel.gd` |
+| TeammateSidePanel（队友公开信息面板） | ❌ 未实现：不存在 `scripts/ui/teammate_side_panel.gd`；队友/敌队侧盘由 `ally_side_panel_manager.gd` / `enemy_side_panel_manager.gd` 承担 |
 
 
 | ActionOrderBar（行动顺序指示器） | 新建 `scripts/ui/action_order_bar.gd` |
@@ -1957,7 +1968,7 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 - [x] BoardSlot / Cell 加 team_id / slot_index
 
 
-- [x] Game 加 match_type / teams / dead_players
+- [x] Game 加 `pvp_match_type` / `pvp_teams` / `pvp_dead_players`（§3.3 原名 match_type / teams / dead_players）
 
 
 - [x] BoardRegistry 加 by_team / by_owner / adjacent_enemy_slots
@@ -1990,7 +2001,7 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 - [x] 跨盘候选 adjacent_enemy_slots
 
 
-- [x] 服务器 match_type 校验 + slot_layout 生成
+- [x] 服务器 match_type / MaxPlayers 处理（`room/create` + `room/update_config`）；**`action_order` 与 `slot_layout` 由房主客户端生成**并随 `game/start` 广播，服务器仅中继（`sparring_panel.gd:1274-1358`、`server/hub.go:348-389`）
 
 
 - [x] **跨盘逻辑镜像列重构 + action/cross_board 广播**（2026-06，见 §7.3 / §7.5）
@@ -2012,13 +2023,13 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 - [x] ActionOrderBar 行动顺序指示器
 
 
-- [ ] TeammateSidePanel 队友公开信息面板
+- [ ] TeammateSidePanel 队友公开信息面板（无 `scripts/ui/teammate_side_panel.gd`；多盘侧栏现由 `ally_side_panel_manager.gd` / `enemy_side_panel_manager.gd` 承担）
 
 
 - [x] _remote_equip_insts 改 dict（攻方 3 人各装备镜像）
 
 
-- [ ] 含 await 效果加 result 字段广播（destroy_unit / weaken / flood_strategy_hero）
+- [ ] 含 await 效果加 result 字段广播（destroy_unit / weaken / flood_strategy_hero）—— 当前仅 `result_atk` / `result_health` / `result_cleared` 已实现（`play_controller.gd:215-228, 424-448`）；§8.1 设计的 `result_target_row` / `result_target_col` / `result_target_slot_id` 三个字段在代码中**不存在**
 
 
 - [x] SparringPanel 加 match_type 选择 UI
@@ -2027,7 +2038,7 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 - [部分] 所有 cell.is_enemy 检查迁移到 is_hostile_to（assault_charge 等遗留）
 
 
-  - `assault_charge.gd` 仍调 `find_adjacent_enemies(dest, dest.is_enemy)` → 1v3/3v3 同队相邻可能误判，待迁移 `is_hostile_to`
+  - `assault_charge.gd:56` 仍传 `dest.is_enemy` 作为 `for_enemy` 参数；但 `BoardModel.find_adjacent_enemies` 已改为 `cell.team_id` / `tgt.team_id` 优先判定（`board_model.gd:113-124`），1v3/3v3 同队相邻**不会**误判 —— 属遗留参数样式，无功能缺陷
 
 
 
@@ -2063,13 +2074,13 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 
 
 
-## 12. 3v3 拓展（后续章节预设）
+## 12. 3v3 拓展（已实装，详见 dev3v3.md）
 
 
 
 
 
-> 1v3 完成后，3v3 在其上做以下增量：
+> **3v3 已实装**（2026-06，实现细节见 `dev3v3.md`）。以下为当时的增量预判，实现方式可能不同，实际以代码为准：
 
 
 
@@ -2082,27 +2093,13 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 
 
 | 维度 | 预设决策 |
-
-
 |---|---|
-
-
-| 棋盘数量 | 6 盘（队 A 3 盘 + 队 B 3 盘） |
-
-
-| 物理拓扑 | 上下两队各 3 盘横排 |
-
-
-| 行动顺序 | 队 A 1 → 队 B 1 → 队 A 2 → 队 B 2 → 队 A 3 → 队 B 3（严格队伍交替） |
-
-
-| 跨盘攻击 | 仅同列跨敌队任一盘；同队互不可跨 |
-
-
-| 胜负 | 任一队全员阵亡 → 该队败（或测试期沿用"死一人即败"） |
-
-
-| 玩家资源 | 全独立（同 1v3） |
+| 棋盘数量 | 6 盘（队 A 3 盘 + 队 B 3 盘）✅ 已实装一致 |
+| 物理拓扑 | 上下两队各 3 盘横排 ✅ 已实装一致 |
+| 行动顺序 | 队 A 1 → 队 B 1 → 队 A 2 → 队 B 2 → 队 A 3 → 队 B 3（严格队伍交替）✅ 已实装：房主生成交错 `action_order`（`sparring_panel.gd:1300-1313`） |
+| 跨盘攻击 | ⚠️ 原预设"仅同列"未采用：实装为所有玩家 UI 选盘（可跨敌队任一盘、不限列）+ 镜像列落点 `COLS-1-src_col`（`turn_system.gd:484-497`、`front_row_selector.gd:154-159`）；"同队互不可跨"✅ |
+| 胜负 | ⚠️ 实装为"任一玩家阵亡即该队败"（测试期简化，`board_slot.gd:96-111`）；"全员阵亡"制未实现 |
+| 玩家资源 | 全独立（同 1v3）✅ 已实装一致（每人独立 deck / mana） |
 
 
 
@@ -2115,27 +2112,13 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 
 
 | 任务 | 说明 |
-
-
 |---|---|
-
-
-| BoardLayoutResolver 加 3v3 布局 | 上下各 3 盘横排，viewer 自盘居中、队友左右 |
-
-
-| pvp_advance_turn 改"队伍交替" | 当前简单环形 → 队 A / 队 B 交替取队内下一人 |
-
-
-| 跨盘候选返回 3 盘（敌队） | adjacent_enemy_slots 已支持，仅返回数量变化 |
-
-
-| ActionOrderBar 显示 6 玩家 + 队伍颜色 | 蓝队 / 红队分组高亮 |
-
-
-| SparringPanel 加 3v3 槽位 | 启用全部 6 槽，分两队 |
-
-
-| 队伍消除制（如启用） | _on_hero_died 改判该队是否全员阵亡 |
+| BoardLayoutResolver 加 3v3 布局 | ✅ 已实装：viewer 自盘居中（BottomGrid）+ 2 队友侧盘，敌队 3 盘在 top 区（`board_layout_resolver.gd:59-73`） |
+| pvp_advance_turn 改"队伍交替" | ✅ 已实装，但方式不同：房主生成交错 `action_order`（A1→B1→A2→B2→A3→B3），运行时仍是环形推进 `pvp_advance_turn_skip_dead`（`sparring_panel.gd:1300-1313`、`test_main.gd:553-556`） |
+| 跨盘候选返回 3 盘（敌队） | ✅ 已实装：`adjacent_enemy_slots` 按 `team_id` 返回敌队全部盘（`board_registry.gd:104-113`） |
+| ActionOrderBar 显示 6 玩家 + 队伍颜色 | ✅ 已实装：昵称按 `pvp_action_order` 排列，team_a 蓝 / team_b 红（`action_order_bar.gd:43-65`） |
+| SparringPanel 加 3v3 槽位 | ✅ 已实装：6 格全开，按 slot_id < 3 标 〔A〕/〔B〕（`sparring_panel.gd:342-344, 388-389`） |
+| 队伍消除制（如启用） | ❌ 未实现：仍为"死一人即败"（`board_slot.gd:96-111`） |
 
 
 
@@ -2162,7 +2145,7 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 
 
 
-3v3 详细设计延至 1v3 完成后再细化。
+3v3 详细设计已落地于 `dev3v3.md` 并已实装（原"延至 1v3 完成后再细化"的计划已完成）。
 
 
 
@@ -2189,7 +2172,7 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 - 每完成一个阶段，§10 / §11 相应任务划掉
 
 
-- 1v3 验收后开新分支补 3v3 详细设计章节
+- 3v3 详细设计已成文并实装：见 `dev3v3.md`（本项已完成）
 
 
 
@@ -2200,7 +2183,7 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 
 
 
-## 12. 与 3v3 模式的差异对比
+## 14. 与 3v3 模式的差异对比
 
 
 
@@ -2209,25 +2192,15 @@ func _on_disconnect_notify(payload: Dictionary) -> void:
 
 
 | 维度 | 1v3 | 3v3 |
-
 |---|---|---|
-
 | 队伍 | defender（1人）/ attacker（3人） | team_a（3人）/ team_b（3人） |
-
 | 行动顺序 | defender → att1 → att2 → att3 | A1→B1→A2→B2→A3→B3（队伍交替） |
-
 | 跨盘选择 | 守方 UI 选盘；攻方自动跨（单一目标） | 所有玩家 UI 选盘 + 广播 |
-
 | cross_board 广播 | 仅守方 owner 发 | 所有 owner 发 |
-
 | 自动跨（auto-cross） | 攻方 → 守方盘（`_enemy_auto_cross`） | **禁用**（均走 UI 路径） |
-
 | 布局 | 守方：上3敌+下1己；攻方：上1敌+下1己+两侧队友 | 所有人：上3敌+下1己+两侧队友 |
-
 | 最大玩家数 | 4 | 6 |
-
 | 服务端 MaxPlayers | 4 | 6 |
-
 | team_id 值 | "defender" / "attacker" | "team_a" / "team_b" |
 
 

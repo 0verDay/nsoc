@@ -10,9 +10,21 @@ https://github.com/qfwj-lyy/soc
 
 现依据ai进行重置，当前游戏名可能不是最终版游戏名
 
+当前仓库：`https://github.com/0verDay/nsoc`
+
 ## 开发者
 
 - 轶名 @yuyi-yutie
+
+## 仓库结构
+
+| 路径 | 内容 | 技术栈 |
+|---|---|---|
+| `dev_gd/nsoc/` | **当前主开发工程**（游戏本体） | Godot 4.7.2 / GDScript |
+| `server/` | 多人联机中继服务器（房间 + 消息转发，无持久化） | Go 1.21 + gorilla/websocket |
+| `dev_gd/tools/empire_map_tool/` | 帝国（演义）模式地图编辑器 | Python 3 + tkinter |
+| `dev1/` | 早期网页原型，已冻结，仅作存档 | 原生 HTML/CSS/JavaScript |
+| 根目录 `*.md` | 架构与机制总结（`skills.md`）、AI 设计（`ai_dev.md`）、多人联机规划（`multiplay_*.md`）、3v3 清单（`dev3v3.md`）等 | — |
 
 ## dev1
 
@@ -189,3 +201,13 @@ https://github.com/qfwj-lyy/soc
 1. 实装了存读档系统，设置了一个自动存档栏和三个手动存档栏
 2. 实装了剧本选择系统，同步更新了地图编辑器
 3. 适当给大文件解了下耦
+
+### 2026.9.12文档对齐（非游戏更新）
+> 本节是文档维护补记：此前更新日志遗漏了以下**早已实装**的模块，按代码核实后补录，不代表当日有新功能上线。
+
+1. 补齐此前日志未记录的已实装模块（仅记录代码中可核实的部分）：
+   - 移动端适配与触摸操作：横屏手持配置与鼠标模拟触摸（`dev_gd/nsoc/project.godot`）；帝国地图支持单指拖拽平移、双指捏合缩放、触摸点击地点与人才头像（`scripts/ui/empire_test.gd`、`scripts/ui/empire_map_shape_node.gd`、`scripts/ui/drag_scroll_helper.gd`）
+   - 选项面板统一由 `SettingsPanelController` 实现：一级「继续 / 设置 / 退回菜单（PVP 额外插入投降）」，二级含主音量滑条与可嵌入子视图，游玩场景、主菜单与帝国模式共用（`scripts/ui/settings_panel_controller.gd`）
+   - 数据驱动内容加载：卡牌、英雄、战役章节与关卡均由 JSON 读取（`scripts/core/data_loader.gd`、`data/all_cards.json`、`data/hero.json`、`data/campaigns.json`）
+   - 本地玩家身份与服务器配置持久化：`user://profile.json`（uuid / 昵称）与 `user://server.json`（host / port），多人界面可修改服务器地址（`scripts/net/profile_manager.gd`、`scripts/ui/sparring_panel.gd`）
+2. 备注：帝国模式「方略」按钮对应的 `scenes/EmpireStrategyPanel.tscn` 目前只有返回按钮，功能尚未实装。

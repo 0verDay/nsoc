@@ -13,7 +13,7 @@ config_version=5
 config/name="NSOC"
 run/main_scene="res://scenes/VideoSplash.tscn"
 config/quit_on_go_back=false
-config/features=PackedStringArray("4.6", "Forward Plus")
+config/features=PackedStringArray("4.7", "Forward Plus")
 boot_splash/bg_color=Color(0, 0, 0, 1)
 boot_splash/image="res://assets/splash_black.png"
 config/icon="res://assets/game_logo.png"
@@ -36,8 +36,6 @@ AiManager="*res://scripts/ai/ai_manager.gd"
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
-window/size/window_width_override=960
-window/size/window_height_override=540
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation="landscape"

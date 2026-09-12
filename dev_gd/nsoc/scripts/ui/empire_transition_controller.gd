@@ -40,6 +40,11 @@ var _profile_panel_scene: PackedScene = null
 # 人才最后查看记录（由 EmpireTest 注入/读取）
 var talent_last_hero: String = ""
 
+# 转场前回调（由 owner 注入）：用于在进入二级面板前清理地图选中态
+# （地点详情面板 / 人才详情面板 / 选中图标）。未注入时退化为直接 trigger。
+# 签名与 trigger 一致：(origin_panel: Control, origin_btn: Control) -> void
+var pre_trigger: Callable = Callable()
+
 # 部署/流放信号（由挂载的二级面板转发）
 signal deploy_requested(hero_key: String)
 signal recall_requested(hero_key: String)
@@ -90,7 +95,11 @@ func install_info_panel_button(pnl: Panel) -> void:
 		if is_transitioning or is_expanded: return
 		var t := pnl.create_tween()
 		t.tween_property(pnl, "scale", Vector2.ONE, 0.08))
-	btn.pressed.connect(func(): trigger(pnl, pnl))
+	btn.pressed.connect(func():
+		if pre_trigger.is_valid():
+			pre_trigger.call(pnl, pnl)
+		else:
+			trigger(pnl, pnl))
 
 
 func trigger(origin_panel: Control, origin_btn: Control) -> void:

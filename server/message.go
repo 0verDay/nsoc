@@ -9,8 +9,9 @@ package main
 //     "payload": {...}
 //   }
 //
-// 服务器对 type 以 "room/" 开头的消息做处理（创建/加入/列表/离开），
-// 其他类型按 to 字段直接转发到房间内对应客户端。
+// 服务器只对下列 5 个 type 做房间管理处理（精确匹配，非 "room/" 前缀匹配）：
+//   room/create、room/join、room/list、room/leave、room/update_config
+// 其他类型（含其它 room/* ）按 to 字段直接转发到房间内对应客户端。
 //
 // 转发规则：
 //   to == "all" 或空  → 房间所有人（含发送者）

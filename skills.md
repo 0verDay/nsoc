@@ -4,7 +4,7 @@
 
 ## 1. 项目概述
 
-NSOC 是基于 Godot 4.6 (GDScript) 的卡牌战棋游戏。核心玩法：
+NSOC 是基于 Godot 4.7.2 (GDScript) 的卡牌战棋游戏。核心玩法：
 
 - 棋盘 6 行 × 3 列，玩家半场 (row 3-5) 与敌方半场 (row 0-2) 各占 3 行
 
@@ -168,7 +168,7 @@ AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{s
 
 - `spawners: SpawnerSystem` — 该盘刷怪系统（可为空）
 
-- `spell_caster: SpellCasterSystem` — 该盘自动施法系统（可为空，由 `BoardSlotFactory` 按 `level_data.boards.<id>.spell_casters` 配置初始化）
+- `spell_casters: SpellCasterSystem` — 该盘自动施法系统（可为空，由 `BoardSlotFactory` 按 `level_data.boards.<id>.spell_casters` 配置初始化）
 
 - `faction`（FACTION_PLAYER / FACTION_ENEMY）、`role`（ROLE_MAIN_PLAYER / ROLE_ALLY / ROLE_MAIN_ENEMY / ROLE_ENEMY）
 
@@ -250,7 +250,7 @@ AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{s
   - `faction = FACTION_PLAYER`（友军 AI）在 PLAYER 阶段**之前**运行 → 本回合立即可行动
   - `faction = FACTION_ENEMY`（敌方 AI）在 ENEMY 阶段**之前**运行 → 本回合立即推进
 
-`_run_phase(faction)` 先遍历主棋盘，再按注册顺序遍历 `_extra_board_configs`，每块棋盘调用 `_run_phase_on_board(faction, board, hero_resolver)`：
+`_run_phase(faction)` 调 `_iter_phase_cells(faction)` 遍历 registry 内全部 BoardSlot（PLAYER 阶段行 0→ROWS-1、棋盘按视觉 x 升序；ENEMY 阶段按“距玩家英雄由近到远”排序），逐格调用 `_process_cell(faction, cell, slot)`；单格内会依次判定的分支：
 
 1. `charge` 且未 has_charged → `_run_charge_on_board`
 
@@ -472,12 +472,9 @@ AiManager     (autoload "scripts/ai/ai_manager.gd") AI 注册中心，持有 `{s
 **内置目标类型**：
 
 | type | 文件 | 触发时机 | 达成条件 |
-
 |---|---|---|---|
-
 | `survive_turns` | `survive_turns.gd` | `turn_ended` | `turn_number >= turns`（每 `turn_ended` 时 turn_number 已自增）；`progress_text` 返回 `"当前 / 目标"` |
-
-| `kill_enemy_hero` | `kill_enemy_hero.gd` | 击杀敌方英雄（`HeroState.died` 信号）| 指定 `slot` 英雄死亡时即达成；无 `slot` 字段则任意敌方英雄死亡均达成 |
+| `kill_enemy_hero`（未迁入） | `kill_enemy_hero.gd` | 击杀敌方英雄（`HeroState.died` 信号）| 指定 `slot` 英雄死亡时即达成；无 `slot` 字段则任意敌方英雄死亡均达成 |
 
 > **注**：`kill_enemy_hero` 目标类型当前仅在主分支 `nsoc/` 中实现，`dev_gd/nsoc/scripts/objectives/` 下尚未迁入；dev_gd 目前只有 `survive_turns`。
 
@@ -719,60 +716,35 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 ## 7. 卡牌效果清单
 
 | ID | 名称 | 钩子 |
-
 |---|---|---|
-
 | `ash` | 灰烬 | on_death：除外 |
-
 | `autophagy` | 自噬 | on_play：对己方英雄造成累计伤害（`damage_player_hero` 解析 `target_cell.owner_slot_id` 对应盘的 hero，跨端一致；不再用 viewer-relative 的 `Game.main_player_slot()`） |
-
 | `charge` | 冲锋 | TurnSystem：首次行动连步推进 |
-
 | `empower` | 强化 | on_play：对目标友方单位四维各+1（注：代码只加 health 不加 attack） |
-
 | `exhaust` | 除外 | resolve_destination：法术入除外 |
-
 | `vigilance` | 警戒 | TurnSystem：敌方移入相邻格即攻击 |
-
 | `breakout` | 突围 | on_play：相邻敌方每个提供+1攻+1四维 |
-
 | `assault_charge` | 冲阵 | on_kill：飞入随机尸位递归攻击 |
-
-| `frail` | 虚弱 | CombatSystem内联：受击四面同扣 |
-
+| `frail` | 陷围 | CombatSystem内联：受击四面同扣 |
 | `steadfast` | 坚守 | TurnSystem拦截：不主动推进、不跨盘 |
-
 | `terrify` | 破胆 | on_kill：击杀目标送入除外。受害者按 `v_owner_id → owner_player_id` 取对应玩家 deck（`Game.get_deck(pid)`）做 `erase + banish`，与 `handle_unit_death` 入墓路径一致；旧路径写死 `ctx.game.deck`（caster 本地）会让 PVP 中击杀对方手牌部署单位时除外去向错乱 |
-
 | `battle_hardened` | 历战 | on_kill：攻击力+N |
-
 | `fierce_combat` | 酣战 | on_kill：四维各+N |
-
 | `gain_mana_1` | 增益 | on_play：获得 1 点费用（`Game.mana.gain(1)`），装备"圣杯"用 |
-
 | `inspire` | 鼓舞 | on_play：对目标友方单位攻击力 +1 |
-
 | `discard_hand_card` | 弃手牌 | on_play：弹出手牌选择器（`pick_hand_card_async`），弃选中牌入墓，再补 1 张；玩家取消时返回 false（装备耐久不扣） |
-
 | `love_people` | 爱民 | on_death：对英雄「长坂坡·刘备」造成 1 点伤害（走 `ctx.damage_hero_by_name`），然后走默认入墓 |
-
 | `destroy_unit` | 消灭 | on_play：目标敌方单位走完整死亡流程（动画→`handle_unit_death`→`clear_card`）；玩家取消目标选择时返回 false |
-
 | `weaken` | 放箭 | on_play：对目标单位（`ctx.target_cell`）四维各 -1；任意一面 ≤0 则走标准死亡流程（闪烁动画 → `handle_unit_death` → `clear_card`）；由 `SpellCasterSystem` / `cast_spell` action 调用 |
-
 | `soaked` | 浸水 | CombatSystem内联：受到任意伤害后立即强制四面归零（一次性，触发后从 effects 移除）；可被 `flood_strategy_hero` 技能 / `apply_soaked_to_all` action / `jue_di` 效果 / `flood_strategy_unit` turn_started 触发施加 |
-
 | `flood_strategy_unit` | 水攻 | 无代码钩子（元数据）；实际逻辑由 `apply_soaked_to_all` action（`require_effect="flood_strategy_unit"`）在每回合 trigger 中驱动：若场上存在此效果单位，则给全场敌方单位施加 `soaked` |
-
 | `yi_bing` | 疑兵 | 无独立钩子，由 CombatSystem 与 TurnSystem 内联检测：①TurnSystem `_process_cell` 先攻分支检 `effects.has("yi_bing")` 跳过近战，goal_row 命中走 `_self_destruct_yi_bing`（播死亡动画 → handle_unit_death → clear_card，不调 hero_resolver）；②CombatSystem `attack_cells` 扣血后，若 defender 含 yi_bing → 强制四面归零 + attacker 四面 HP 各 -2 + attacker 同步纳入 dead_cells；③巧变 trigger 用 `name_not: "疑兵"` 防自循环 |
-
 | `awe` | 威震 | on_kill：每击杀一个敌方单位，对该单位原属盘英雄造成 1 点 triggered 伤害（穿透死守） |
-
 | `ming_jin` | 鸣金 | on_play：选一个友方单位放回牌库顶（按 `cell.owner_slot_id → owner_player_id` 反查 `Game.get_deck(pid).add_to_draw_pile`，3v3 中正确写到目标单位拥有者 deck 而非 caster 本地 deck），并设 `counters["ming_jin_used"] += 1`（当前无消费方，保留语义） |
-
 | `jue_di` | 决堤 | on_play：① 永久剥夺 enemy_main 英雄 `die_hard` flag + 从 abilities 移除 `die_hard_display`；② 全场敌方单位施加 `soaked`；③ 使 ROLE_ALLY 英雄 hp 归零（触发 `died` 信号 → Events 接管退场结算） |
-
 | `gua_gu_liao_du` | 刮骨疗毒 | on_play：若玩家除外区有「樊城·关羽」，将其从除外区移到牌库顶（`deck.add_to_draw_pile`）；否则无效 |
+
+> **注**：`scripts/effects/` 下另有 6 个仅供英雄被动展示的 effect——`aid_fancheng`（援樊）、`die_hard`（死守）、`first_arrow`（先射）、`reinforce_camp`（屯扎）、`straight_in`（直入）、`surrender`（受降）。它们同样自注册到 `Effects`，但 `all_cards.json` / `empire_cards.json` 中没有任何卡牌引用，实际由 §8 的同名英雄技能（`HeroAbility` 子类）驱动，故不列在上表。
 
 > **Effect.on_play 异步修复**：`EffectRegistry.trigger_play` 已加 `await inst.on_play()`，`PlayController._play_spell` / `_trigger_unit_play_effects` 也均改用 `await Effects.trigger_play()`，保证含 `await` 的效果（discard_hand_card、destroy_unit 等）正确执行。
 
@@ -781,37 +753,21 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 ## 8. 英雄技能清单
 
 | ID | 名称 | 所属英雄 | 费用 | 每回合限用 | 描述 |
-
 |---|---|---|---|---|---|
-
 | `restart` | 再起 | 科因（A） | 1 | 是 | 弃全手牌补满至 MIN_HAND_SIZE |
-
 | `test_discard` | 测试技能 | 多人模式·测试（B） | 1 | 是 | 选一张手牌弃置并自动补 1 张；手牌为空时按钮不可用；玩家取消时退还费用并清除本回合限用标记（可重试） |
-
 | `yi_yong_jun` | 义勇军 | 长坂坡·刘备 | 2 | 是 | 消灭 player_main 半场所有敌方单位；随后在所有空格召唤「乡勇」并追加 ash；origin="ability" 入除外区 |
-
 | `caocao_archery` | 箭阵 | 长坂坡·曹操 | — | — | 纯展示被动，`can_activate` 返回 false；实际由 `SpellCasterSystem` 每回合对最前方玩家单位施放「放箭」 |
-
 | `flood_strategy_hero` | 水攻（英雄） | 威震华夏·关羽 | 2 | 否 | 选一个敌方单位格，施加 `soaked`（浸水）；玩家取消则退费 |
-
 | `flood_dam_ability` | 水淹七军 | 水坝 | — | — | 被动（`can_activate=false`）；静态 `add_charge(game)` 每回合给 ally stacks["flood_charge"] +1；静态 `release(game)` 退场时每1层蓄水对 enemy_main 造成1点 triggered 伤害，每5层封锁 spawner 1 回合 |
-
 | `die_hard_display` | 死守 | 樊城·曹仁 | 0 | — | 纯展示被动，cost=0，`can_activate=false`；实际免伤由 `BoardSlot.damage_hero` 检查 `HeroState.flags["die_hard"]` 实现；`jue_di` 效果 / 决堤法术可永久剥夺 |
-
 | `aid_fancheng_ability` | 援樊 | 庞德/于禁/徐晃（共用） | — | — | 被动；静态 `trigger(game)`，对 enemy_main（曹仁）造成 10 点 triggered 伤害；由 `hero_died` trigger 触发 |
-
 | `surrender_ability` | 受降 | 樊城·于禁 | — | — | 被动；静态 `trigger(game)`，关羽英雄满血 + 玩家侧所有单位四维恢复初始值（`cell.max_health`） |
-
 | `reinforce_camp_ability` | 屯扎 | 樊城·于禁 | — | — | 被动；静态 `trigger(game)`，全场 ENEMY 阵营所有单位四维各 +1 |
-
 | `straight_in_ability` | 直入 | 樊城·徐晃 | — | — | 被动；静态 `trigger_start(game)`，回合开始时全场敌方单位（含已跨盘者）获得 `charge`；steadfast 单位免疫 |
-
 | `first_arrow_ability` | 先射 | 樊城·庞德 | — | — | 被动；静态 `trigger(game)`，回合开始时若「樊城·关羽」在场，对其 front 面造成 4 点伤害，若任意面≤0 则走标准死亡流程 |
-
 | `weishan_ability` | 围山 | 街亭遗恨·马谡 | — | — | 纯展示被动；免单位/法术直伤走 `flags["die_hard"]`；"友方单位死亡 -1HP" 由 chapter `unit_died` trigger（`faction:0`）调 `damage_hero source=triggered` 穿透 die_hard 实现 |
-
 | `xiefang_ability` | 协防 | 街亭遗恨·王平 | — | — | 纯展示被动；起始 5 费 + 上限永久封顶 5 由 chapter `initial_mana=5` + `mana_max_cap=5` 在 bootstrap 时一次性设到 ManaSystem |
-
 | `qiaobian_ability` | 巧变 | 街亭遗恨·张郃 | — | — | 纯展示被动；"任一非疑兵的己方单位死亡 → 在死亡格生成疑兵" 由 chapter `unit_died` trigger（`faction:1, board:enemy_main, name_not:疑兵`）调 `spawn_unit strategy=snap_origin` 实现 |
 
 **英雄技能注册机制**：`scripts/abilities/<id>.gd` 文件名即 ID，`HeroAbilityRegistry` 启动期自动扫描注册，无需手动注册。
@@ -827,37 +783,21 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 ## 9. 现有英雄
 
 | key | display_name | battle_name | max_health | abilities | 备注 |
-
 |---|---|---|---|---|---|
-
 | `A` | 往日之王：科因 | 科因 | 30 | restart | 默认多人英雄之一 |
-
 | `B` | 多人模式·测试 | 测试 | 30 | test_discard | 多人测试英雄；技能：选手牌弃置补1张 |
-
 | `C` | C | C | 30 | — | — |
-
 | `liubei` | 长坂坡·刘备 | 刘备 | 30 | yi_yong_jun | 长坂坡章节玩家英雄 |
-
 | `guanyu_wei` | 威震华夏·关羽 | 关羽 | 30 | flood_strategy_hero | 威震华夏章节玩家英雄 |
-
-| `dam` | 水坝 | 水坝 | 5（章节覆盖20） | flood_dam_ability | 友方附盘英雄；`stacks["flood_charge"]` 每回合+1 |
-
+| `dam` | 水坝 | 水坝 | 5（章节覆盖 5） | flood_dam_ability | 友方附盘英雄；`stacks["flood_charge"]` 每回合+1 |
 | `caoren_fan` | 樊城·曹仁 | 曹仁 | 30 | die_hard_display | 威震华夏主敌英雄；初始 `flags["die_hard"]=true`，决堤后剥夺 |
-
-| `pangde_fan` | 樊城·庞德 | 庞德 | 15（章节覆盖1） | aid_fancheng_ability, first_arrow_ability | 威震华夏 enemy_left |
-
-| `yujin_fan` | 樊城·于禁 | 于禁 | 10（章节覆盖1） | aid_fancheng_ability, surrender_ability, reinforce_camp_ability | 威震华夏 enemy_right |
-
+| `pangde_fan` | 樊城·庞德 | 庞德 | 15（章节覆盖 15） | aid_fancheng_ability, first_arrow_ability | 威震华夏 enemy_left |
+| `yujin_fan` | 樊城·于禁 | 于禁 | 10（章节覆盖 10） | aid_fancheng_ability, surrender_ability, reinforce_camp_ability | 威震华夏 enemy_right |
 | `xuhuang_fan` | 樊城·徐晃 | 徐晃 | 20 | aid_fancheng_ability, straight_in_ability | 威震华夏 enemy_xuhuang；庞德+于禁死后 add_board |
-
-| `caocao` | 曹操（长坂坡） | 曹操 | 100 | caocao_archery（被动，SpellCasterSystem 驱动） | 长坂坡主敌英雄 |
-
+| （章节内联，hero.json 无此 key） | 曹操（长坂坡） | 曹操 | 100 | caocao_archery（被动，SpellCasterSystem 驱动） | 长坂坡主敌英雄 |
 | `masu_jt` | 街亭遗恨·马谡 | 马谡 | 20 | weishan_ability | 街亭章节玩家英雄之一；初始 `flags["die_hard"]=true`（围山免直伤）；ally case 占 ally_left |
-
 | `wangping_jt` | 街亭遗恨·王平 | 王平 | 20 | xiefang_ability | 街亭章节玩家英雄之一；协防 = chapter 注入 mana 5/5 永久封顶；ally case 占 ally_left（无 mana 影响） |
-
 | `zhanghe_jt` | 街亭遗恨·张郃 | 张郃 | 30 | qiaobian_ability | 街亭主敌英雄；巧变 = chapter trigger 在 unit_died 时 spawn_unit snap_origin 召出疑兵 |
-
 | `enemy_default` | 敌人 | 敌人 | 30 | — | 无专属章节时回退 |
 
 **hero.json boards 字段 `flags`**：chapter JSON boards 的 hero 节点可含 `"flags": ["die_hard"]` 数组，`BoardSlotFactory` 解析后调 `HeroState.set_flag(k, true)` 初始化。
@@ -877,47 +817,26 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 ## 10. 现有卡牌
 
 | 名称 | 类型 | 费用 | 攻击 | 四维 | 效果 |
-
 |---|---|---|---|---|---|
-
 | 圣杯 | 装备 | 1 | — | — | gain_mana_1（耐久2，每回合限用1次） |
-
 | 填线宝宝 | 单位 | 1 | 1 | 1/1/1/1 | — |
-
 | 灰烬填线宝宝 | 单位 | 2 | 2 | 2/2/2/2 | ash |
-
 | pro哥 | 单位 | 10 | 10 | 10/10/10/10 | ash, autophagy |
-
 | 敢死队 | 单位 | 1 | 1 | 10/1/1/1 | charge |
-
 | 看门狗 | 单位 | 3 | 1 | 1/2/2/2 | vigilance |
-
 | 长板·赵云 | 单位 | 1 | 1 | 6/6/6/6 | breakout, fierce_combat, assault_charge, frail |
-
 | 长板·张飞 | 单位 | 1 | 3 | 20/1/10/10 | steadfast, terrify, battle_hardened |
-
 | 强化 | 法术 | 1 | — | — | empower |
-
 | 乡勇 | 单位 | 1 | 1 | 1/1/1/1 | love_people（被击败后对长坂坡·刘备造成 1 伤） |
-
 | 疑兵 | 单位 | 2 | 2 | 2/2/2/2 | yi_bing（无法主动攻击；到达敌方底线自爆；被攻击时自爆 + 攻击者四面 HP 各 -2）；街亭张郃巧变 spawn_origin 召出 |
-
 | 鼓舞 | 法术 | 2 | — | — | inspire（目标友方单位攻+1） |
-
 | 仁之剑 | 装备 | 5 | — | — | destroy_unit（耐久5，不限每回合次数；点击后目标选择消灭一个敌方单位） |
-
 | 义之剑 | 装备 | 5 | — | — | discard_hand_card（耐久5，不限每回合次数；激活后从手牌选一张弃置并补1张） |
-
 | 放箭 | 法术 | 1 | — | — | weaken（敌方 SpellCasterSystem 专用；对目标单位四维各-1，任意一面≤0即死） |
-
 | 樊城·关羽 | 单位 | 5 | 1 | 5/5/5/5 | flood_strategy_unit, awe, ash（水攻+威震+灰烬） |
-
 | 樊城·满宠 | 单位 | 0 | 2 | 10/10/10/10 | steadfast, vigilance（威震华夏主敌盘初始单位） |
-
 | 鸣金 | 法术 | 1 | — | — | ming_jin（选友方单位放回牌库顶，本回合不抽牌） |
-
 | 决堤 | 法术 | 1 | — | — | jue_di（剥夺曹仁死守 + 全场敌方浸水 + 水坝退场） |
-
 | 刮骨疗毒 | 法术 | 1 | — | — | gua_gu_liao_du（若除外区有「樊城·关羽」，放回牌库顶） |
 
 > 四维列为玩家视角 top/bottom/left/right 顺序（JSON 书写规约），实际存储为 front/back/left/right（side 视角）。
@@ -964,13 +883,13 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 - **BoardOrchestrator**：取代旧 SideBoardController，根据 `level_data.boards` 装配全部盘（主棋盘用场景树容器，附盘动态 `SideBoardUI.build`）；`add_board/remove_board/toggle` 带滑入/滑出动画；`board_events` 按回合编号触发增删盘；`_exit_tree` 自动 `_cleanup_all`
 
-- **章节专属英雄与起始费**：`chapter.json` 写 `hero_key` / `initial_mana` / `mana_max_cap`；bootstrap 先解析关卡再确定玩家英雄，`mana.setup(initial_mana, mana_max_cap)` 覆盖默认值；不影响无此字段的旧关卡（cap 缺省走 `MAX_MANA_CAP=10`）
+- **章节专属英雄与起始费**：章节 JSON（`data/chapters/*.json`）写 `hero_key` / `initial_mana` / `mana_max_cap`；bootstrap 先解析关卡再确定玩家英雄，`mana.setup(initial_mana, mana_max_cap)` 覆盖默认值；不影响无此字段的旧关卡（cap 缺省走 `MAX_MANA_CAP=10`）
 
 - **章节双 config 选英雄模式**（街亭范式）：`Jieting.tscn` 双面板（马谡 / 王平）选中后写不同 `pending_chapter_config`（`jieting_<key>.json`）；config 间 hero_key、initial_mana、mana_max_cap、boards.player_main.hero ↔ boards.ally_left.hero 互换 + 部分 trigger slot 调整；过渡面板用 panel.gui_input 信号 + PASS/IGNORE 分层让"整面板任意位置点击"都能选中
 
 - **ObjectiveRegistry + turn_ended 检查**：目标类型自动注册；bootstrap 按关卡配置激活；`turn_ended` 信号检查（回合完整结算后才判定），`objective_completed` 信号触发胜利；旧关卡无 objective 字段时静默忽略
 
-- **kill_enemy_hero 目标**：`scripts/objectives/kill_enemy_hero.gd`，监听指定 `slot`（或任意敌方盘）的 `HeroState.died` 信号，死亡即触发 `objective_completed`；与 `survive_turns` 共用 `ObjectiveRegistry` 自注册范式
+- **kill_enemy_hero 目标（规划中，尚未迁入 dev_gd）**：设计稿路径 `scripts/objectives/kill_enemy_hero.gd`——监听指定 `slot`（或任意敌方盘）的 `HeroState.died` 信号，死亡即触发 `objective_completed`，与 `survive_turns` 共用 `ObjectiveRegistry` 自注册范式。**当前 `dev_gd/nsoc/scripts/objectives/` 下只有 `objective.gd` + `survive_turns.gd`**，该文件不存在；因此章节 JSON 里写 `"type":"kill_enemy_hero"` 会被 `ObjectiveRegistry.setup_for_battle` 静默忽略（见 §3.10 注）
 
 - **MarkupParser**：JSON 文本中用 `{tag:text}` / `{para}` / `{break}` 标记，运行时一次 `parse()` 转 BBCode；透明汉字占位（`[color=#00000000]文字[/color]`）解决 Android BBCode 模式前导空白折叠问题
 
@@ -1040,7 +959,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 - **章节过渡面板 detail panel 默认左滑**：`changbanpo.gd` / `weizhenhuaxia.gd` / `jieting.gd` 安装 `DetailPanelController` 时不再调 `attach_to_rect(review_pnl)`，改用默认 `LEFT_WIDE` 锚 + 464px 宽，从场景左侧滑出（与游玩场景一致），不再覆盖检阅区
 
-- **main.gd `_input` null 守卫**：`_ready` 内 `await _apply_editor_window_scale()` 期间 `_input` 已激活，`side_panels` / `enemy_side_panels` / 三个 pile button / `detail_panel` 还未建好；press 与 release 分支均加 nil 早退，避免 jieting → main 切场景的窗口期撞 `Nil.has_open_panel()` 报错
+- **main.gd `_input` null 守卫**：`_ready` 构建 UI 期间（`_input` 已激活而 `side_panels` / `enemy_side_panels` / 三个 pile button / `detail_panel` 还未建好）press 与 release 分支均加 nil 早退，避免 jieting → main 切场景的窗口期撞 `Nil.has_open_panel()` 报错
 
 - **Game.decks / manas 字典化**：PVE 旧代码通过 `Game.deck` / `Game.mana` 别名无感使用；PVP 模式新增 `Game.decks[player_id]` / `Game.manas[player_id]`，`deck_of_slot / mana_of_slot` 按 slot.owner_player_id 路由，避免多玩家费用串联
 
@@ -1050,7 +969,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 - **对手装备镜像**：本端 `Equipments` 单例只含本地玩家装备；对手装备单独维护 `_remote_equip_insts: Array`，收到 `action/play_equip` 时追加 `EquipmentInstance`，激活后按耐久扣减，归零移除；长按对手英雄面板由 `_collect_remote_equip_descs()` 生成描述
 
-- **PVP 回合控制**：`Game.pvp_is_my_turn()` 判断行动归属；本端结束回合调 `TurnSystem.run_pvp_phase(PLAYER)` 只跑己方单位，发 `action/end_turn` 只发给对手（避免 echo）；收到 `action/end_turn` 调 `play_controller.handle_remote_end_turn()` + `Game.pvp_advance_turn()`
+- **PVP 回合控制**：`Game.pvp_is_my_turn()` 判断行动归属；本端结束回合调 `TurnSystem.run_pvp_phase(PLAYER)`（多队伍为 `run_pvp_phase_for_slot(my_slot_id)`）只跑己方单位，`action/end_turn` 用 `Net.send_to_room(..., "all")` 广播给全房间（含自身 echo，`_handle_pvp_message` 开头按 `from == local_player_id` 过滤）；收到 `action/end_turn` 调 `play_controller.handle_remote_end_turn()` + `Game.pvp_advance_turn()`
 
 - **SnapshotIO 序列化基础设施**：`DeckManager.to_dict/from_dict`、`ManaSystem.to_dict/from_dict`、`BoardSlot.to_dict/from_dict`、`Equipments.to_dict/from_dict` 等；版本号字段兼容；`SnapshotIO.serialize_battle / restore_battle` 顶层封装；F5/F9 开发键本地存读档
 
@@ -1116,7 +1035,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 - `user://profile.json`：`{ "uuid": "...", "nickname": "玩家甲" }`
 
-- `user://server.json`：`{ "host": "127.0.0.1", "port": 8080 }`
+- `user://server.json`：`{ "host": "159.75.154.122", "port": 8080 }`（该地址可在多人界面「修改服务器地址」对话框中改写并回写本文件，见 `scripts/ui/sparring_panel.gd` 的服务器配置对话框）
 
 **主要方法**：
 
@@ -1124,7 +1043,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 - `get_nickname() / set_nickname(nick)` — 昵称读写
 
-- `get_server_config() -> Dictionary` — 读服务器配置，缺省返回 `{host:"127.0.0.1", port:8080}`
+- `get_server_config() -> Dictionary` — 读服务器配置，缺省返回 `{host:"159.75.154.122", port:8080}`（远程中继服）
 
 - `save_server_config(host, port)`
 
@@ -1221,25 +1140,18 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 **网络消息处理**（`_on_net_message`）：
 
 | type | 动作 |
-
 |---|---|
-
 | `room/create_ok` | 记录 room_id / host_uuid / players，清空 ready 状态，刷新 UI |
-
 | `room/joined` | 同上 + 强制切回 Mode 0 |
-
 | `room/join_rejected` | 刷新 UI |
-
 | `room/left` | 过滤离开玩家，更新 host_uuid |
-
 | `room/list_response` | 更新 _rooms 列表（过滤 started=true 的房间） |
-
 | `room/expired` / `room/destroy` | 清空 room_id / players / host_uuid |
-
 | `disconnect/notify` | 过滤断线玩家，更新 host_uuid |
-
 | `room/ready_update` | 更新 _player_ready，刷新 UI |
-
+| `room/config_updated` | 同步服务端下发的 match_type（刷新模式选择 + 房间内容） |
+| `room/match_type_changed` | 同步 _match_type + 刷新右侧模式选择（Mode 0 时重刷房间内容） |
+| `room/deck_ready` | 记录非房主上报的牌组名列表（_player_decks）与英雄 key（_player_heroes） |
 | `game/start` | 调 `_handle_game_start` → 发起战斗场景跳转 |
 
 **信号绑定生命周期**：`_apply_styles` 中 `_bind_net_signals`；`NOTIFICATION_PREDELETE` 时 `_unbind_net_signals`，防止节点销毁后信号野火。
@@ -1300,7 +1212,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 3. `my_mana.start_new_turn()` + reset abilities/equipments
 
-4. `Net.send_to(action/end_turn, room_id, opp_id, ...)` — 只发给对手，避免 echo
+4. `Net.send_to_room(action/end_turn, room_id, {...}, "all")` — 广播给全房间（含自身 echo；接收端在 `_handle_pvp_message` 开头按 `from == Game.local_player_id` 丢弃自己发的包）
 
 5. `Game.pvp_advance_turn()` + `_update_pvp_turn_ui()`
 
@@ -1337,61 +1249,40 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 **房间管理消息**（大厅用）：
 
 | type（客→服） | 说明 |
-
 |---|---|
-
 | `room/create` | 创建新房间（服务器随机5位数字号） |
-
 | `room/join` | 加入指定 room_id 的房间 |
-
 | `room/leave` | 离开当前房间 |
-
 | `room/list` | 请求公开房间列表 |
-
 | `room/ready_update` | 广播本玩家准备状态 |
+| `room/update_config` | 房主更新房间模式（`match_type`），服务器按类型重算 `MaxPlayers` |
+| `room/match_type_changed` / `room/deck_ready` | 客户端之间经由服务器转发的房间内通知（非服务器房间管理类型，按 `to` 原样转发） |
 
 | type（服→客） | 说明 |
-
 |---|---|
-
-| `room/create_ok` | 创建成功，含 room_id / host_uuid / players |
-
+| `room/create_ok` | 创建成功，含 room_id / host_uuid / players / match_type / max_players |
+| `room/create_failed` | 创建失败（房号冲突，`reason="id_collision"`） |
 | `room/joined` | 有玩家加入（含更新后的 players 列表） |
-
-| `room/join_rejected` | 加入失败（已开战/已满） |
-
+| `room/join_rejected` | 加入失败（已开战/已满，含 `reason`） |
+| `room/config_updated` | 房间配置已更新（房主改模式后广播全员），含 match_type / max_players |
 | `room/left` | 有玩家离开，含 new_host_uuid |
-
 | `room/list_response` | 房间列表，含 started 字段（客户端过滤） |
-
 | `room/expired` / `room/destroy` | 房间销毁 |
-
 | `disconnect/notify` | 有玩家掉线，含 uuid / new_host_uuid |
-
 | `game/start` | 服务器下发行动顺序 + 随机种子，触发场景切换 |
 
 **战斗中消息**（战斗场景用）：
 
 | type | 发送方 | 说明 |
-
 |---|---|---|
-
 | `action/play_card` | 任一 → all/对手 | 出牌，含 card_name / slot_id / cell；法术含 `result_atk` / `result_health` / `result_cleared`（ming_jin 等放回手牌型） |
-
 | `action/play_equip` | 任一 → 对手 | 出装备，含 card_name |
-
 | `action/activate_equip` | 任一 → 对手 | 激活装备（仅白名单 effect，如 `destroy_unit`），含 equip_name + 效果参数 |
-
 | `action/equip_broken` | 任一 → all | 装备耐久归零广播；远端 `Game.decks[from].send_to_graveyard` + 移除 `_remote_equip_insts` 中破损 inst（与 caster 本端 `_on_inst_changed` 入墓配对） |
-
 | `action/activate_hero` | 任一 → 对手 | 激活英雄技能，含 ability_id + 相关参数（`restart` / `test_discard` 含 `discarded` 列表，远端按 `from` 路由到 caster 的 proxy `Game.decks[from].graveyard`） |
-
-| `action/end_turn` | 任一 → 对手（非 all） | 结束回合，含 player_id / turn_number |
-
+| `action/end_turn` | 任一 → all（广播，含自身 echo；各端按 `from` 过滤） | 结束回合，含 player_id / turn_number |
 | `action/cross_board` | 任一 → all | 多队伍 PVP 跨盘选择广播；其余端入 `_pending_cross_choices` 队列，`run_pvp_phase_for_slot` 期间 FIFO consume |
-
 | `action/deck_reshuffle` | 任一 → all | 本地 `Game.deck.reshuffle(false)` 后由 `signal reshuffled` 触发广播；远端 `Game.decks[player_id].reshuffle(false)` 同步代理 graveyard 清空（`_reshuffle_count` 双端确定性递增） |
-
 | `game/end` | 任一 → all | 战斗结束，含 `winning_team`（多队伍 PVP）/ `winner_id`（1v1 旧字段兼容） |
 
 - **Game.decks / manas 字典化**：PVE 旧代码通过 `Game.deck` / `Game.mana` 别名无感使用；PVP 模式新增 `Game.decks[player_id]` / `Game.manas[player_id]`，`deck_of_slot / mana_of_slot` 按 slot.owner_player_id 路由，避免多玩家费用串联
@@ -1402,7 +1293,7 @@ HeroPnl（HeroCarousel）+ ReviewPnl（竖滚 + rubber band）+ FilterPnl + Must
 
 - **对手装备镜像**：本端 `Equipments` 单例只含本地玩家装备；对手装备单独维护 `_remote_equip_insts: Array`，收到 `action/play_equip` 时追加 `EquipmentInstance`，激活后按耐久扣减，归零移除；长按对手英雄面板由 `_collect_remote_equip_descs()` 生成描述
 
-- **PVP 回合控制**：`Game.pvp_is_my_turn()` 判断行动归属；本端结束回合调 `TurnSystem.run_pvp_phase(PLAYER)` 只跑己方单位，发 `action/end_turn` 只发给对手（避免 echo）；收到 `action/end_turn` 调 `play_controller.handle_remote_end_turn()` + `Game.pvp_advance_turn()`
+- **PVP 回合控制**：`Game.pvp_is_my_turn()` 判断行动归属；本端结束回合调 `TurnSystem.run_pvp_phase(PLAYER)`（多队伍为 `run_pvp_phase_for_slot(my_slot_id)`）只跑己方单位，`action/end_turn` 用 `Net.send_to_room(..., "all")` 广播给全房间（含自身 echo，`_handle_pvp_message` 开头按 `from == local_player_id` 过滤）；收到 `action/end_turn` 调 `play_controller.handle_remote_end_turn()` + `Game.pvp_advance_turn()`
 
 - **SnapshotIO 序列化基础设施**：`DeckManager.to_dict/from_dict`、`ManaSystem.to_dict/from_dict`、`BoardSlot.to_dict/from_dict`、`Equipments.to_dict/from_dict` 等；版本号字段兼容；`SnapshotIO.serialize_battle / restore_battle` 顶层封装；F5/F9 开发键本地存读档
 
@@ -1681,7 +1572,7 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 
 ### 15.11 地图编辑器工具
 
-`tools/empire_map_tool/empire_map_editor.py`，独立 Python/Tkinter 工具，可视化编辑地点节点与连接线并导出 JSON。详见 `tools/empire_map_tool/README.md`。
+`dev_gd/tools/empire_map_tool/empire_map_editor.py`（注意：`tools/` 与 `nsoc/` 同级，不在 `dev_gd/nsoc/` 下），独立 Python/Tkinter 工具，可视化编辑地点节点与连接线并导出 JSON。详见同目录 `README.md`。
 
 ---
 
@@ -1712,7 +1603,7 @@ InfoPanel 实时展示资金（每回合 += 己方地点 `gold` 之和）与粮�
 
 - `apply_snapshot(snap, id_to_node, faction_color_fn, faction_name_fn) -> Dictionary` — 反序列化：恢复节点势力 + deployed + exiled + 出征 + 行棋 + 卡组（`EmpireDeckStorage.inject_from_save`）；返回恢复后的运行时字典，由调用方写回自身成员
 
-- `read_scenario_meta(map_path) -> Dictionary` — 从 map JSON 读 scenario.id/name（仅元数据，不加载完整地图）
+- `read_scenario_meta(map_path) -> Dictionary` — **当前未实现**（`empire_state_io.gd` 文件头注释列了它，但文件中并无该方法）；剧本 id/name 实际由 `write_save_slot` 内联读 map JSON 的 `scenario` 字段写入 meta
 
 **`EmpireSavePanel`**（`scripts/ui/empire_save_panel.gd`，`class_name EmpireSavePanel extends RefCounted`）：
 
@@ -1915,9 +1806,11 @@ scripts/ai/
 
 | 场景 | 文件 | AI 初始化时机 | 覆盖棋盘 |
 |---|---|---|---|
-| 标准测试战斗 | `main.gd` | `board_orchestrator.boot()` 后 `_setup_ai_agents()` | 全部 FACTION_ENEMY + ROLE_ALLY 盘 |
+| 标准测试战斗 | `main.gd` | `board_orchestrator.boot()` 后 `_setup_ai_agents(_is_campaign)` | 全部 FACTION_ENEMY + ROLE_ALLY 盘 |
 | TestMain 多棋盘测试 | `test_main.gd` | 同上（`is_pvp == false` 分支） | 同上（enemy_left / enemy_main / enemy_right / ally_left / ally_right）|
 | 帝国出征战斗 | `main.gd` (同) | 同上（`_bootstrap_empire` 装配的盘 N=1/2/3） | 按启用盘数量 |
+
+> **注**：`main.gd` 的 `_is_campaign`（bootstrap 前 `pending_chapter_config` / `pending_level_path` 非空、且 `pending_empire_battle` 为空）为 true 时 `_setup_ai_agents` 直接 return——战役章节战斗（长坂坡 / 威震华夏 / 街亭）不接 AI，敌方只靠 TurnSystem 自走棋 + spawner 填线；帝国出征（`pending_empire_battle` 非空）与普通 Test 战斗才装配 AI。
 
 **英雄面板（飞牌源节点）查找优先级**：
 1. `board_orchestrator._main_ui[slot_id].get("hero_panel")`
@@ -1977,7 +1870,7 @@ _run_phase(ENEMY)
 所有场景均从 `Game.card_db` 直接拼 AI 牌库（无单独 JSON），当前默认：
 
 ```
-5× 填线宝宝 + 5× 放箭
+5× 填线宝宝 + 5× 放箭 + 5× 鼓舞
 ```
 
 每个 AI slot 独立 `DeckManager` + `ManaSystem`（`setup(1, 5)` — 起始费 1，上限 5），`owner_player_id = "ai_" + slot_id`，单位死亡通过 `handle_unit_death` → `owner_slot.owner_player_id` → `Game.decks["ai_xxx"].graveyard` 入对应 AI 墓地。
@@ -1996,8 +1889,8 @@ _run_phase(ENEMY)
 | P2 | TurnSystem 双阶段接入 + LocalActionSink 单位部署 + 飞牌动画 | ✅ |
 | P3 | HeuristicStrategy 单位评分 + 法术施放 + 目标去重 | ✅ |
 | P4 | 友军 AI 跨盘随机选目标 | ✅ |
-| P5 | NetActionSink + PVP 人机托管 | ❌ 骨架存在，逻辑未实现 |
+| P5 | NetActionSink + PVP 人机托管 | ❌ `net_action_sink.gd` 的广播逻辑（play_card / cross_board / end_turn）已写出，但全工程无实例化 / 调用点，PVP 托管未落地 |
 | P6 | 难度参数化（spell_value_threshold / 故意失误率 / 策略工厂）| ❌ 接口预留，未配置 |
 | — | 帝国专属牌库（按守军节点区分 AI 牌组）| ❌ 未实现 |
-| — | 多盘 ENEMY 跨盘 `on_cross_requested` 智能择盘 | ❌ 未实现 |
+| — | 多盘 ENEMY 跨盘 `on_cross_requested` 智能择盘 | ❌ 择盘函数已实现（`AiStrategy.choose_cross_target` / `HeuristicStrategy.choose_cross_target`），但 `turn_system` 未调用，实际跨盘仍 `randi()` 随机选盘 |
 

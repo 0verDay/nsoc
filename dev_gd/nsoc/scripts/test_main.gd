@@ -59,7 +59,6 @@ var _main_enemy_nodes: Array = []
 
 func _ready() -> void:
 	visible = false
-	await _apply_editor_window_scale()
 
 	if Game.is_pvp:
 		# ── PVP 路径：bootstrap_pvp 已由 PvpLobby 调用，不走 PVE bootstrap ──
@@ -660,24 +659,6 @@ func _input(event) -> void:
 			hero_drag_ctrl.on_gui_input(event)
 
 # ── 样式 ─────────────────────────────────────────────────────────────
-func _apply_editor_window_scale() -> void:
-	if not OS.has_feature("editor"):
-		return
-	var win := get_window()
-	if win == null:
-		return
-	var vp_w: int = int(ProjectSettings.get_setting("display/window/size/viewport_width"))
-	var vp_h: int = int(ProjectSettings.get_setting("display/window/size/viewport_height"))
-	var half: Vector2i = Vector2i(vp_w / 2, vp_h / 2)
-	win.size = half
-	await get_tree().process_frame
-	if win.size != half:
-		get_tree().root.content_scale_factor = 0.5
-		return
-	var screen_size: Vector2i = DisplayServer.screen_get_size(DisplayServer.SCREEN_PRIMARY)
-	var screen_pos: Vector2i = DisplayServer.screen_get_position(DisplayServer.SCREEN_PRIMARY)
-	win.position = screen_pos + (screen_size - half) / 2
-
 func _apply_styles() -> void:
 	$Bg.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#e1e8ed"), 1, 0))
 	$EnemyHpPnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#ff6b6b"), 2, 20, true))

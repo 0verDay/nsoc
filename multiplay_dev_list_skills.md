@@ -106,7 +106,7 @@
 
 
 
-| 战斗结算后 | **服务器发 `game/end` 并销毁房间**，玩家返回主菜单 |
+| 战斗结算后 | **客户端发 `game/end`（to=all），服务器转发给全员后立即销毁房间**，玩家在胜负画面上点返回回主菜单（`game_context.gd:108-114`、`test_main.gd:451-456`、`server/hub.go:360-365`） |
 
 
 
@@ -114,7 +114,7 @@
 
 
 
-| 房主权限 | **不提供踢人 / 转让 / 锁房**（原型期），房主只是"先进者" |
+| 房主权限 | **不提供踢人 / 锁房**（原型期），房主只是"先进者"；**转让已实现**（第五轮修正，见 §10 / §11.5 Step 7-E）：房主断线或主动退出时由服务器随机转让给剩余玩家并广播 `new_host_uuid`（`server/hub.go:86-92, 262-268`） |
 
 
 
@@ -146,11 +146,11 @@
 
 
 
-| **后续目标** | 2v2 / 3v3 / 1v3（增量扩展） |
+| **后续目标** | 2v2 / 3v3 / 1v3（增量扩展）——**进度**：1v3（Step 9）与 3v3（Step 10）已实装，见 §11.7 / §11.8；**2v2 未实现** |
 
 
 
-| 行动顺序 | 房主点开始后，**服务器随机生成 1-N 号顺序** |
+| 行动顺序 | 房主点开始后，**由房主客户端随机生成行动顺序**（1v1 全员 shuffle；1v3 房主固定首位；3v3 两队交替 A1→B1→A2→B2→A3→B3），随 `game/start` 广播；服务器不生成（`scripts/ui/sparring_panel.gd:1274-1358`） |
 
 
 
@@ -314,11 +314,11 @@
 
 
 
-| 客户端断线 | **掉线玩家对自己英雄造成 100 点伤害**，随后算作该玩家阵亡 |
+| 客户端断线 | **掉线玩家的英雄承受 100 点伤害**，随后算作该玩家阵亡。实现上由房内**其余客户端**在收到 `disconnect/notify` 后按其 `dead_player_id` 执行 `damage_hero(100, "triggered")`（掉线端本身已离线，无法自伤）（`scripts/test_main.gd:1317-1338`） |
 
 
 
-| 房主断线 | **房间立即销毁**，本局不计胜负 |
+| 房主断线 | **第五轮修正**：房主断线与普通玩家断线同流程（广播 `disconnect/notify` → 其余端对掉线 slot 自残 100），**房间不销毁**；房主身份由服务器随机转让给剩余玩家（`server/hub.go:86-92`）。仅当房内最后一名玩家也离开 / 断线时才销毁房间 |
 
 
 
@@ -354,11 +354,11 @@
 
 
 
-| 同步策略 | **动画在本地完整播放，服务器只广播"动画事件信号"** |
+| 同步策略 | **动画在本地完整播放**（原设计为"服务器广播动画事件信号"，**实际实现已改为锁步模型**，服务器只做纯中继、不生成任何事件，见 §12.1） |
 
 
 
-| 实现方式 | 服务器发出形如 `attack_started` / `damage_dealt` / `unit_died` / `hero_damaged` 等事件 + 最终状态结果；客户端各自接收信号 → 播放对应本地动画 → 应用最终状态 |
+| 实现方式 | ~~服务器发出形如 `attack_started` / `damage_dealt` / `unit_died` / `hero_damaged` 等事件 + 最终状态结果~~ —— **未实现**（`event/*` 无任何代码引用）；实际为各端收到操作消息后自行结算、本地播放动画 |
 
 
 
@@ -502,11 +502,11 @@
 
 
 
-3. **行动顺序生成**：房主点"开始游戏"时，服务器生成随机 1-N 号顺序并广播
+3. **行动顺序生成**：~~服务器生成随机 1-N 号顺序并广播~~ → **实际由房主客户端生成**（写入 `game/start` payload 的 `action_order` 与 `slot_layout`），服务器不参与（`scripts/ui/sparring_panel.gd:1274-1358`）
 
 
 
-4. **房间生命周期管理**：60 分钟无人在线自动销毁；房主断线时立即销毁
+4. **房间生命周期管理**：60 分钟无活跃自动销毁（销毁前推 `room/expired`）；`game/end` 转发后立即销毁；房内玩家清空立即销毁。**房主断线不销毁房间** —— 服务器随机转让房主并广播 `new_host_uuid`（`server/hub.go:86-92, 360-365, 416-428`）
 
 
 
@@ -1534,11 +1534,11 @@
 
 
 
-- **客户端断线**：服务器检测到掉线 → 房主收到通知 → **对掉线玩家自身英雄造成 100 点伤害**（`damage_hero` 走 triggered 路径，穿透死守）→ 该玩家英雄死亡触发标准阵亡流程
+- **客户端断线**：服务器检测到掉线 → 广播 `disconnect/notify` → **房内各客户端**（不只房主）按 `dead_player_id` 对掉线玩家英雄造成 100 点伤害（`damage_hero` 走 triggered 路径，穿透死守）→ 该玩家英雄死亡触发标准阵亡流程（`scripts/test_main.gd:1317-1338`）
 
 
 
-- **房主断线**：服务器检测到房主掉线 → **立即销毁房间**，向所有客户端发"房间已解散"消息 → 客户端返回主菜单 → 本局不计胜负
+- **房主断线**：服务器检测到房主掉线 → **不销毁房间**，随机转让房主（`new_host_uuid` 随 `disconnect/notify` 下发）→ 其余端按常规断线流程对掉线者英雄造成 100 伤害 → 正常结算（`server/hub.go:86-104`）。房间仅在最后一名玩家也离开 / 断线或 `game/end` / 60 分钟无活跃时销毁
 
 
 
@@ -2134,39 +2134,51 @@ Step 7：扩展到 2v2 / 3v3（后续）
 
 
 
-- **核心消息类型**（待开发期细化具体 payload）：
+- **核心消息类型**（下表为**代码实际实现**的类型与 payload；标注「规划中未实现」的仅为早期设计草案，勿按此开发）：
 
 
 
-  - **房间相关**：`room/create`、`room/join`、`room/join_rejected`（房间已启动）、`room/list`、`room/leave`、`room/destroy`、`room/expired`
+  - **房间相关（已实现）**：
+    - `room/create`：payload 可带 `match_type`（缺省 `"1v1"`）；响应 `room/create_ok {host_uuid, players:[{uuid, nickname, slot}], match_type, max_players}`，房号冲突时 `room/create_failed {reason:"id_collision"}`（`server/hub.go:136-175`）
+    - `room/join`：payload `{room_id}` 或顶层 `room_id`；成功广播 `room/joined {host_uuid, players, match_type, max_players}`，失败 `room/join_rejected {reason:"not_found"|"started"|"full"}`（`full` 时附 `max_players`）（`server/hub.go:177-241`）
+    - `room/list`：响应 `room/list_response {rooms:[{id, host_nickname, player_count, match_type, max_players}]}`；服务端已过滤 `started` 房间（`server/hub.go:285-310`）
+    - `room/leave`：广播 `room/left {uuid, nickname, new_host_uuid}`；房间清空即销毁（`server/hub.go:243-283`）
+    - `room/update_config`：仅房主可发，payload `{match_type}` → 广播 `room/config_updated {match_type, max_players}`（`server/hub.go:314-341`）
+    - `room/match_type_changed`：**纯客户端**点对点消息（房主给新加入者补发当前模式 `{match_type}`），服务器仅按 `to` 转发（`scripts/ui/sparring_panel.gd:976-981`）
+    - `room/ready_update`：广播 `{uuid, ready}`（`scripts/ui/sparring_panel.gd:1146-1154`）
+    - `room/deck_ready`：只发房主，`{uuid, deck_names:[...], hero_key}`（`scripts/ui/sparring_panel.gd:1155-1167`）
+    - `room/expired`：服务端主动推送（60 分钟无活跃，销毁前逐个 `push`）；`room/destroy` 为客户端本地处理分支，服务端不主动发送（`server/hub.go:416-428`、`scripts/ui/sparring_panel.gd:1019`）
 
 
 
-  - **配置下发**：`config/deck_dispatch`（玩家加入房间后立即下发预设牌组配置）
+  - **配置下发**：`config/deck_dispatch`（**规划中未实现**；Step 8-A 已改为各玩家自带备战卡组，服务器不再下发预设牌组，见 §11.6）
 
 
 
-  - **游戏控制**：`game/start`、`game/order_assigned`、`game/end`、`game/turn_advance`
+  - **游戏控制（已实现）**：
+    - `game/start`：房主 → `to=all`，payload `{match_type, action_order:[pid...], per_player_decks:{pid:[card_name]}, per_player_heroes:{pid:hero_key}, rng_seed, slot_layout:[{slot_id, owner_pid, team_id, slot_index}]}`；服务器收到后置房间 `started=true` 拒绝后续加入（`scripts/ui/sparring_panel.gd:1350-1358`、`server/hub.go:357-359`）
+    - `game/end`：客户端 → `to=all`，payload `{winning_team, loser_pid}`（1v3/3v3，`game_context.gd:108-114`）或旧字段 `{winner_id, reason}`（1v1，`test_main.gd:451-456`）；服务器转发后立即销毁房间（`server/hub.go:360-365`）
+    - `game/order_assigned`、`game/turn_advance`：**规划中未实现**（行动顺序由房主在 `game/start` 内生成；回合推进走 `action/end_turn`，无独立回合推进消息）
 
 
 
-  - **玩家操作**：`action/play_card`、`action/activate_hero`、`action/activate_equip`、`action/end_turn`
+  - **玩家操作（已实现）**：`action/play_card`（payload `{card_name, card_type, slot_id}`；1v1 附镜像坐标 `row`/`col`，1v3/3v3 附绝对坐标 `abs_row`/`abs_col`；法术可附 `result_atk` / `result_health` / `result_cleared`）、`action/play_equip {card_name}`、`action/activate_equip {equip_name, slot_id, row/col 或 abs_row/abs_col}`、`action/activate_hero {ability_id, discarded:[card_name]}`（点对点发对手）、`action/end_turn {player_id, turn_number}`、`action/cross_board {source_slot_id, row, col, target_slot_id}`、`action/deck_reshuffle {player_id}`、`action/equip_broken {equip_name}`（`scripts/core/play_controller.gd:200-289`、`scripts/test_main.gd:549-552`、`scripts/core/turn_system.gd:144`、`scripts/core/equipment_manager.gd:64`）
 
 
 
-  - **目标选择请求**：`request/pick_target`、`response/pick_target`、`request/pick_hand_card`、`response/pick_hand_card`
+  - **目标选择请求**：`request/pick_target`、`response/pick_target`、`request/pick_hand_card`、`response/pick_hand_card`（**规划中未实现**；锁步模型下目标选择由各端本地 `pick_async()` 完成，不产生网络请求消息）
 
 
 
-  - **状态同步**：`state/full_snapshot`（首次同步全量状态）、`state/delta`（增量状态变更）
+  - **状态同步**：`state/full_snapshot`（首次同步全量状态）、`state/delta`（增量状态变更）——**规划中未实现**；现有序列化仅有 Step 1 的本地快照 `SnapshotIO`（F5/F9 存档读档），未走网络
 
 
 
-  - **动画事件信号**：`event/attack_started`、`event/damage_dealt`、`event/unit_died`、`event/hero_damaged`、`event/card_drawn`、`event/effect_triggered`、`event/deck_reshuffle`（牌库耗尽墓地重洗）
+  - **动画事件信号**：`event/attack_started`、`event/damage_dealt`、`event/unit_died`、`event/hero_damaged`、`event/card_drawn`、`event/effect_triggered`、`event/deck_reshuffle`（牌库耗尽墓地重洗）——**规划中未实现**；实际采用锁步模型，各端自行结算并本地播放动画，见 §12.1
 
 
 
-  - **断线相关**：`disconnect/notify`（服务器告知房主某玩家掉线）、`disconnect/auto_damage`（房主对掉线玩家执行自残100）
+  - **断线相关（已实现）**：`disconnect/notify`（**服务端主动广播**给房内其余玩家，payload `{uuid, dead_player_id, nickname, new_host_uuid}`；`dead_player_id` 与 `uuid` 同值，客户端按 `dead_player_id` 路由到对应 slot 并执行 `damage_hero(100, "triggered")`；`new_host_uuid` 为断线者恰为房主时随机选出的新主持人，非房主时为原房主 uuid）（`server/hub.go:94-104`、`scripts/test_main.gd:1317-1338`）；`disconnect/auto_damage`（**规划中未实现**，自残 100 由各客户端收到 `disconnect/notify` 后各自执行）
 
 
 
@@ -2186,11 +2198,12 @@ Step 7：扩展到 2v2 / 3v3（后续）
 
 
 
-- TCP 连接断开 → WebSocket 触发 `connection_closed` → 服务器立即广播 `disconnect/notify` 给同房间内其他玩家
+- TCP 连接断开 → 服务器 `Client.readLoop` 退出 → `hub.unregister` → `handleDisconnect`：移除该连接、广播 `disconnect/notify`（payload 含 `uuid` / `dead_player_id` / `nickname` / `new_host_uuid`）给同房间**其余**玩家；房间内清空则立即销毁（`server/hub.go:63-109`）
 
 
 
-- 房主收到 `disconnect/notify` 后调用 `damage_hero(掉线玩家slot, 100, "triggered")` → 走标准阵亡流程
+- **房内所有客户端**（不只房主）收到 `disconnect/notify` 后，按 `dead_player_id` 经 `Game.registry.by_owner()` 定位掉线玩家 slot，调用 `damage_hero(100, "triggered")` → 走标准阵亡流程（`scripts/test_main.gd:1317-1338`）
+- 若断线者恰为房主且房间仍有其他玩家：服务器**随机转让房主**（`room.HostUUID` 改写），并把新主持有人 uuid 放进同一 `disconnect/notify` 的 `new_host_uuid` 字段；客户端据此更新本地 `_host_uuid`（`server/hub.go:86-92`、`scripts/ui/sparring_panel.gd:1030-1032`）。`room/leave`（主动退出）走同一转让逻辑，广播 `room/left {uuid, nickname, new_host_uuid}`
 
 
 
@@ -2222,11 +2235,11 @@ Step 7：扩展到 2v2 / 3v3（后续）
 
 
 
-      host_uuid: "...",
+      host_uuid: "...",        // 断线 / 主动退出时随机转让给剩余玩家
 
 
 
-      players: [{uuid, nickname, ws_conn, slot_index}, ...],
+      players: [*Client, ...], // 连接指针；对外暴露时投影为 [{uuid, nickname, slot}]
 
 
 
@@ -2238,11 +2251,13 @@ Step 7：扩展到 2v2 / 3v3（后续）
 
 
 
-      started: false,
+      started: false,          // game/start 后置 true，拒新玩家加入
 
 
 
-      action_order: []  // game/start 后赋值
+      match_type: "1v1",        // "1v1" / "1v3" / "3v3"（server/room.go:22）
+      max_players: 2,           // 1v1=2 / 1v3=4 / 3v3=6（server/room.go:37-45）
+      // 注：服务端**不持有** action_order —— 行动顺序由房主在 game/start 的 payload 内生成
 
 
 
@@ -2266,7 +2281,7 @@ Step 7：扩展到 2v2 / 3v3（后续）
 
 
 
-- 后台定时任务每分钟扫描，销毁 60 分钟无活跃的房间
+- 后台定时任务每 60 秒扫描，销毁 60 分钟无活跃的房间（先给房内玩家推 `room/expired`）；此外 `game/end` 转发后立即销毁，房间内玩家清空（离开 / 断线）也立即销毁（`server/hub.go:104-108, 279-282, 360-365, 416-428`）
 
 
 
@@ -3334,15 +3349,15 @@ Step 7：扩展到 2v2 / 3v3（后续）
 
 
 
-- [ ] **真实云服务器部署**：当前只本机 localhost:8080
+- [x] ~~真实云服务器部署~~ → **已改为远程服务器（不再是本机 localhost）**：`ProfileManager` 默认 host/port = `159.75.154.122:8080`（`scripts/net/profile_manager.gd:49,62`），SparringPanel 内提供「修改服务器地址」对话框，保存后写回 `user://server.json` 并自动重连（`scripts/ui/sparring_panel.gd:1222-1270`）。是否已在远端实际部署无法从代码核实。
 
 
 
-- [ ] **JSON 协议精确化**：每类消息的 payload schema 文档化
+- [ ] **JSON 协议精确化**：每类消息的 payload schema 文档化（§8.6 已补齐 `room/*`、`game/start`、`action/*`、`disconnect/notify` 的实际字段；仍未覆盖全部边界 payload，故保留未勾选）
 
 
 
-- [ ] **2v2 / 3v3 / 1v3 扩展**：多 enemy_main / ally slot
+- [x] ~~1v3 / 3v3 扩展~~ → **Step 9 / Step 10 已完成**（多 slot + team_id 体系：`BoardSlot.team_id`、`BoardLayoutResolver`、`TurnSystem.run_pvp_phase_for_slot`，见 §11.7 / §11.8）；**2v2 仍未实现**（`server/room.go:37-45` 的 `MaxPlayersForType` 仅支持 1v1=2 / 1v3=4 / 3v3=6）
 
 
 
@@ -4054,7 +4069,7 @@ Step 7：扩展到 2v2 / 3v3（后续）
 
 
 
-不走"权威服务器 + 状态广播"，而是双方各自完整跑游戏逻辑，靠**同步操作消息**保持一致。简化实现，但要求：
+不走"权威服务器 + 状态广播"，而是各端各自完整跑游戏逻辑，靠**同步操作消息**保持一致。简化实现，但要求：
 
 
 
@@ -4062,11 +4077,11 @@ Step 7：扩展到 2v2 / 3v3（后续）
 
 
 
-- 所有玩家行动通过消息广播给对手（出牌 / 结束回合 / 装备激活 / 英雄技能）
+- 所有玩家行动通过消息广播（出牌 `action/play_card`、装备出牌 `action/play_equip`、装备激活 `action/activate_equip`、英雄技能 `action/activate_hero`、结束回合 `action/end_turn`、跨盘选盘 `action/cross_board`、牌库重洗 `action/deck_reshuffle`、装备破损 `action/equip_broken`）
 
 
 
-- 对手收到消息后在本端**镜像执行**
+- 其余各端收到消息后在本端**镜像执行**（1v1 为对手一端；1v3 / 3v3 为房内其余各端，经 `to=all` 广播）
 
 
 
@@ -4106,7 +4121,7 @@ PlayController 本地执行
 
 
 
-_pvp_broadcast_play_card  ← Net.send_to(opp_id)（不发 to=all 避免 echo）
+_pvp_broadcast_play_card  ← 1v1: Net.send_to(opp_id)（点对点，避免 echo）；1v3/3v3: Net.send_to_room(to="all")
 
 
 
@@ -4219,6 +4234,7 @@ col_b = (COLS-1) - col_a  // = 2 - col_a
 
 
 target_slot = (sender_slot == "player_main") ? "enemy_main" : "player_main"
+（多队伍 PVP 1v3 / 3v3 不走镜像：广播 abs_row / abs_col 绝对坐标 + slot_id 直查，见 play_controller.gd:370-375）
 
 
 
@@ -4238,11 +4254,11 @@ target_slot = (sender_slot == "player_main") ? "enemy_main" : "player_main"
 
 
 
-- `Game.pvp_action_order: Array[session_id]` — 服务器或房主在 `game/start` 时 shuffle 生成
+- `Game.pvp_action_order: Array[session_id]` — **房主**在 `game/start` 时生成（服务器不参与）：1v1 = 全员 shuffle；1v3 = 房主固定首位（defender）+ 其余 3 人 shuffle；3v3 = 随机分两队后按 A1→B1→A2→B2→A3→B3 交替（`scripts/ui/sparring_panel.gd:1282-1332`）
 
 
 
-- `Game.pvp_active_idx: int` — 当前行动玩家在 order 中的下标
+- `Game.pvp_active_idx: int` — 当前行动玩家在 order 中的下标；多队伍 PVP 用 `pvp_advance_turn_skip_dead()` 跳过 `pvp_dead_players` 中已阵亡玩家（`game_context.gd:60-76`）
 
 
 
@@ -4250,15 +4266,15 @@ target_slot = (sender_slot == "player_main") ? "enemy_main" : "player_main"
 
 
 
-- 主动方按"结束回合"：本地跑 `run_pvp_phase(PLAYER)` → `Net.send_to(opp, "action/end_turn")` → 本地 `pvp_advance_turn()`
+- 主动方按"结束回合"：本地跑 `run_pvp_phase(PLAYER)`（多队伍 PVP 改为 `run_pvp_phase_for_slot(本端 slot.id)`）→ 本端费用 +1 并清空技能 / 装备回合使用记录 → `Net.send_to_room("action/end_turn", {player_id, turn_number}, to="all")`（自己的 echo 由 `from == local_player_id` 过滤）→ 本地 `pvp_advance_turn()`（多队伍 `pvp_advance_turn_skip_dead()`）（`scripts/test_main.gd:529-560`）
 
 
 
-- 被动方收到：跑 `run_pvp_phase(ENEMY)`（即对手单位移动） → `pvp_advance_turn()`
+- 被动方收到：`_on_remote_end_turn` 先校验 `pvp_is_my_turn()`，再跑 `handle_remote_end_turn()`（即 `run_pvp_phase(ENEMY)`）；多队伍 PVP 按 `payload.player_id` 查发送方 slot 后调 `run_pvp_phase_for_slot(sender_slot.id)` → 发送方费用 +1 → `pvp_advance_turn()` / `pvp_advance_turn_skip_dead()`（`scripts/test_main.gd:1357-1381`）
 
 
 
-- 双方推进同步保持 idx 一致
+- 双方推进同步保持 idx 一致；`pvp_action_order` 走完一轮后 `Game.turn.turn_number += 1`（`is_round_complete()`，`game_context.gd:78`）
 
 
 
@@ -4282,19 +4298,19 @@ target_slot = (sender_slot == "player_main") ? "enemy_main" : "player_main"
 
 
 
-| `Game.bootstrap()` | 原路径 | `bootstrap_pvp(local_pid, order, deck_cards)` |
+| `Game.bootstrap()` | 原路径 | `bootstrap_pvp(local_pid, all_player_ids, per_player_deck_cards, all_cards_db, rng_seed, per_player_heroes, match_type, teams_map, slot_layout)`（`game_context.gd:581-587`） |
 
 
 
-| `level_data` | 章节 JSON | 合成 dict（player_main + enemy_main，无 spawner/events） |
+| `level_data` | 章节 JSON | 合成 dict（1v1：player_main + enemy_main；1v3 / 3v3：按 `slot_layout` 逐盘生成，见 `test_main._inject_1v3_level_data` / `_inject_3v3_level_data`），无 spawner/events |
 
 
 
-| `TurnSystem` | `run()` 跑 PLAYER + ENEMY 双阶段 | `run_pvp_phase(faction)` 只跑单侧 |
+| `TurnSystem` | `run()` 跑 PLAYER + ENEMY 双阶段 | `run_pvp_phase(faction)` 只跑单侧；多队伍 PVP（1v3 / 3v3）用 `run_pvp_phase_for_slot(slot_id)` 按盘跑 |
 
 
 
-| `BoardOrchestrator` | 章节 enabled 附盘 | 仅主盘双方 |
+| `BoardOrchestrator` | 章节 enabled 附盘 | 1v1 仅主盘双方；1v3 / 3v3 由 `BoardLayoutResolver` 解析 viewer-relative 多盘布局（自盘居中 + 队友侧盘 + 敌队横排） |
 
 
 
@@ -4310,7 +4326,7 @@ target_slot = (sender_slot == "player_main") ? "enemy_main" : "player_main"
 
 
 
-| `DeckManager / ManaSystem` | 单实例 | 双实例（per session_id） |
+| `DeckManager / ManaSystem` | 单实例 | 多实例（每位玩家各一套，per session_id） |
 
 
 
@@ -4330,7 +4346,7 @@ target_slot = (sender_slot == "player_main") ? "enemy_main" : "player_main"
 
 
 
-- 所有 `action/*` 消息**只发对手**（`Net.send_to(opp_id)`）不用 `to=all`，避免 echo 触发自己消息队列处理
+- **1v1**：所有 `action/*` 消息**只发对手**（`Net.send_to(opp_id)`），不用 `to=all`，避免 echo 触发自己消息队列处理；**1v3 / 3v3**：改为 `to=all` 广播全房间，各端由 `from == local_player_id` 过滤自己的 echo（`play_controller.gd:229-235`、`test_main.gd:1255`）
 
 
 
@@ -4346,7 +4362,7 @@ target_slot = (sender_slot == "player_main") ? "enemy_main" : "player_main"
 
 
 
-### 12.7 文件清单（PVP 相关新增 / 改动）
+### 12.7 文件清单（PVP 相关新增 / 改动，累计至 Step 10）
 
 
 
@@ -4378,7 +4394,7 @@ dev_gd/nsoc/
 
 
 
-├── scripts/ui/pvp_lobby.gd            新增：纯代码大厅 UI
+├── scripts/ui/sparring_panel.gd       新增：联机大厅 + 房间 UI（原 pvp_lobby.gd 已于 Step 7-B 删除，功能完全迁入此处，见 §11.5）
 
 
 
@@ -4442,7 +4458,7 @@ dev_gd/nsoc/
 
 
 
-├── scripts/main_menu.gd               + "联机对战"按钮
+├── scripts/main_menu.gd               临时"联机对战"按钮已删除；联机入口为原生 SparringBtn → SparringPanel.tscn
 
 
 
@@ -4450,6 +4466,17 @@ dev_gd/nsoc/
 
 
 
+├── scripts/core/board_layout_resolver.gd  新增：viewer-relative 布局解析（1v3 / 3v3）
+├── scripts/core/board_registry.gd     + by_team / by_owner / adjacent_enemy_slots
+├── scripts/ui/front_row_selector.gd   跨盘目标盘选择 + 镜像列（1v3 / 3v3）
+├── scripts/ui/action_order_bar.gd     新增：行动顺序指示器
+├── scripts/ui/ally_side_panel_manager.gd  新增：友军墓地 / 除外面板
+├── scripts/abilities/test_discard.gd  新增：英雄 B「测试技能」
+├── scripts/core/hero_ability_registry.gd  + clear_turn_usage
+├── scripts/core/deck_storage.gd       + selected_hero 持久化
+├── scripts/ui/prepare_panel.gd        + 卡组与英雄合并为一次写盘
+├── scripts/ui/hero_carousel.gd        + 读取 selected_hero 恢复上次携带英雄
+├── scripts/ui/turn_order_indicator.gd 每盘行动顺序徽章 / 光环（PVP 由 preview_active_pvp_slots 驱动）
 └── project.godot                      + Net autoload
 
 
@@ -4654,7 +4681,7 @@ server/                                新增目录
 
 
 
-| `data/hero.json` | 英雄 B：`display_name="多人模式·测试"`, `battle_name="测试"`, `max_health=30`, `abilities=["test_discard"]`, `skill_text="测试技能：消耗 1 费用，选择一张手牌弃置，并补一张。"` |
+| `data/hero.json` | 英雄 B：`display_name="多人模式·测试"`, `battle_name="测试"`, `max_health=30`, `abilities=["test_discard"]`, `skill_text="测试技能：一回合最多一次，消耗 1 费用，选择一张手牌弃置，并补一张。"` |
 
 
 

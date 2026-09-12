@@ -62,7 +62,6 @@ var _main_enemy_nodes: Array = []
 
 func _ready() -> void:
 	visible = false
-	await _apply_editor_window_scale()
 	# bootstrap 前记录：有 chapter config/level_path 且不是帝国出征 = 战役模式（不接 AI）
 	var _is_campaign: bool = (
 		Game.pending_chapter_config != "" or Game.pending_level_path != ""
@@ -612,25 +611,6 @@ func _on_enemy_hero_panel_gui_input(event: InputEvent) -> void:
 		tween.tween_property(pnl, "scale", Vector2(1.08, 1.08), 0.1)
 
 # ── 样式 ─────────────────────────────────────────────────────────────
-# 仅在编辑器/调试运行时缩放：优先改窗口尺寸；嵌入模式改 content_scale_factor。
-func _apply_editor_window_scale() -> void:
-	if not OS.has_feature("editor"):
-		return
-	var win := get_window()
-	if win == null:
-		return
-	var vp_w: int = int(ProjectSettings.get_setting("display/window/size/viewport_width"))
-	var vp_h: int = int(ProjectSettings.get_setting("display/window/size/viewport_height"))
-	var half: Vector2i = Vector2i(vp_w / 2, vp_h / 2)
-	win.size = half
-	await get_tree().process_frame
-	if win.size != half:
-		get_tree().root.content_scale_factor = 0.5
-		return
-	var screen_size: Vector2i = DisplayServer.screen_get_size(DisplayServer.SCREEN_PRIMARY)
-	var screen_pos: Vector2i = DisplayServer.screen_get_position(DisplayServer.SCREEN_PRIMARY)
-	win.position = screen_pos + (screen_size - half) / 2
-
 func _apply_styles() -> void:
 	$Bg.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#e1e8ed"), 1, 0))
 	$EnemyHpPnl.add_theme_stylebox_override("panel", ThemeFactory.panel(Color.WHITE, Color("#ff6b6b"), 2, 12, true))

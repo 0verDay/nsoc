@@ -2,7 +2,12 @@
 
 > 基线：`dev_gd/nsoc/`（已完成 1v1 + 1v3）。本文记录 3v3 增量改动。
 > 所有服务端文件位于 `server/`（与 dev_gd 共用）。
-> 最后更新：2026-06
+> 最后更新：2026-06（进度状态已按代码复核）
+>
+> **状态说明**：本文 A~L 的 Before/After 代码片段是当时的**设计稿**，仅作历史记录保留；
+> 3v3 已实装，最终实现与设计稿可能在函数名、分支写法、字段上不同。
+> **实际实现请以 `dev_gd/nsoc/`（及 `server/`）代码为准。**
+> 下方"开发进度"表已按当前代码逐项复核。
 
 ---
 
@@ -444,6 +449,7 @@ if Game.is_multi_team_pvp():
 | I1 sparring_panel 加 3v3 按钮 | `sparring_panel.gd` | ✅ |
 | I2 min_players=6 | `sparring_panel.gd` | ✅ |
 | I3 _on_start_game 3v3 slot_layout + action_order | `sparring_panel.gd` | ✅ |
+| I4 SparringPanel 6 格槽位 UI（3v3 全开 + 〔A〕/〔B〕标注） | `sparring_panel.gd` | ✅（`_build_my_room`：`open_cells=[0..5]`、role_tag 按 slot_id 分 A/B） |
 | J1 test_main 入口 3v3 resolver | `test_main.gd` | ✅ |
 | J2 _inject_3v3_level_data | `test_main.gd` | ✅ |
 | J3 _build_default_3v3_layout | `test_main.gd` | ✅ |
@@ -456,9 +462,8 @@ if Game.is_multi_team_pvp():
 
 | 任务 | 备注 |
 |---|---|
-| I4 SparringPanel 6 格槽位 UI | 当前 6 格已存在，显示 3v3 时仅需验证布局 |
-| L1 assault_charge is_hostile_to 迁移 | 3v3 队友相邻可能误判，联调发现再补 |
-| T1-T9 完整联调测试 | 见下方测试场景 |
+| L1 assault_charge 调用点参数清理 | 调用点仍传 `dest.is_enemy`（`assault_charge.gd:56`），但 `BoardModel.find_adjacent_enemies` 已改为 `cell.team_id` / `tgt.team_id` 优先判定友敌（`board_model.gd:113-124`），3v3 同队相邻**不会**误判 → 仅遗留参数样式问题，无功能缺陷 |
+| T1-T9 完整联调测试 | 见下方测试场景；需 6 端实机验证（本机无 Godot，未执行） |
 
 ---
 
@@ -493,9 +498,9 @@ Phase 3（逻辑与 UI 完整）
   K1  front_row_selector 镜像列 3v3
   J9  test_main 多处 1v3→is_multi_team_pvp
 
-Phase 4（联调）
-  I4  sparring_panel 6 格槽位 UI
-  L1  assault_charge 迁移 is_hostile_to（可选）
+Phase 4（联调）—— I4 已实装，剩余为实机联调
+  I4  sparring_panel 6 格槽位 UI（已完成，见上方进度表）
+  L1  assault_charge 调用点参数清理（可选；友敌判定已由 BoardModel 按 team_id 处理）
 ```
 
 ---
