@@ -144,6 +144,17 @@ jobs:
           fi
           grep -E "SCENE_RESULT" scene.log
 
+      - name: 规则层单元测试
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/RulesTest.tscn > rules.log 2>&1 || true
+          if ! grep -q "RULES_RESULT PASS" rules.log; then
+            grep -E "RULES_CASE FAIL|RULES_RESULT" rules.log || true
+            echo "::error::规则层单元测试未通过"
+            exit 1
+          fi
+          grep -E "RULES_RESULT" rules.log
+
       - name: 上传冒烟日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -155,4 +166,5 @@ jobs:
             run2.log
             authority.log
             scene.log
+            rules.log
           if-no-files-found: ignore
