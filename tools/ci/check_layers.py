@@ -37,7 +37,7 @@ LAYER_DIRS: list[tuple[str, Path]] = [
     ("ai", SCRIPTS / "ai"),
     ("net", SCRIPTS / "net"),
     ("client", SCRIPTS / "ui"),
-    ("app", SCRIPTS),  # 根目录脚本：main.gd / test_main.gd / cell.gd 等
+    ("app", SCRIPTS / "app"),  # 场景控制器：main / test_main / main_menu / splash
 ]
 
 # 必须保持"纯规则"的层：不得出现 UI / 场景树 / 反射 / 资源路径。
@@ -108,10 +108,7 @@ def iter_scripts() -> list[tuple[str, str, Path]]:
     for layer, base in LAYER_DIRS:
         if not base.exists():
             continue
-        if base == SCRIPTS:  # app 层：只取直接子文件，避免与其他层重复
-            files = sorted(base.glob("*.gd"))
-        else:
-            files = sorted(base.rglob("*.gd"))
+        files = sorted(base.rglob("*.gd"))
         for f in files:
             if f in seen:
                 continue

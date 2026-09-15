@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://scripts/cell.gd" id="1_cell"]
+[ext_resource type="Script" path="res://scripts/ui/cell.gd" id="1_cell"]
 
 [node name="Cell" type="Panel"]
 custom_minimum_size = Vector2(120, 120)

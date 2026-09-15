@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://lwjsappnycks"]
 
-[ext_resource type="Script" uid="uid://d2h36dq3c0iij" path="res://scripts/main.gd" id="1_m5jxw"]
+[ext_resource type="Script" uid="uid://d2h36dq3c0iij" path="res://scripts/app/main.gd" id="1_m5jxw"]
 
 [node name="Main" type="Control" unique_id=801146258]
 layout_mode = 3

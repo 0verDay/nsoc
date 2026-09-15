@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://cjl8v8cbynp1y"]
 
-[ext_resource type="Script" uid="uid://drjofysaq3pci" path="res://scripts/test_main.gd" id="1_tm"]
+[ext_resource type="Script" uid="uid://drjofysaq3pci" path="res://scripts/app/test_main.gd" id="1_tm"]
 
 [node name="TestMain" type="Control" unique_id=1495932973]
 layout_mode = 3

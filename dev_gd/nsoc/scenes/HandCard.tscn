@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://dea4u7qpn2kjg"]
 
-[ext_resource type="Script" uid="uid://cxf5chrdccc3o" path="res://scripts/hand_card.gd" id="1_handcard"]
+[ext_resource type="Script" uid="uid://cxf5chrdccc3o" path="res://scripts/ui/hand_card.gd" id="1_handcard"]
 
 [node name="HandCard" type="Panel" unique_id=418770818]
 custom_minimum_size = Vector2(250, 95)
