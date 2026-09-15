@@ -71,10 +71,18 @@ func deployable_for_player() -> Array:
 func enemy_targets() -> Array:
 	return by_faction(BoardSlot.FACTION_ENEMY)
 
-# 阶段遍历用排序：按视觉 x 升序（左→右）
-func sorted_by_x() -> Array:
+# 阶段遍历用排序：按逻辑顺序 slot_index 升序（左→右）。
+# 不使用屏幕像素：原先按 visual_x 排序会让行动顺序依赖窗口尺寸、分辨率与布局
+# 完成时序，是跨端 / 跨分辨率的 desync 隐患（重构文档.md §3.4-7）。
+# 相同 slot_index 时以 id 兜底，保证排序完全确定。
+func sorted_by_order() -> Array:
 	var out: Array = slots.duplicate()
-	out.sort_custom(func(a, b): return a.visual_x() < b.visual_x())
+	out.sort_custom(func(a, b):
+		var ka: int = a.order_key()
+		var kb: int = b.order_key()
+		if ka == kb:
+			return String(a.id) < String(b.id)
+		return ka < kb)
 	return out
 
 func clear() -> void:

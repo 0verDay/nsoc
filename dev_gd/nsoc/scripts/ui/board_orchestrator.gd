@@ -175,7 +175,7 @@ func boot() -> void:
 				continue
 			# 1v3 中所有来自 slot_layout 的盘都强制创建
 		_create_slot(id, meta, false)
-	# 所有盘装配完成后刷新行动序号（延一帧等 visual_x 就绪）
+	# 所有盘装配完成后刷新行动序号（顺序按 slot_index，与布局像素无关）
 	call_deferred("refresh_indicator_orders")
 
 # ── 局内棋盘事件 ──────────────────────────────────────────────────────
@@ -564,7 +564,8 @@ func _compute_slot_orders() -> Dictionary:
 			var idx: int = Game.pvp_action_order.find(slot.owner_player_id)
 			out[slot.id] = idx + 1 if idx >= 0 else 0
 	else:
-		# PVE / 离线：PLAYER 阵营 (visual_x 升序) = 1..N；ENEMY 阵营 (visual_x 降序) = N+1..M
+		# PVE / 离线：PLAYER 阵营 (slot_index 升序) = 1..N；ENEMY 阵营 (slot_index 降序) = N+1..M
+		# 与 TurnSystem 的行动顺序共用同一逻辑键（§3.4-7），保证指示器与实际结算一致。
 		var player_slots: Array = []
 		var enemy_slots:  Array = []
 		for slot in Game.registry.slots:
@@ -572,8 +573,8 @@ func _compute_slot_orders() -> Dictionary:
 				player_slots.append(slot)
 			else:
 				enemy_slots.append(slot)
-		player_slots.sort_custom(func(a, b): return a.visual_x() < b.visual_x())
-		enemy_slots.sort_custom(func(a, b): return a.visual_x() > b.visual_x())
+		player_slots.sort_custom(func(a, b): return a.order_key() < b.order_key())
+		enemy_slots.sort_custom(func(a, b): return a.order_key() > b.order_key())
 		var n: int = 1
 		for slot in player_slots:
 			out[slot.id] = n

@@ -150,16 +150,13 @@ func is_player_side() -> bool:
 func is_enemy_side() -> bool:
 	return faction == FACTION_ENEMY
 
-# 视觉水平位置：以 bg_panel 为准，回退到任一 cell 的 global_position.x
-func visual_x() -> float:
-	if is_instance_valid(bg_panel):
-		return bg_panel.global_position.x
-	if board != null:
-		for key in board.grid_cells.keys():
-			var cell = board.grid_cells[key]
-			if is_instance_valid(cell):
-				return cell.global_position.x
-	return INF
+# 逻辑行动顺序键（重构文档.md §3.4-7）。
+# 使用 slot_index —— 它本身就是布局的空间顺序（0 敌左 / 1 敌中 / 2 敌右 /
+# 3 友左 / 4 主盘 / 5 友右），BoardLayoutResolver 也用它来决定左/中/右，
+# 因此与"从左往右"的既有语义一致，且不依赖窗口尺寸与布局时序。
+# 取代原先按 bg_panel.global_position.x（屏幕像素）排序的做法。
+func order_key() -> int:
+	return slot_index
 
 # ── 序列化（PVP 联机用）────────────────────────────────────────────
 # 把 board / hero / 本盘墓地除外打包；视觉节点（bg_panel / grid_node / hero_panel）

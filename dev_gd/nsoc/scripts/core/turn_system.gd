@@ -335,7 +335,7 @@ func _iter_phase_cells(faction: int) -> Array:
 	var out: Array = []
 
 	if faction == PLAYER:
-		var slots: Array = reg.sorted_by_x()
+		var slots: Array = reg.sorted_by_order()
 		for r in range(BoardModel.ROWS):
 			for slot in slots:
 				if not is_instance_valid(slot.board):
@@ -346,8 +346,8 @@ func _iter_phase_cells(faction: int) -> Array:
 						out.append({"cell": slot.board.grid_cells[key], "slot": slot})
 	else:
 		# 将棋盘分成两组：玩家侧（faction=PLAYER）和敌方侧（faction=ENEMY），
-		# 均按 x 降序（敌方自身视角左→右）。
-		var slots_desc: Array = reg.sorted_by_x().duplicate()
+		# 均按 slot_index 降序（敌方自身视角左→右）。
+		var slots_desc: Array = reg.sorted_by_order().duplicate()
 		slots_desc.reverse()
 		var player_slots: Array = []
 		var enemy_slots: Array = []

@@ -18,7 +18,7 @@ extends Node
 ## 注意：GDScript 的运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 29
+const EXPECTED_CASES: int = 31
 
 var _passed: int = 0
 var _failed: int = 0
@@ -39,6 +39,7 @@ func _ready() -> void:
 	_test_deck()
 	_test_markup()
 	_test_battle_mode()
+	_test_slot_order()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -214,6 +215,35 @@ func _test_battle_mode() -> void:
 		and BattleMode.from_pending("", "", false) == BattleMode.Kind.SKIRMISH
 		and BattleMode.from_pending("", "", true) == BattleMode.Kind.EMPIRE,
 		"派生结果不符")
+
+
+# ══ 行动定序（§3.4-7）═════════════════════════════════════════════════════
+
+## 定序必须与屏幕像素无关：本测试刻意不创建任何 bg_panel / cell，
+## 因此旧的 visual_x() 实现只能返回 INF（顺序随机），新实现应给出确定顺序。
+func _test_slot_order() -> void:
+	var reg := BoardRegistry.new()
+	var right := BoardSlot.new(); right.id = "ally_right";   right.slot_index = 5
+	var left  := BoardSlot.new(); left.id  = "ally_left";    left.slot_index = 3
+	var main  := BoardSlot.new(); main.id  = "player_main";  main.slot_index = 4
+	reg.slots = [right, main, left]   # 故意打乱加入顺序
+	var ordered: Array = reg.sorted_by_order()
+	_check("定序: 按 slot_index 升序且与加入顺序无关",
+		ordered.size() == 3 and String(ordered[0].id) == "ally_left"
+		and String(ordered[1].id) == "player_main"
+		and String(ordered[2].id) == "ally_right",
+		str(ordered.map(func(s): return s.id)))
+
+	var dup_b := BoardSlot.new(); dup_b.id = "b_slot"; dup_b.slot_index = 1
+	var dup_a := BoardSlot.new(); dup_a.id = "a_slot"; dup_a.slot_index = 1
+	reg.slots = [dup_b, dup_a]
+	var ordered2: Array = reg.sorted_by_order()
+	_check("定序: 相同 slot_index 时按 id 兜底（完全确定）",
+		String(ordered2[0].id) == "a_slot" and String(ordered2[1].id) == "b_slot",
+		str(ordered2.map(func(s): return s.id)))
+
+	for s in [right, left, main, dup_a, dup_b]:
+		s.free()
 
 
 # ══ 工具 ═════════════════════════════════════════════════════════════════
