@@ -45,6 +45,12 @@ static func canonical() -> Dictionary:
 		var mn = Game.manas.get(pid)
 		if mn != null and mn.has_method("to_dict"):
 			manas[pid] = mn.to_dict()
+	# 本地玩家别名必须单独覆盖：PVE 下 Game.decks 可能是空的（本地牌组只挂在
+	# Game.deck / Game.mana 上），若漏掉就等于"洗牌结果不进哈希"，安全网会漏报。
+	if Game.deck != null and Game.deck.has_method("to_dict"):
+		decks["__local__"] = Game.deck.to_dict()
+	if Game.mana != null and Game.mana.has_method("to_dict"):
+		manas["__local__"] = Game.mana.to_dict()
 	out["decks"] = decks
 	out["manas"] = manas
 

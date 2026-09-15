@@ -31,6 +31,38 @@ var battle_mode: int = BattleMode.Kind.CAMPAIGN
 # 业务模块据此跳过 spawner / spell_caster / scripted_events / dialogue 等 PVE 专属流程。
 var is_pvp: bool = false
 
+# ── 规则随机源（重构文档.md §3.4-7）─────────────────────────────────────
+# 所有"影响对局结果"的随机都必须走这里，不再使用全局 randi() / Array.shuffle()：
+#   - PVP：由服务器下发的种子（bootstrap_pvp 的 rng_seed）决定 → 可复现、且客户端无法挑选
+#   - PVE：pending_battle_seed 为 0 时 randomize()；测试/回放可显式指定种子
+# 这样"随机由谁掌握"就不再是隐式的全局状态，服务器权威可以直接接管。
+var battle_rng := RandomNumberGenerator.new()
+var pending_battle_seed: int = 0
+
+
+## 设定本局规则随机种子。seed_value == 0 表示不指定（随机化）。
+func seed_battle_rng(seed_value: int = 0) -> void:
+	if seed_value == 0:
+		battle_rng.randomize()
+	else:
+		battle_rng.seed = seed_value
+
+
+## 取 [0, n) 的随机下标（n <= 0 时返回 0，调用方保证数组非空才有意义）。
+func rand_index(n: int) -> int:
+	if n <= 0:
+		return 0
+	return battle_rng.randi_range(0, n - 1)
+
+
+## 就地洗牌（确定性，走 battle_rng）。取代 Array.shuffle()。
+func shuffle_in_place(arr: Array) -> void:
+	for i in range(arr.size() - 1, 0, -1):
+		var j: int = battle_rng.randi_range(0, i)
+		var tmp = arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp
+
 # ── PVP 回合状态 ────────────────────────────────────────────────────────
 # action_order：游戏开始时服务器分配的行动顺序（uuid 数组）。
 # active_player_idx：当前行动玩家在 action_order 中的下标；结束回合后 +1 取模。
@@ -336,11 +368,14 @@ func _load_card_db(cards: Array = []) -> void:
 func _clear_pending_inputs() -> void:
 	pending_chapter_config = ""
 	pending_level_path = ""
+	pending_battle_seed = 0
 	_target_selector_node = null
 	_hand_picker_node     = null
 
 
 func bootstrap() -> void:
+	# 规则随机源：pending_battle_seed 为 0 时随机化（测试/回放可显式指定）
+	seed_battle_rng(pending_battle_seed)
 	# 帝国模式出征：在所有标准 PVE 装载之前走专属分支
 	if not pending_empire_battle.is_empty():
 		battle_mode = BattleMode.Kind.EMPIRE
@@ -597,6 +632,8 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 	battle_mode = BattleMode.Kind.PVP
 	is_pvp = true
 	local_player_id = p_local_pid
+	# 规则随机源：PVP 由服务器下发的种子决定（可复现、客户端无法挑选）
+	seed_battle_rng(rng_seed)
 
 	# card_db 装载：PVP 模式服务器只下发牌组，客户端仍需 all_cards.json 解卡牌静态属性。
 	if all_cards_db.size() > 0:

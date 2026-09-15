@@ -18,7 +18,7 @@ extends Node
 ## 注意：GDScript 的运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 31
+const EXPECTED_CASES: int = 33
 
 var _passed: int = 0
 var _failed: int = 0
@@ -40,6 +40,7 @@ func _ready() -> void:
 	_test_markup()
 	_test_battle_mode()
 	_test_slot_order()
+	_test_battle_rng()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -244,6 +245,26 @@ func _test_slot_order() -> void:
 
 	for s in [right, left, main, dup_a, dup_b]:
 		s.free()
+
+
+# ══ 规则随机源（§3.4-7）═════════════════════════════════════════════════
+
+## 服务器权威要求"随机由服务端掌握"：同一种子必须给出同一序列，
+## 客户端无法通过重开来挑选有利随机。
+func _test_battle_rng() -> void:
+	Game.seed_battle_rng(20260101)
+	var seq_a: Array = [Game.rand_index(100), Game.rand_index(100), Game.rand_index(100)]
+	Game.seed_battle_rng(20260101)
+	var seq_b: Array = [Game.rand_index(100), Game.rand_index(100), Game.rand_index(100)]
+	_check("随机源: 同种子下标序列一致", seq_a == seq_b, "%s vs %s" % [str(seq_a), str(seq_b)])
+
+	Game.seed_battle_rng(777)
+	var arr_a: Array = [1, 2, 3, 4, 5, 6, 7, 8]
+	Game.shuffle_in_place(arr_a)
+	Game.seed_battle_rng(777)
+	var arr_b: Array = [1, 2, 3, 4, 5, 6, 7, 8]
+	Game.shuffle_in_place(arr_b)
+	_check("随机源: 同种子洗牌结果一致", arr_a == arr_b, "%s vs %s" % [str(arr_a), str(arr_b)])
 
 
 # ══ 工具 ═════════════════════════════════════════════════════════════════

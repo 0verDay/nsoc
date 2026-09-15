@@ -35,7 +35,7 @@ func on_kill(attacker_cell, victim_cells: Array, ctx) -> void:
 		candidates.append(vc)
 	if candidates.is_empty():
 		return
-	candidates.shuffle()
+	Game.shuffle_in_place(candidates)
 	var dest = candidates[0]
 
 	var combat = ctx.combat()

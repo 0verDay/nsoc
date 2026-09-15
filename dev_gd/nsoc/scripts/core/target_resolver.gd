@@ -42,7 +42,7 @@ static func resolve_empty_cell(board_id: String):
 			empties.append(cell)
 	if empties.is_empty():
 		return null
-	return empties[randi() % empties.size()]
+	return empties[Game.rand_index(empties.size())]
 
 # ── Hero 目标 ──────────────────────────────────────────────────────────────
 # 返回 HeroState 或 null。
@@ -96,7 +96,7 @@ static func _frontmost_unit(faction: int):
 				candidates.append(cell)
 	if candidates.is_empty():
 		return null
-	return candidates[randi() % candidates.size()]
+	return candidates[Game.rand_index(candidates.size())]
 
 # 计算单位的"推进分数"（分数越高 = 越靠近对手 = 越应被优先选为目标）。
 # is_home_board：该格子所属盘是否为本阵营主盘；跨入对方盘的单位分数自动高于本方盘。
@@ -127,7 +127,7 @@ static func _random_unit(faction: int):
 			cells.append(cell)
 	if cells.is_empty():
 		return null
-	return cells[randi() % cells.size()]
+	return cells[Game.rand_index(cells.size())]
 
 # 固定坐标格：params 需含 board / row / col。
 static func _fixed_cell(params: Dictionary):

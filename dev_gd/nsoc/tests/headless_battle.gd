@@ -97,6 +97,8 @@ func _run() -> void:
 	Game.is_pvp = false
 	Game.pending_level_path = ""
 	Game.pending_chapter_config = _chapter
+	# 固定规则随机源：所有影响对局的随机都走 Game.battle_rng（§3.4-7）
+	Game.pending_battle_seed = _seed
 	if Game.get("pending_empire_battle") != null:
 		Game.pending_empire_battle = {}
 	if Game.get("empire_state") != null:

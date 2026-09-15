@@ -502,7 +502,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 			and _can_cross_board(cell, slot):
 		# AI 友军盘：自动随机选目标，不弹 UI
 		if has_node("/root/AiManager") and AiManager.is_ai_slot(slot.id):
-			var ai_idx: int = randi() % enemy_slots.size()
+			var ai_idx: int = Game.rand_index(enemy_slots.size())
 			front_row_target_id = String(enemy_slots[ai_idx].id)
 		else:
 			# PVE / 1v1 旧 UI 路径（玩家自己的盘）
@@ -765,7 +765,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, target_slots: Array) -> bool:
 			if tgt_is_hostile:
 				attack_candidates.append({"slot": tgt_slot, "cell": tgt})
 	if attack_candidates.size() > 0:
-		var pick: Dictionary = attack_candidates[randi() % attack_candidates.size()]
+		var pick: Dictionary = attack_candidates[Game.rand_index(attack_candidates.size())]
 		var tgt = pick["cell"]
 		await get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
 		if _combat == null or _combat.aborted or not is_instance_valid(cell) or not cell.has_card:
@@ -790,7 +790,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, target_slots: Array) -> bool:
 		if tgt2 != null and not tgt2.has_card:
 			move_candidates.append({"slot": tgt_slot, "cell": tgt2})
 	if move_candidates.size() > 0:
-		var pick2: Dictionary = move_candidates[randi() % move_candidates.size()]
+		var pick2: Dictionary = move_candidates[Game.rand_index(move_candidates.size())]
 		var ply_slot2: BoardSlot = pick2["slot"]
 		var tgt2 = pick2["cell"]
 		var pb2: BoardModel = ply_slot2.board
