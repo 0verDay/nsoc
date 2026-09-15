@@ -33,14 +33,16 @@ LAYER_DIRS: list[tuple[str, Path]] = [
     ("rules", SCRIPTS / "abilities"),
     ("rules", SCRIPTS / "actions"),
     ("rules", SCRIPTS / "objectives"),
+    ("server", SCRIPTS / "server"),
     ("ai", SCRIPTS / "ai"),
     ("net", SCRIPTS / "net"),
     ("client", SCRIPTS / "ui"),
     ("app", SCRIPTS),  # 根目录脚本：main.gd / test_main.gd / cell.gd 等
 ]
 
-# 必须保持"纯规则"的层：不得出现 UI / 场景树 / 反射 / 资源路径
-SHARED_LAYERS = {"core", "rules"}
+# 必须保持"纯规则"的层：不得出现 UI / 场景树 / 反射 / 资源路径。
+# server 层同样必须在无头环境可运行，因此与 core / rules 同规。
+SHARED_LAYERS = {"core", "rules", "server"}
 
 # 纯规则层中禁止出现的代码符号（只查代码，不查注释与字符串字面量）
 BANNED_SYMBOLS: list[tuple[str, str]] = [

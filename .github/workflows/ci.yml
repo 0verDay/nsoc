@@ -122,6 +122,17 @@ jobs:
             exit 1
           fi
 
+      - name: 权威化测试（反作弊断言）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/AuthorityTest.tscn > authority.log 2>&1 || true
+          if ! grep -q "AUTHORITY_RESULT PASS" authority.log; then
+            grep -E "AUTHORITY_CASE FAIL|AUTHORITY_RESULT" authority.log || true
+            echo "::error::权威化测试未通过"
+            exit 1
+          fi
+          grep -E "AUTHORITY_RESULT" authority.log
+
       - name: 上传冒烟日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -131,4 +142,5 @@ jobs:
             smoke_import.log
             run1.log
             run2.log
+            authority.log
           if-no-files-found: ignore

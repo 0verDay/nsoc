@@ -28,6 +28,7 @@
 [CmdletBinding()]
 param(
     [string]$Godot = "",
+    [string]$Scene = "res://tests/HeadlessBattle.tscn",
     [int]$Turns = 3,
     [string]$Chapter = "res://data/chapters/smoke_test.json",
     [int]$Seed = 20260101,
@@ -86,7 +87,8 @@ function Get-SmokeResult {
         $turns[[int]$m.Groups[1].Value] = $m.Groups[2].Value
     }
     $state = [regex]::Match($Text, '(?m)^STATE_HASH\s+([0-9a-f]{64})\s*$').Groups[1].Value
-    $res = [regex]::Match($Text, '(?m)^SMOKE_RESULT\s+(\S+)\s*(.*)$')
+    # Accepts both smoke (SMOKE_RESULT) and authority (AUTHORITY_RESULT) test scenes.
+    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|AUTHORITY)_RESULT\s+(\S+)\s*(.*)$')
     return [pscustomobject]@{
         TurnHashes = $turns
         StateHash  = $state
@@ -137,12 +139,12 @@ try {
 
     # -- Step 2/3: smoke run + determinism check ---------------------------
     $smokeArgs = @(
-        "--headless", "--path", $projectPath, "res://tests/HeadlessBattle.tscn", "--",
+        "--headless", "--path", $projectPath, $Scene, "--",
         "--turns=$Turns", "--chapter=$Chapter", "--seed=$Seed", "--watchdog=$WatchdogSec"
     )
 
     function Invoke-Smoke {
-        Write-Host "==> Smoke run: turns=$Turns seed=$Seed chapter=$Chapter" -ForegroundColor Cyan
+        Write-Host "==> Run scene: $Scene (turns=$Turns seed=$Seed)" -ForegroundColor Cyan
         $r = Invoke-Godot -GodotBin $godotBin -Arguments $smokeArgs -TimeoutSec $TimeoutSec
         return [pscustomobject]@{
             Raw = $r.Text; TimedOut = $r.TimedOut; ExitCode = $r.ExitCode
@@ -160,6 +162,9 @@ try {
         exit 1
     }
     Write-Host "[PASS] smoke ok, STATE_HASH=$($first.Parsed.StateHash)" -ForegroundColor Green
+    # Echo per-case lines (authority test) so failures/successes are visible in CI logs.
+    ($first.Raw -split "`n" | Where-Object { $_ -match 'AUTHORITY_CASE|AUTHORITY_RESULT|SMOKE_SUMMARY' }) |
+        ForEach-Object { Write-Host "    $($_.Trim())" -ForegroundColor DarkGray }
     foreach ($k in ($first.Parsed.TurnHashes.Keys | Sort-Object)) {
         Write-Host ("    turn {0}: {1}" -f $k, $first.Parsed.TurnHashes[$k]) -ForegroundColor DarkGray
     }
