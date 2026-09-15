@@ -25,6 +25,11 @@ const INTENT_CROSS_BOARD := "intent/cross_board"
 const INTENT_CHOICE := "intent/choice"
 const INTENT_SURRENDER := "intent/surrender"
 
+# 客户端控制消息（非意图，但仍由客户端上行）：
+#   握手 —— 上报协议版本与内容哈希，服务器据此拒绝不兼容的客户端。
+const CLIENT_HELLO := "client/hello"
+const CLIENT_PING := "client/ping"
+
 # ── 下行：权威结果 ────────────────────────────────────────────────────────
 const AUTH_HELLO := "auth/hello"                 # 握手：协议版本 / 内容哈希 / 你的 slot
 const AUTH_STATE := "auth/state"                 # 按玩家过滤的对局视图
@@ -45,12 +50,17 @@ const REJECT_CARD_NOT_IN_HAND := "card_not_in_hand"
 const REJECT_NOT_ENOUGH_MANA := "not_enough_mana"
 const REJECT_ILLEGAL_TARGET := "illegal_target"
 const REJECT_NOT_ALLOWED := "not_allowed"
+const REJECT_PROTOCOL_MISMATCH := "protocol_mismatch"
+const REJECT_NOT_HANDSHAKEN := "not_handshaken"
 
 # ── 权限分类 ──────────────────────────────────────────────────────────────
 const _INTENT_TYPES: Array = [
 	INTENT_PLAY_CARD, INTENT_PLAY_EQUIP, INTENT_ACTIVATE_EQUIP, INTENT_ACTIVATE_HERO,
 	INTENT_END_TURN, INTENT_CROSS_BOARD, INTENT_CHOICE, INTENT_SURRENDER,
 ]
+
+## 客户端可上行的控制消息（不是意图，但不属于"服务器专属"）。
+const _CLIENT_CONTROL_TYPES: Array = [CLIENT_HELLO, CLIENT_PING]
 
 ## 只能由服务器产生的消息。客户端发包时必须被服务器丢弃（对应漏洞：
 ## 伪造 disconnect/notify 秒杀对手、伪造 game/end 直接判胜）。
@@ -80,6 +90,11 @@ static func is_server_only(type: String) -> bool:
 	return type in _SERVER_ONLY_TYPES
 
 
+## 客户端可上行的控制消息（握手 / 心跳）。
+static func is_client_control(type: String) -> bool:
+	return type in _CLIENT_CONTROL_TYPES
+
+
 ## 校验意图结构（只看"字段是否存在且类型正确"，不看规则合法性）。
 ## 返回 "" 表示通过，否则返回 NetProtocol.REJECT_* 原因。
 static func validate_intent(type: String, payload: Dictionary) -> String:
@@ -99,12 +114,13 @@ static func validate_intent(type: String, payload: Dictionary) -> String:
 
 ## 客户端在发送前自检：避免把服务器专属 type 发出去。
 static func client_may_send(type: String) -> bool:
-	return is_intent(type) and not is_server_only(type)
+	return (is_intent(type) or is_client_control(type)) and not is_server_only(type)
 
 
-## 服务器在处理入站消息时的判定：非意图、或属于服务器专属 type 一律不转发。
+## 服务器在处理入站消息时的判定：服务器专属 type 一律拒绝；
+## 其余只接受意图与客户端控制消息。
 static func server_may_accept(type: String) -> bool:
-	return is_intent(type)
+	return not is_server_only(type) and (is_intent(type) or is_client_control(type))
 
 
 ## 内容哈希：用于握手校验两端内容一致（data/*.json）。

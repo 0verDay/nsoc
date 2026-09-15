@@ -209,6 +209,15 @@ func stats() -> Dictionary:
 	return _stats.duplicate()
 
 
+## 取出（并清空）**全部**事件，元素形如 {"to": pid|"", "payload": {...}}。
+## 由服务器会话层负责路由：to == "" 为公共事件（广播给所有人），否则只发给该玩家。
+## 与 drain_events_for 的区别：后者只取"发给某个人"的事件，公共事件会留在队列里。
+func drain_all_events() -> Array:
+	var out: Array = _events.duplicate()
+	_events = []
+	return out
+
+
 ## 取出（并清空）发给指定玩家的事件；pid == "" 时取公共事件。
 func drain_events_for(pid: String) -> Array:
 	var out: Array = []

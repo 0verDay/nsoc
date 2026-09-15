@@ -155,6 +155,17 @@ jobs:
           fi
           grep -E "RULES_RESULT" rules.log
 
+      - name: 服务器会话层测试（反向验证反作弊边界）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/ServerSessionTest.tscn > server.log 2>&1 || true
+          if ! grep -q "SERVER_RESULT PASS" server.log; then
+            grep -E "SERVER_CASE FAIL|SERVER_RESULT" server.log || true
+            echo "::error::服务器会话层测试未通过"
+            exit 1
+          fi
+          grep -E "SERVER_RESULT" server.log
+
       - name: 上传冒烟日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -167,4 +178,5 @@ jobs:
             authority.log
             scene.log
             rules.log
+            server.log
           if-no-files-found: ignore
