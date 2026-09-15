@@ -68,3 +68,67 @@ jobs:
           name: godot-import-log
           path: import.log
           if-no-files-found: ignore
+
+  headless-smoke:
+    name: Headless 冒烟与确定性
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 Godot headless
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/godot"
+          URL="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fsSL -o "$RUNNER_TEMP/godot.zip" "$URL"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          BIN="$(find "$RUNNER_TEMP/godot" -maxdepth 1 -type f -name 'Godot_v*' | head -n1)"
+          chmod +x "$BIN"
+          echo "GODOT_BIN=$BIN" >> "$GITHUB_ENV"
+
+      # 必须先导入：全新检出没有 .godot/global_script_class_cache.cfg，
+      # 否则所有 class_name 都会解析失败（详见 重构文档.md 阶段 0 踩坑记录）。
+      - name: 导入预热（建立 class_name 缓存 + 解析检查）
+        run: |
+          set +e
+          timeout 600 "$GODOT_BIN" --headless --path dev_gd/nsoc --import > smoke_import.log 2>&1
+          echo "import exit=$?"
+          set -e
+          if grep -nE "Parse Error|SCRIPT ERROR" smoke_import.log; then
+            echo "::error::GDScript 解析失败"
+            exit 1
+          fi
+
+      - name: 冒烟 + 确定性校验（跑两次比对哈希）
+        run: |
+          set -euo pipefail
+          run_once() {
+            timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeadlessBattle.tscn -- \
+              --turns=3 --seed=20260101 --watchdog=240 > "$1" 2>&1 || true
+          }
+          run_once run1.log
+          run_once run2.log
+
+          grep -q "SMOKE_RESULT PASS" run1.log || { tail -n 40 run1.log; echo "::error::第一次冒烟未通过"; exit 1; }
+          grep -q "SMOKE_RESULT PASS" run2.log || { tail -n 40 run2.log; echo "::error::第二次冒烟未通过"; exit 1; }
+
+          H1="$(grep -E '^STATE_HASH' run1.log | awk '{print $2}')"
+          H2="$(grep -E '^STATE_HASH' run2.log | awk '{print $2}')"
+          echo "STATE_HASH run1=$H1"
+          echo "STATE_HASH run2=$H2"
+          if [ "$H1" != "$H2" ]; then
+            echo "::error::两次运行状态哈希不一致（desync / 非确定性）"
+            diff <(grep -E '^TURN_HASH' run1.log) <(grep -E '^TURN_HASH' run2.log) || true
+            exit 1
+          fi
+
+      - name: 上传冒烟日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-smoke-logs
+          path: |
+            smoke_import.log
+            run1.log
+            run2.log
+          if-no-files-found: ignore

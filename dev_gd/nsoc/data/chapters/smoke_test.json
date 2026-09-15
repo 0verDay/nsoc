@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "name": "冒烟测试",
+  "description": "自动冒烟与状态哈希专用关卡（重构文档.md §7 阶段 0）。\n{warn:请勿改动本文件数值}：任何改动都会改变 STATE_HASH 基线。\n如需新用例，请另建 chapters/*.json 而不是修改本文件。",
+  "hero_key": "C",
+  "initial_mana": 5,
+  "mana_max_cap": 10,
+  "cards": [
+    {"name": "填线宝宝", "count": 6},
+    {"name": "放箭", "count": 3},
+    {"name": "鼓舞", "count": 2}
+  ],
+  "boards": {
+    "player_main": {
+      "faction": 0,
+      "role": "main_player",
+      "slot_index": 4,
+      "hero": {
+        "hp": 30,
+        "name_short": "测试玩家",
+        "name_full": "冒烟测试·玩家",
+        "abilities": []
+      },
+      "initial_units": [
+        {
+          "name": "填线宝宝",
+          "faction": 0,
+          "positions": [{"row": 3, "col": 1}]
+        }
+      ],
+      "spawners": [
+        {
+          "name": "填线宝宝",
+          "faction": 0,
+          "positions": [{"row": 5, "col": 1}],
+          "interval": 3
+        }
+      ]
+    },
+    "enemy_main": {
+      "faction": 1,
+      "role": "main_enemy",
+      "slot_index": 1,
+      "hero": {
+        "hp": 30,
+        "name_short": "测试敌人",
+        "name_full": "冒烟测试·敌人",
+        "abilities": []
+      },
+      "initial_units": [
+        {
+          "name": "看门狗",
+          "faction": 1,
+          "positions": [{"row": 1, "col": 1}]
+        }
+      ],
+      "spawners": [
+        {
+          "name": "填线宝宝",
+          "faction": 1,
+          "positions": [{"row": 0, "col": 1}],
+          "interval": 3
+        }
+      ]
+    }
+  },
+  "objective": {
+    "type": "survive_turns",
+    "turns": 99
+  }
+}
