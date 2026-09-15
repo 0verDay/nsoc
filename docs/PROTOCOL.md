@@ -44,6 +44,13 @@
 | `intent/choice` | `request_id`, `option_index`, `seq` | 回应服务器的选择请求 |
 | `intent/surrender` | `seq` | 投降（任意时刻可用） |
 
+**落点字段（棋盘接入后）**：`intent/play_card` 还需带 `target_slot_id`(str) 与
+`row`(int) / `col`(int)。服务器会用**同一套棋盘规则**校验：盘必须是发送者名下的
+（否则 `illegal_target`）、格必须在 3×3 内且为空（否则 `illegal_target`）、卡必须是单位
+（`CardUnit`；法术 / 装备 / 英雄技能的权威结算尚未接入 → `not_allowed`）。校验失败时
+**不消耗手牌与费用**（原子性）。单位属性（攻击 / 四维血量 / 效果）一律取自服务器卡库，
+客户端上报的任何结果字段都被忽略。
+
 `seq` 必须**单调递增**：重复或回退会被拒（`stale_seq`），用于防重放。
 
 ### 3.2 控制消息
@@ -61,7 +68,7 @@
 | type | 载荷 | 说明 |
 |---|---|---|
 | `auth/hello` | `protocol, match_id, you, players, content_hash, warning` | 握手回执 |
-| `auth/state` | `turn, active, you{hand, mana, hero, graveyard, draw_count, seq_ack}, others[{hand_count, …}]` | **按玩家过滤**的视图：自己手牌明文，对手手牌只有数量 |
+| `auth/state` | `turn, active, you{hand, mana, hero, graveyard, draw_count, seq_ack}, others[{hand_count, …}], board{slot_id: {owner, team_id, faction, hero, cells{"r,c": cell}, graveyard, banished}}` | **按玩家过滤**的视图：自己手牌明文，对手手牌只有数量；**盘面是公开信息**（战棋单位位置本就可见），由权威端 `AuthorityBoard.state()` 下发 |
 | `auth/event` | `event, pid, …` | 权威事件流（`match_started` / `turn_started` / `card_played` / `card_drawn` / `card_ended` / `intent_accepted` …） |
 | `auth/request_choice` | `request_id, kind, options` | 要求玩家做选择（取代旧实现里"效果 await 玩家点 UI"） |
 | `auth/verdict` | `finished, winner` | 胜负（客户端不再自行判定） |
@@ -127,16 +134,20 @@ BattleServerSession                   消息信封 / 协议校验 / 握手 / 按
       ↑
 BattleAuthority                       身份 / 回合 / 序号 / 限速 / 卡牌与费用结算 / 私有视图
       ↑
-（待接入）棋盘规则引擎                   TurnSystem + CombatSystem + PlayController
+AuthorityBoard                        权威盘面：装配（create_headless）+ 落子校验 + 盘面视图
+      ↑
+棋盘规则引擎                            BoardModel + CellData + BoardSlotFactory
+                                       （CombatSystem / TurnSystem 共用同一份规则，表现可关）
 ```
 
-**已完成（GDScript 侧）**：协议定义、权威核心、服务器会话层、78 条边界断言（`AuthorityTest` 46 + `ServerSessionTest` 32）。
+**已完成（GDScript 侧）**：协议定义、权威核心、服务器会话层、**权威端棋盘落子与盘面视图**；
+124 条断言（`AuthorityTest` 46 + `ServerSessionTest` 32 + `AuthorityBoardTest` 25 + Go 10 + 其余 headless 套件）。
 **已完成（Go 中继侧）**：服务器专属消息拦截 / 房主校验 / 身份重写 / 每连接限速（`server/security.go` + 10 个单测）。
 
 **未完成**：
 - **客户端尚未接入** —— `TestMain` 仍走 v1 的 `action/*` 路径（结果广播与胜负已改为本端推导，
   不再信任对端消息，但出牌/装备等仍是"客户端算完再广播"，服务器不校验规则）；
-- **棋盘战斗结算未接入权威端** —— `BattleAuthority` 目前只结算卡牌与费用，棋盘规则待与
-  `TurnSystem`/`CombatSystem` 打通（前置：规则层与表现层解耦，见 `docs/ROADMAP.md`）；
+- **权威端只结算"单位落子"** —— 法术 / 装备 / 英雄技能 / 跨盘 / 回合推进（`TurnSystem`）尚未接入
+  `BattleAuthority`；棋盘回合与战斗结算是下一步（前置已就绪：纯数据盘面 + 无头战斗结算）；
 - **中继层仍是转发** —— Go 侧已按 §6.1 止血，但尚无对局规则；v1 与 v2 两套路径并存，
   待客户端接入 v2 后删除 `action/*`。

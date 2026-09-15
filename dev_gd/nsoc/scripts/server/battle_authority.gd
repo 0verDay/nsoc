@@ -9,10 +9,11 @@ extends RefCounted
 ##   ✅ 身份 / 回合归属 / 序号单调 / 限速 四道校验
 ##   ✅ 按玩家过滤的私有视图（对手手牌只有数量，没有内容）
 ##   ✅ 权威事件流下发（客户端只据此渲染）
-##   ⏳ 棋盘战斗结算：等阶段 2/3 把规则层与表现层解耦后，由同一套规则引擎在此驱动
-##      （此处刻意不重新实现规则，避免出现"第二份规则"）
+##   ✅ 棋盘战斗结算：通过可注入的 AuthorityBoard 适配器，用**同一套规则引擎**
+##      （BoardModel / CellData / BoardSlotFactory）在纯数据盘面上落子与下发盘面视图
 ##
 ## 约束：本类不读文件、不碰场景树、不引用 UI，可在无 SceneTree 的环境构造与测试。
+## 棋盘依赖（节点 / autoload）全部封装在适配器里，本类只调用 deploy_unit() / state()。
 
 const DEFAULT_HAND_SIZE: int = 3
 const DEFAULT_MANA_CAP: int = 10
@@ -48,6 +49,18 @@ var _intent_stamps: Dictionary = {}    # pid -> Array[int]（毫秒时间戳，�
 var _stats: Dictionary = {             # 便于测试与运维观测
 	"accepted": 0, "rejected": 0,
 }
+
+# ── 棋盘适配器（可选）─────────────────────────────────────────────────────
+## 未接入（null）时只结算手牌 / 费用 / 回合（阶段 1 骨架模式，旧测试依赖此行为）；
+## 接入后，`intent/play_card` 会先在权威盘面上校验并落子，再扣手牌与费用。
+var board = null                       # AuthorityBoard
+
+func attach_board(adapter) -> void:
+	board = adapter
+
+func has_board() -> bool:
+	return board != null
+
 
 # ── 事件流 ────────────────────────────────────────────────────────────────
 var _events: Array = []                # [{"to": pid|"", "payload": {...}}]
@@ -181,6 +194,8 @@ func view_for(pid: String) -> Dictionary:
 			"seq_ack": int(_last_seq.get(pid, -1)),
 		},
 		"others": others,
+		# 盘面是公开信息（战棋单位位置本就可见）；隐藏信息只有手牌，见上 you/others
+		"board": board.state() if board != null else {},
 		"finished": _finished,
 		"winner": _winner,
 	}
@@ -244,14 +259,32 @@ func _on_play_card(pid: String, seq: int, payload: Dictionary) -> Dictionary:
 	if int(mana.get("current", 0)) < cost:
 		return _reject(pid, NetProtocol.REJECT_NOT_ENOUGH_MANA, NetProtocol.INTENT_PLAY_CARD, seq)
 
+	# 接入棋盘后：先在权威盘面上校验并落子；失败则**不消耗手牌与费用**（原子性）
+	var deployed: Dictionary = {}
+	if board != null:
+		deployed = board.deploy_unit(pid, card, payload)
+		if not bool(deployed.get("ok", false)):
+			return _reject(pid, String(deployed.get("reason", NetProtocol.REJECT_ILLEGAL_TARGET)),
+				NetProtocol.INTENT_PLAY_CARD, seq)
+
 	hand.erase(card)
-	_grave[pid].append(card)
 	mana["current"] = int(mana["current"]) - cost
-	return _accept(pid, seq, NetProtocol.INTENT_PLAY_CARD, {
+
+	var events: Array = [{
 		"event": "card_played", "pid": pid, "card": card, "mana_left": int(mana["current"]),
 		# 结算结果由服务器给出；客户端不再计算，也不再接受客户端上报的结果字段
 		"authoritative": true,
-	})
+	}]
+	if board != null:
+		# 单位已落到权威盘面：下发落点与盘面单位属性（客户端只据此渲染）
+		var unit: Dictionary = (deployed.get("unit", {}) as Dictionary).duplicate()
+		unit["event"] = "unit_deployed"
+		unit["pid"] = pid
+		events.append(unit)
+	else:
+		# 骨架模式（无棋盘）：只记录"已打出"
+		_grave[pid].append(card)
+	return _accept(pid, seq, NetProtocol.INTENT_PLAY_CARD, events)
 
 
 ## 结束回合：返回事件数组（_accept 同时接受单条事件与事件数组）。

@@ -218,6 +218,17 @@ jobs:
           fi
           grep -E "HCOMBAT_RESULT" hcombat.log
 
+      - name: 权威端棋盘结算测试（服务器裁决落子）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/AuthorityBoardTest.tscn > aboard.log 2>&1 || true
+          if ! grep -q "ABOARD_RESULT PASS" aboard.log; then
+            grep -E "ABOARD_CASE FAIL|ABOARD_RESULT" aboard.log || true
+            echo "::error::权威端棋盘结算测试未通过"
+            exit 1
+          fi
+          grep -E "ABOARD_RESULT" aboard.log
+
       - name: 服务器会话层测试（反向验证反作弊边界）
         run: |
           set -euo pipefail
@@ -264,6 +275,7 @@ jobs:
             cellview.log
             hsetup.log
             hcombat.log
+            aboard.log
             server.log
             tb1.log
             tb2.log
