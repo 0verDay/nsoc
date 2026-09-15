@@ -155,6 +155,21 @@ func state() -> Dictionary:
 	return out
 
 
+## 该玩家名下盘的英雄血量（1v3/3v3 下一个玩家一块盘；多盘取最大，即"还有一盘的英雄活着"）。
+## 棋盘是权威模拟的真相来源，权威核心据此同步 _hero_hp 与终局判定。
+func hero_hp(pid: String) -> int:
+	var owned: Array = _by_pid.get(pid, [])
+	var best: int = 0
+	var found: bool = false
+	for slot in owned:
+		if slot.hero == null:
+			continue
+		if not found or int(slot.hero.health) > best:
+			best = int(slot.hero.health)
+		found = true
+	return best
+
+
 ## 解析目标盘：显式 slot_id 必须在 pid 名下；未指定则取 pid 的第一块盘。
 func _resolve_slot(pid: String, slot_id: String) -> BoardSlot:
 	var owned: Array = _by_pid.get(pid, [])

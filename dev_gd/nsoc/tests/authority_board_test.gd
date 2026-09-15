@@ -19,7 +19,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 39
+const EXPECTED_CASES: int = 45
 
 var _passed: int = 0
 var _failed: int = 0
@@ -62,6 +62,7 @@ func _ready() -> void:
 	_test_insufficient_mana()
 	_test_session_wiring()
 	await _test_turn_phase()
+	await _test_board_hero_sync()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -333,6 +334,48 @@ func _test_turn_phase() -> void:
 		s.authority().active_player())
 	_check("回合: 无棋盘时不登记待结算阶段（骨架模式语义不变）",
 		not _make_skeleton_session().authority().has_pending_phase())
+
+
+## 棋盘英雄血量 ↔ 权威终局判定：棋盘是真相来源，英雄阵亡必须产生 auth/verdict。
+func _test_board_hero_sync() -> void:
+	Game.registry.clear()
+	var host := BattleSimHost.new()
+	add_child(host)
+	var s := BattleServerSession.new()
+	s.configure(NetProtocol.VERSION, "abc")
+	s.create_match({
+		"match_id": "m_hero", "seed": 13, "players": ["p1", "p2"],
+		"decks": {"p1": [_unit], "p2": [_unit]}, "card_costs": {_unit: 1},
+		"hero_hp": {"p1": 30, "p2": 30}, "rate_limit_per_sec": -1,
+		"board": {"players": ["p1", "p2"], "teams": {"p1": "defender", "p2": "attacker"}},
+		"sim_host": host,
+	})
+	var hello := {"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": "abc"}}
+	s.handle_client_message("p1", hello)
+	s.handle_client_message("p2", hello)
+	s.drain_outbound("p1")
+	s.drain_outbound("p2")
+
+	_check("英雄: 权威视图的血量取自棋盘",
+		int(((s.authority().view_for("p2")["you"] as Dictionary)["hero"] as Dictionary)["hp"]) == 30,
+		str(s.authority().view_for("p2")["you"]["hero"]))
+
+	# 棋盘上英雄受到致命伤（能力/冲锋都会走这条路径）
+	s.board().slot_at("main_p2").damage_hero(100, "triggered")
+	_check("英雄: 棋盘英雄血量已归零（伤害不夹紧，<=0 即阵亡）",
+		s.board().hero_hp("p2") <= 0, str(s.board().hero_hp("p2")))
+	_check("英雄: 同步前权威尚未判终局", not s.authority().is_finished())
+
+	await s.tick()
+	_check("英雄: tick 同步后判定终局", s.authority().is_finished())
+	_check("英雄: 获胜者是 p1", String(s.authority().verdict()["winner"]) == "p1",
+		str(s.authority().verdict()))
+
+	var p2_types: Array = []
+	for m in s.drain_outbound("p2"):
+		p2_types.append(String((m as Dictionary).get("type", "")))
+	_check("英雄: 向双方下发 auth/verdict", p2_types.has(NetProtocol.AUTH_VERDICT), str(p2_types))
 
 
 func _make_skeleton_session() -> BattleServerSession:

@@ -90,6 +90,17 @@ func run_pending_phase() -> void:
 		_emit("", ev)
 
 
+## 把棋盘状态同步进权威状态：英雄血量以**棋盘**为准（棋盘是权威模拟的真相来源），
+## 并据此判定终局。服务器主循环每次 tick 都会调用（不只在有待结算阶段时）。
+func sync_board_state() -> void:
+	if board == null or _finished:
+		return
+	for pid_raw in players:
+		var pid := String(pid_raw)
+		_hero_hp[pid] = int(board.hero_hp(pid))
+	_check_finished()
+
+
 # ── 事件流 ────────────────────────────────────────────────────────────────
 var _events: Array = []                # [{"to": pid|"", "payload": {...}}]
 
