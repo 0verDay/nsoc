@@ -6,6 +6,12 @@ extends Node
 # 旧 main.gd 中散落的 player_health / current_mana / draw_pile / autophagy_counter
 # 全部迁移到此处或对应子系统。
 
+# 多队伍 PVP 结算信号。任一英雄阵亡即判定对方获胜（见 board_slot._on_hero_died）。
+# 本信号由本端确定性模拟直接触发 —— 所有客户端跑同一份锁步状态，必然得到同一结果，
+# 因此结算 UI **不再依赖网络回声 game/end**（服务器已把 game/end 列为服务器专属消息，
+# 客户端发来会被中继层丢弃；见重构文档 §4.1）。
+signal match_result_decided(winning_team: String, loser_pid: String)
+
 var deck: DeckManager
 var mana: ManaSystem
 var turn: TurnSystem
@@ -149,12 +155,28 @@ func mark_player_dead(pid: String) -> void:
 		pvp_dead_players.append(pid)
 
 # ── 胜负广播 ────────────────────────────────────────────────────────
+# 任一落败队伍 → 返回获胜队伍 id（pvp_teams 中第一个非落败队伍）。
+# 测试期简化规则，兼容 1v3（defender/attacker）与 3v3（team_a/team_b）。
+# 落败队伍未知 / 只有一支队伍时返回空串。
+func winning_team_for(loser_team: String) -> String:
+	if loser_team == "":
+		return ""
+	for tid in pvp_teams.keys():
+		if tid != loser_team:
+			return String(tid)
+	return ""
+
 # 房主调用：广播 game/end 并本端转结算 UI。
 # winning_team: "defender" / "attacker" / pid（1v1 兼容时传 winner pid）
 # loser_pid:    触发结算的阵亡玩家 uuid
+#
+# 注意：**本端先行结算**（emit match_result_decided），网络消息只作为对端兜底。
+# 所有客户端都在本地确定性模拟同一批阵亡，因此即使 game/end 被中继层丢弃，
+# 每端也能自行得出正确胜负 —— 结算画面不依赖任何对端消息。
 func pvp_end_game(winning_team: String, loser_pid: String) -> void:
 	if not is_pvp:
 		return
+	match_result_decided.emit(winning_team, loser_pid)
 	Net.send_to_room("game/end", pvp_room_id, {
 		"winning_team": winning_team,
 		"loser_pid": loser_pid,

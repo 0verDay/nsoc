@@ -18,7 +18,7 @@ extends Node
 ## 注意：GDScript 的运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 41
+const EXPECTED_CASES: int = 48
 
 var _passed: int = 0
 var _failed: int = 0
@@ -42,6 +42,7 @@ func _ready() -> void:
 	_test_slot_order()
 	_test_battle_rng()
 	_test_combat_resolve()
+	_test_pvp_settlement()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -348,6 +349,61 @@ func _test_combat_resolve() -> void:
 		not CombatSystem.is_cell_dead(alive) and CombatSystem.is_cell_dead(gone),
 		"%s %s" % [str(alive.health), str(gone.health)])
 	alive.free(); gone.free()
+
+
+# ══ 多队伍 PVP 结算（§4.1：结算由本端确定性推导，不依赖对端 game/end）══════
+
+## 服务器已把 game/end 列为服务器专属消息（客户端发来被丢弃），因此结算画面
+## 必须由本端自行推导。本测试锁定两件事：
+##   1. winning_team_for 的胜负映射（3v3 / 1v3 / 边界）
+##   2. pvp_end_game 会在本端 emit match_result_decided（广播只是对端兜底）
+func _test_pvp_settlement() -> void:
+	var saved_teams: Dictionary = Game.pvp_teams
+	var saved_is_pvp: bool = Game.is_pvp
+	var saved_room: String = Game.pvp_room_id
+
+	# ── 胜负映射 ─────────────────────────────────────────────────────
+	Game.pvp_teams = {"team_a": ["p1", "p2", "p3"], "team_b": ["p4", "p5", "p6"]}
+	_check("结算: 3v3 落败 team_a → 获胜 team_b",
+		Game.winning_team_for("team_a") == "team_b", Game.winning_team_for("team_a"))
+	_check("结算: 3v3 落败 team_b → 获胜 team_a",
+		Game.winning_team_for("team_b") == "team_a", Game.winning_team_for("team_b"))
+
+	Game.pvp_teams = {"defender": ["p1"], "attacker": ["p2", "p3", "p4"]}
+	_check("结算: 1v3 落败 defender → 获胜 attacker",
+		Game.winning_team_for("defender") == "attacker", Game.winning_team_for("defender"))
+
+	_check("结算: 落败队伍为空串时返回空串（不误判）",
+		Game.winning_team_for("") == "", Game.winning_team_for(""))
+	Game.pvp_teams = {"team_a": ["p1"]}
+	_check("结算: 只有一支队伍时返回空串",
+		Game.winning_team_for("team_a") == "", Game.winning_team_for("team_a"))
+
+	# ── 本端信号（不依赖网络回声）────────────────────────────────────
+	Game.pvp_teams = {"team_a": ["p1", "p2", "p3"], "team_b": ["p4", "p5", "p6"]}
+	Game.pvp_room_id = "12345"
+	Game.is_pvp = true
+	var got: Array = []
+	var cb := func(wt: String, lp: String) -> void: got.append([wt, lp])
+	Game.match_result_decided.connect(cb)
+	# 未连接服务器：Net.send_to_room 会走 "not connected, drop" 分支（不影响本端结算）
+	Game.pvp_end_game("team_b", "p1")
+	Game.match_result_decided.disconnect(cb)
+	_check("结算: pvp_end_game 在本端 emit match_result_decided（含胜负与阵亡者）",
+		got.size() == 1 and got[0][0] == "team_b" and got[0][1] == "p1", str(got))
+
+	# 非 PVP 模式不得触发结算信号
+	Game.is_pvp = false
+	var got2: Array = []
+	var cb2 := func(wt: String, lp: String) -> void: got2.append([wt, lp])
+	Game.match_result_decided.connect(cb2)
+	Game.pvp_end_game("team_b", "p1")
+	Game.match_result_decided.disconnect(cb2)
+	_check("结算: 非 PVP 模式不触发结算信号", got2.is_empty(), str(got2))
+
+	Game.pvp_teams = saved_teams
+	Game.is_pvp = saved_is_pvp
+	Game.pvp_room_id = saved_room
 
 
 # ══ 工具 ═════════════════════════════════════════════════════════════════

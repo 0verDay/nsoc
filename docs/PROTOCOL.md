@@ -99,6 +99,25 @@
 5. **随机由服务器掌握**：洗牌种子与抽牌堆顺序只存在于服务器；客户端拿不到（`auth/state` 里对手只有数量）。
 6. **未经服务器结算的状态不生效**：客户端不做本地权威决策。
 
+### 6.1 中继层（Go）已强制的部分
+
+`server/security.go` 在**客户端尚未接入 v2 权威协议之前**先堵住 v1 转发路径上的漏洞，
+两条路径的判定保持一致（都是"丢弃 + 记日志"，不断开连接）：
+
+| 策略 | 实现 | 被堵住的漏洞 |
+|---|---|---|
+| 服务器专属消息丢弃 | `serverOnlyMessageType()`：`game/end`、`disconnect/notify`、`auth/*`、`room/*` 服务器推送 | 任意成员伪造秒杀 / 判胜 / 伪造房间状态；`game/end` 也不再能销毁房间 |
+| 房主专属消息 | `game/start` 校验 `room.HostUUID == sender` | 任意成员重定义整局（牌组 / 英雄 / 行动顺序 / 布局） |
+| 身份字段重写 | `rewriteIdentityFields()`：payload 里 `player_id` / `uuid` 改写为连接真实 uuid | `action/end_turn` 携带他人 `player_id` 冒充其结束回合 |
+| 每连接限速 | `allowRate()`：滚动 1 秒窗口 20 条，超限丢弃 | 消息洪泛 |
+
+对应单测：`server/security_test.go`（10 个用例，`go test ./...`）。
+
+> **结算不再依赖对端消息**：多队伍 PVP 的胜负由每端本地的确定性模拟直接推出
+> （`Game.pvp_end_game()` → `match_result_decided` 信号），`game/end` 只是对旧服务端的兼容兜底。
+> 投降因此改为显式网络消息（v1 路径 `action/surrender`，v2 路径 `intent/surrender`），
+> 否则对端推算不出"本地触发的自杀伤害"。
+
 ## 7. 实现分层与当前状态
 
 ```
@@ -112,9 +131,12 @@ BattleAuthority                       身份 / 回合 / 序号 / 限速 / 卡牌
 ```
 
 **已完成（GDScript 侧）**：协议定义、权威核心、服务器会话层、78 条边界断言（`AuthorityTest` 46 + `ServerSessionTest` 32）。
+**已完成（Go 中继侧）**：服务器专属消息拦截 / 房主校验 / 身份重写 / 每连接限速（`server/security.go` + 10 个单测）。
 
 **未完成**：
-- **客户端尚未接入** —— `TestMain` 仍走 v1 的 `action/*` + `result_*` 广播路径；
+- **客户端尚未接入** —— `TestMain` 仍走 v1 的 `action/*` 路径（结果广播与胜负已改为本端推导，
+  不再信任对端消息，但出牌/装备等仍是"客户端算完再广播"，服务器不校验规则）；
 - **棋盘战斗结算未接入权威端** —— `BattleAuthority` 目前只结算卡牌与费用，棋盘规则待与
   `TurnSystem`/`CombatSystem` 打通（前置：规则层与表现层解耦，见 `docs/ROADMAP.md`）；
-- **Go 中继未加固** —— `server/*.go` 仍是纯转发，尚未做 type 白名单 / 房主校验 / 身份重写。
+- **中继层仍是转发** —— Go 侧已按 §6.1 止血，但尚无对局规则；v1 与 v2 两套路径并存，
+  待客户端接入 v2 后删除 `action/*`。

@@ -99,15 +99,10 @@ func _on_hero_died() -> void:
 		if Engine.get_main_loop() != null else null
 	if g != null and g.is_pvp and g.is_multi_team_pvp() and team_id != "":
 		g.mark_player_dead(owner_player_id)
-		# 任一方死亡即判定对方获胜（测试期简化规则）。
-		# 兼容 1v3（defender/attacker）与 3v3（team_a/team_b）：取 pvp_teams 中非己队的第一个。
-		var loser_team: String = team_id
-		var winner_team: String = ""
-		for tid in g.pvp_teams.keys():
-			if tid != loser_team:
-				winner_team = tid
-				break
-		g.pvp_end_game(winner_team, owner_player_id)
+		# 任一方死亡即判定对方获胜（测试期简化规则，见 Game.winning_team_for）。
+		# pvp_end_game 会先在本端 emit match_result_decided 完成结算，再广播 game/end；
+		# 因为每端都跑同一份锁步状态，本端结算结果与对端必然一致。
+		g.pvp_end_game(g.winning_team_for(team_id), owner_player_id)
 		return
 	# 主玩家英雄死亡不走 trigger（由 test_main 的 _on_player_hero_died 处理 PVE/1v1 胜负）
 	if role == ROLE_MAIN_PLAYER:

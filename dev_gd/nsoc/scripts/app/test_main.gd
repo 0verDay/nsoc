@@ -387,6 +387,10 @@ func _wire_signals() -> void:
 		e_hero.health_changed.connect(_on_enemy_health_changed)
 		e_hero.died.connect(_on_enemy_hero_died)
 	Game.mana.mana_changed.connect(_on_mana_changed)
+	# 多队伍 PVP 结算：本端确定性推导（不依赖对端 game/end 回声）。
+	# Game 是 autoload，跨场景存活；这里用命名方法连接，节点 free 时自动断开。
+	if not Game.match_result_decided.is_connected(_on_match_result_decided):
+		Game.match_result_decided.connect(_on_match_result_decided)
 
 	# 战役胜利目标：达成时与击杀敌方英雄同路径触发胜利
 	if has_node("/root/Objectives"):
@@ -442,12 +446,13 @@ func _on_enemy_hero_died() -> void:
 func _on_hero_died(is_enemy: bool) -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利" if is_enemy else "失败"
-	# 多队伍 PVP：胜负已由 board_slot._on_hero_died → pvp_end_game 广播，此处只更新本端 UI
+	# 多队伍 PVP：结算由本端确定性推导（board_slot._on_hero_died → Game.pvp_end_game
+	# → match_result_decided 信号），这里只更新按钮文案并直接出画面。
 	if Game.is_pvp and Game.is_multi_team_pvp():
-		# board_slot 已发 game/end，无需再发；直接显示胜负画面
 		_show_game_over(is_enemy)
 		return
-	# PVP 1v1：通知服务器战斗结束（房间将被销毁，对手也会收到 game/end）
+	# 1v1 PVP：本端已能判定胜负并出画面。下面这条 game/end 仅作对旧服务端的兼容兜底
+	# —— 中继层已把 game/end 列为服务器专属消息，新服务端会直接丢弃它。
 	if Game.is_pvp and Game.pvp_room_id != "":
 		Net.send_to_room("game/end", Game.pvp_room_id, {
 			"winner_id": Game.local_player_id if is_enemy else _pvp_opponent_id(),
@@ -457,7 +462,8 @@ func _on_hero_died(is_enemy: bool) -> void:
 
 # 投降：对自家英雄执行 damage_hero(100, "triggered") → 走标准阵亡流程
 # → 自动触发 _on_player_hero_died → _on_hero_died(false) → 显示失败画面
-# PVP 模式：还会发 game/end 给对手（对手收到后按 winner_id 显示胜利画面）。
+# PVP 模式：先发 action/surrender 告知对端（对端按同样流程判本方主英雄阵亡），
+#          双方各自本端结算，不再依赖对端回传 game/end。
 # PVE 模式：同一阵亡流程，但不发网络消息。
 func _on_pvp_surrender() -> void:
 	if _game_over_shown:
@@ -467,6 +473,11 @@ func _on_pvp_surrender() -> void:
 	var slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_PLAYER)
 	if slots.is_empty():
 		return
+	# 投降无法通过卡牌/动作锁步同步（"本地触发伤害"对端推算不出来），必须显式走网络。
+	if Game.is_pvp and Game.pvp_room_id != "":
+		Net.send_to_room("action/surrender", Game.pvp_room_id, {
+			"player_id": Game.local_player_id,
+		})
 	var p_slot: BoardSlot = slots[0]
 	p_slot.damage_hero(100, "triggered")
 
@@ -475,6 +486,28 @@ func _on_objective_completed() -> void:
 	end_turn_btn.disabled = true
 	end_turn_btn.text = "胜利"
 	_show_game_over(true)
+
+# 多队伍 PVP 本端结算（Game.match_result_decided）。
+# 触发点：任一 BoardSlot 的 hero.died → Game.pvp_end_game → 本信号。
+# 因为所有客户端跑同一份锁步状态，每端都会对同一批阵亡得到同一胜负，无需网络参与。
+func _on_match_result_decided(winning_team: String, _loser_pid: String) -> void:
+	_apply_match_result(winning_team, "")
+
+# 结算入口（本端信号与对端 game/end 共用）。
+# winning_team 非空 → 多队伍 PVP 按队伍判断；否则退回 1v1 的 winner_id 语义。
+# 两者都为空 → 无法判定，退回主菜单（保持旧 game/end 分支的行为）。
+func _apply_match_result(winning_team: String, winner_id: String) -> void:
+	if _game_over_shown:
+		return  # 本端已出过结算画面（自身阵亡 / 目标达成 / 先到的对端消息）
+	var local_win: bool = false
+	if winning_team != "":
+		local_win = (Game.team_of_player(Game.local_player_id) == winning_team)
+	elif winner_id != "":
+		local_win = (winner_id == Game.local_player_id)
+	else:
+		_on_exit_to_menu()
+		return
+	_show_game_over(local_win)
 
 var _game_over_shown: bool = false
 
@@ -1298,43 +1331,48 @@ func _handle_pvp_message(msg: Dictionary) -> void:
 						insts_e.remove_at(i)
 						break
 		"disconnect/notify":
-			# 对手断线：走标准阵亡流程（damage_hero 100 → hero.died → 胜负结算）
+			# 对手断线（**由服务器生成**，客户端伪造已在中继层被丢弃）：
+			# 走标准阵亡流程（damage_hero 100 → hero.died → 本端结算）
 			# 1v3 / 1v1 统一按 dead_player_id 路由到对应 slot
 			var nick: String = String(payload.get("nickname", "对手"))
 			var disc_uuid: String = String(payload.get("dead_player_id",
 				String(payload.get("uuid", ""))))   # 向后兼容旧字段名
-			if disc_uuid == Game.local_player_id:
-				pass
-			elif _game_over_shown:
-				pass
-			else:
-				end_turn_btn.text = nick + " 已断线"
-				end_turn_btn.disabled = true
-				if Game.registry != null:
-					var dead_slot: BoardSlot = Game.registry.by_owner(disc_uuid)
-					if dead_slot != null:
-						dead_slot.damage_hero(100, "triggered")
-					else:
-						# 向后兼容：1v1 旧逻辑按 ROLE_MAIN_ENEMY 查
-						var enemy_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
-						if enemy_slots.size() > 0:
-							enemy_slots[0].damage_hero(100, "triggered")
+			_kill_remote_player(disc_uuid, nick + " 已断线")
+		"action/surrender":
+			# 对端主动投降：与其断线同语义 —— 判其阵亡，双方各自本地结算。
+			# 不再依赖对端发 game/end（服务器已把 game/end 列为服务器专属消息）。
+			# player_id 会被中继层重写为发送方真实 uuid（server/security.go），无法冒充。
+			var sur_uuid: String = String(payload.get("player_id", from))
+			_kill_remote_player(sur_uuid, "对手已投降")
 		"game/end":
-			# 本端已显示胜负画面 → 跳过
-			if not _game_over_shown:
-				var winning_team: String = String(payload.get("winning_team", ""))
-				var winner_id: String    = String(payload.get("winner_id", ""))  # 1v1 旧字段兼容
-				var local_win: bool = false
-				if winning_team != "":
-					# 多队伍 PVP（1v3/3v3）：按队伍判断
-					local_win = (Game.team_of_player(Game.local_player_id) == winning_team)
-				elif winner_id != "":
-					# 1v1 旧路径
-					local_win = (winner_id == Game.local_player_id)
-				else:
-					_on_exit_to_menu()
-					return
-				_show_game_over(local_win)
+			# 对端广播的结算（服务器已列为服务器专属消息，正常收不到；保留兼容旧服务端）。
+			# 本端结算由 Game.match_result_decided 驱动，不依赖这条消息。
+			_apply_match_result(
+				String(payload.get("winning_team", "")),
+				String(payload.get("winner_id", "")))
+
+# 把某个远端玩家（本端镜像槽位）判为阵亡：走标准 damage_hero(100) → hero.died 流程，
+# 由本端既有结算路径出胜负画面。
+# 由 disconnect/notify（服务器生成）与 action/surrender（对端主动投降）共用。
+# reason_text 非空时同时更新结束回合按钮文案（保持旧断线提示行为）。
+func _kill_remote_player(pid: String, reason_text: String = "") -> bool:
+	if pid == "" or pid == Game.local_player_id or _game_over_shown:
+		return false
+	if Game.registry == null:
+		return false
+	if reason_text != "":
+		end_turn_btn.text = reason_text
+		end_turn_btn.disabled = true
+	var dead_slot: BoardSlot = Game.registry.by_owner(pid)
+	if dead_slot != null:
+		dead_slot.damage_hero(100, "triggered")
+		return true
+	# 向后兼容：1v1 旧逻辑按 ROLE_MAIN_ENEMY 查
+	var enemy_slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY)
+	if enemy_slots.size() > 0:
+		enemy_slots[0].damage_hero(100, "triggered")
+		return true
+	return false
 
 # 收到对手结束回合消息：运行 TurnSystem（锁步）→ 推进回合 → 恢复按钮
 func _on_remote_end_turn(payload: Dictionary) -> void:
