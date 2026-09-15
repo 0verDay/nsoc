@@ -196,6 +196,17 @@ jobs:
           fi
           grep -E "CELLVIEW_RESULT" cellview.log
 
+      - name: 无视图装配测试（服务器装配路径）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeadlessSetupTest.tscn > hsetup.log 2>&1 || true
+          if ! grep -q "HSETUP_RESULT PASS" hsetup.log; then
+            grep -E "HSETUP_CASE FAIL|HSETUP_RESULT" hsetup.log || true
+            echo "::error::无视图装配测试未通过"
+            exit 1
+          fi
+          grep -E "HSETUP_RESULT" hsetup.log
+
       - name: 服务器会话层测试（反向验证反作弊边界）
         run: |
           set -euo pipefail
@@ -240,6 +251,7 @@ jobs:
             rules.log
             board.log
             cellview.log
+            hsetup.log
             server.log
             tb1.log
             tb2.log

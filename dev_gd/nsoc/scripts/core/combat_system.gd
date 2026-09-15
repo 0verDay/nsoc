@@ -163,6 +163,10 @@ func move_card(start, end) -> void:
 	# 跨盘移动时也保留单位"原属盘"和"出处"，死亡按归属/出处入墓
 	var owner_id: String = start.owner_slot_id
 	var origin_str: String = start.origin
+	# 队伍归属跨盘不变：Cell 会在 set_card 里按 owner_slot_id 反查 registry，
+	# 而无头/服务器侧的 CellData 没有 registry 可查，必须显式透传（否则跨盘即掉队伍）。
+	# PVE 下 team_id 为空串，保持原样，行为不变。
+	var moved_team: String = start.team_id
 
 	# 服务器/无头瞬时模式：跳过位移动画与 tween 等待，直接完成数据转移。
 	# 状态转移与下面的动画路径逐字一致（只是不等 tween.finished）。
@@ -171,6 +175,8 @@ func move_card(start, end) -> void:
 		start.clear_card()
 		if is_instance_valid(end):
 			end.set_card(cname, atk, hp, is_e, effs, owner_id, origin_str)
+			if moved_team != "":
+				end.team_id = moved_team
 			end.has_charged = charged
 		return
 
@@ -220,4 +226,6 @@ func move_card(start, end) -> void:
 		return
 
 	end.set_card(cname, atk, hp, is_e, effs, owner_id, origin_str)
+	if moved_team != "":
+		end.team_id = moved_team
 	end.has_charged = charged

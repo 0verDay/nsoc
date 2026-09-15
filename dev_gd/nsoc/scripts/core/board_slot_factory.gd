@@ -19,7 +19,7 @@ extends RefCounted
 #       on_cell_created=Callable(self, "_wire_cell"),
 #   )
 
-# 创建一个标准 3×3 主棋盘 slot。
+# 创建一个标准 3×3 主棋盘 slot（**客户端路径：带视图**）。
 # level_section: {"initial_units": Array, "spawners": Array} 来自 DataLoader 输出。
 # on_cell_created: 每生成一个 cell 后回调（用于绑定 long_press / cleared 等信号），
 #                  签名 Callable(cell: Cell) -> void。
@@ -35,8 +35,62 @@ static func create_main(
 		level_section: Dictionary,
 		on_cell_created: Callable = Callable()) -> BoardSlot:
 
+	# 视图格子：实例化 Cell 节点并挂到视觉容器上（视图差异只在 create_slot 的这一分支里）
+	var slot := create_slot(id, faction, role, hero_spec, level_section,
+		true, cell_scene, grid_node, on_cell_created)
+	# 视图容器在数据装配完成后注入（与旧实现顺序一致：cell 先建，slot 后补视图引用）
+	if slot != null:
+		slot.bg_panel = bg_panel
+		slot.hero_panel = hero_panel
+		slot.grid_node = grid_node
+	return slot
+
+
+# 创建一个标准 3×3 主棋盘 slot（**无头/服务器路径：纯数据，零视图**）。
+# 格子是 CellData（RefCounted），不创建任何 Control、不挂视觉容器、
+# 不需要 cell_scene 与 grid_node —— 服务器权威端与无头测试共用这条装配路径，
+# 保证"服务器盘面"与"客户端盘面"的装配语义（初始单位 / spawner / 英雄 / 注册表）一致。
+#
+# team_id / owner_player_id 非空时显式注入：CellData 不做 Game.registry 反查，
+# 因此连初始铺下的单位也要显式带上归属队伍（PVP）。
+static func create_headless(
+		id: String,
+		faction: int,
+		role: int,
+		hero_spec: Dictionary = {},
+		level_section: Dictionary = {},
+		team_id: String = "",
+		owner_player_id: String = "") -> BoardSlot:
+
+	var slot := create_slot(id, faction, role, hero_spec, level_section, false, null, null, Callable())
+	if slot == null:
+		return null
+	slot.team_id = team_id
+	slot.owner_player_id = owner_player_id
+	if team_id != "" and slot.board != null:
+		for cell in slot.board.grid_cells.values():
+			cell.team_id = team_id
+	return slot
+
+
+# ── 共用装配（数据层）：客户端与无头路径的唯一真相 ─────────────────────
+# use_view_cells = true  → 格子是 Cell 节点（实例化 cell_scene + 挂到 grid_node）
+# use_view_cells = false → 格子是 CellData（纯数据，不碰场景树）
+# 两种模式除"格子怎么造"之外**完全同一条代码路径**：BoardModel / HeroState /
+# SpawnerSystem / SpellCasterSystem / BoardSlot / registry / 初始单位摆放都共用。
+static func create_slot(
+		id: String,
+		faction: int,
+		role: int,
+		hero_spec: Dictionary,
+		level_section: Dictionary,
+		use_view_cells: bool,
+		cell_scene: PackedScene,
+		grid_node: Node,
+		on_cell_created: Callable = Callable()) -> BoardSlot:
+
 	if not has_game():
-		push_error("BoardSlotFactory.create_main: Game autoload not available")
+		push_error("BoardSlotFactory.create_slot: Game autoload not available")
 		return null
 
 	var board := BoardModel.new()
@@ -73,14 +127,21 @@ static func create_main(
 			for flag_id in flags_arr:
 				hero.set_flag(String(flag_id), true)
 
-	# 生成 3×3 cell 节点
+	# 生成 3×3 格子（视图 / 纯数据两种模式共用同一循环）
 	for r in range(BoardModel.ROWS):
 		for c in range(BoardModel.COLS):
-			var cell = cell_scene.instantiate()
-			cell.row = r
-			cell.col = c
-			cell.slot_id = id
-			grid_node.add_child(cell)
+			var cell
+			if use_view_cells:
+				cell = cell_scene.instantiate()
+				cell.row = r
+				cell.col = c
+				cell.slot_id = id
+				grid_node.add_child(cell)
+			else:
+				cell = CellData.new()
+				cell.row = r
+				cell.col = c
+				cell.slot_id = id
 			board.register_cell(cell)
 			if on_cell_created.is_valid():
 				on_cell_created.call(cell)
@@ -90,9 +151,6 @@ static func create_main(
 	Game.add_child(slot)
 	# hero_resolver 留空 → BoardSlot.setup 内自动绑定到 self.damage_hero
 	slot.setup(id, faction, role, board, hero, spawners)
-	slot.bg_panel = bg_panel
-	slot.hero_panel = hero_panel
-	slot.grid_node = grid_node
 	slot.allow_player_deploy = (faction == BoardSlot.FACTION_PLAYER)
 	slot.spell_casters = spell_casters
 	Game.registry.add(slot)
