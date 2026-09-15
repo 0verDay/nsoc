@@ -38,6 +38,10 @@ func setup_once() -> void:
 	add_child(_pc)
 	# 不 setup：死亡清算（handle_unit_death）本身不依赖 UI 容器
 	_combat.setup(null, null, _pc)
+	# 规则层里"消灭/虚弱/先射/勇军"等效果通过 Game.play.handle_unit_death 走标准死亡流程；
+	# 服务器进程里没有客户端 main/test_main，因此把权威自己的 PlayController 暴露成 Game.play，
+	# 否则这些效果会**静默跳过**入场墓地/on_death 结算（单元格被清空但牌不入墓）。
+	Game.play = _pc
 
 	_turn = TurnSystem.new()
 	_turn.name = "AuthorityTurnSystem"

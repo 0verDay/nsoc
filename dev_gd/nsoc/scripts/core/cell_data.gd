@@ -45,6 +45,30 @@ var is_phantom: bool = false
 var max_health: Dictionary = {"front": 0, "back": 0, "left": 0, "right": 0}
 
 
+# ── 表现面（空实现）────────────────────────────────────────────────────────
+# 规则层里有若干处会顺手调"表现"（`effects_changed.emit` / `play_*_effect` /
+# `_update_hp_labels`）。它们在客户端 `Cell` 上是真表现，在纯数据格上**没有视图**，
+# 若直接调用会抛 "Invalid access ... on a base object of type 'CellData'" ——
+# 权威端跑关卡时就崩（例如法术施放器 `play_damage_effect()`、疑兵自爆
+# `play_death_effect()`、`straight_in_ability` 的 `effects_changed.emit()`）。
+#
+# 因此这里提供**同名同签名的空实现**：数据格与视图格满足同一套鸭子类型接口，
+# 规则层一份代码两种宿主都能跑；数据侧不产生任何表现副作用。
+signal effects_changed(payload)
+
+func _update_hp_labels() -> void:
+	pass
+
+func play_damage_effect() -> void:
+	pass
+
+func play_attack_effect() -> void:
+	pass
+
+func play_death_effect() -> void:
+	pass
+
+
 func is_hostile_to(viewer_team_id: String) -> bool:
 	if team_id == "" or viewer_team_id == "":
 		return is_enemy   # PVE 兼容路径

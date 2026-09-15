@@ -325,6 +325,17 @@ jobs:
             exit 1
           fi
 
+      - name: 规则层跑在纯数据盘上（不依赖视图节点）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/RulesOnDataTest.tscn > rod.log 2>&1 || true
+          if ! grep -q "ROD_RESULT PASS" rod.log; then
+            grep -E "ROD_CASE FAIL|ROD_RESULT" rod.log || true
+            echo "::error::规则层纯数据盘测试未通过"
+            exit 1
+          fi
+          grep -E "ROD_RESULT" rod.log
+
       - name: 上传冒烟日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -349,6 +360,7 @@ jobs:
             hcombat.log
             aboard.log
             server.log
+            rod.log
             tb1.log
             tb2.log
           if-no-files-found: ignore

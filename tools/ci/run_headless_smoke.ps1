@@ -87,8 +87,9 @@ function Get-SmokeResult {
         $turns[[int]$m.Groups[1].Value] = $m.Groups[2].Value
     }
     $state = [regex]::Match($Text, '(?m)^STATE_HASH\s+([0-9a-f]{64})\s*$').Groups[1].Value
-    # Accepts smoke (SMOKE_RESULT) / authority (AUTHORITY_RESULT) / multi-board (TESTBATTLE_RESULT).
-    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|AUTHORITY|TESTBATTLE)_RESULT\s+(\S+)\s*(.*)$')
+    # Accepts smoke (SMOKE_RESULT) / authority (AUTHORITY_RESULT) / multi-board (TESTBATTLE_RESULT)
+    # / rules-on-data (ROD_RESULT).
+    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|AUTHORITY|TESTBATTLE|ROD)_RESULT\s+(\S+)\s*(.*)$')
     return [pscustomobject]@{
         TurnHashes = $turns
         StateHash  = $state
@@ -163,7 +164,7 @@ try {
     }
     Write-Host "[PASS] smoke ok, STATE_HASH=$($first.Parsed.StateHash)" -ForegroundColor Green
     # Echo per-case lines (authority test) so failures/successes are visible in CI logs.
-    ($first.Raw -split "`n" | Where-Object { $_ -match 'AUTHORITY_CASE|AUTHORITY_RESULT|SMOKE_SUMMARY' }) |
+    ($first.Raw -split "`n" | Where-Object { $_ -match 'AUTHORITY_CASE|AUTHORITY_RESULT|ROD_CASE|ROD_RESULT|SMOKE_SUMMARY' }) |
         ForEach-Object { Write-Host "    $($_.Trim())" -ForegroundColor DarkGray }
     foreach ($k in ($first.Parsed.TurnHashes.Keys | Sort-Object)) {
         Write-Host ("    turn {0}: {1}" -f $k, $first.Parsed.TurnHashes[$k]) -ForegroundColor DarkGray
