@@ -30,9 +30,7 @@ func on_activate(ctx) -> void:
 		return
 	if not target_cell.effects.has("soaked"):
 		target_cell.effects.append("soaked")
-		if is_instance_valid(target_cell) and target_cell.has_node("InnerPanel"):
-			var inner = target_cell.get_node("InnerPanel")
-			EffectBadgeFactory.refresh(inner.get_node_or_null("EffectBadges"), target_cell.effects)
+		# 徽章刷新由客户端订阅 effects_changed 完成（规则层不碰 UI）
 		# effects_changed：只刷新已开面板，不弹出
 		target_cell.effects_changed.emit({
 			"name": target_cell.card_name, "attack": target_cell.attack,

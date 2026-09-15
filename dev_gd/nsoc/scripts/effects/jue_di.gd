@@ -39,10 +39,7 @@ func on_play(card_data, ctx) -> bool:
 					continue
 				if not cell.effects.has("soaked"):
 					cell.effects.append("soaked")
-			# 立即刷新效果徽章 + 更新已开详情面板（不弹出）
-				if cell.has_node("InnerPanel"):
-					var inner = cell.get_node("InnerPanel")
-					EffectBadgeFactory.refresh(inner.get_node_or_null("EffectBadges"), cell.effects)
+				# 徽章与详情面板由客户端订阅 effects_changed 更新（规则层不碰 UI）
 				cell.effects_changed.emit({
 					"name": cell.card_name, "attack": cell.attack,
 					"health": cell.health, "effects": cell.effects,

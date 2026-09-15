@@ -71,6 +71,24 @@ BANNED_PATHS: list[tuple[str, str]] = [
 
 _COMMENT = re.compile(r"#[^\n]*")
 _STRING = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
+_CLASS_NAME = re.compile(r"(?m)^\s*class_name\s+([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def client_class_names() -> set[str]:
+    """客户端层（scripts/ui/**）声明的所有 class_name。
+
+    共享层引用这些名字会在编译期产生 core→client 依赖边，
+    正是 重构文档.md §3.2 要禁止的（服务器无头装配不应拖入 UI 类）。
+    """
+    names: set[str] = set()
+    ui_dir = SCRIPTS / "ui"
+    if not ui_dir.exists():
+        return names
+    for p in ui_dir.rglob("*.gd"):
+        m = _CLASS_NAME.search(p.read_text(encoding="utf-8"))
+        if m:
+            names.add(m.group(1))
+    return names
 
 
 def strip_strings(text: str) -> str:
@@ -105,11 +123,18 @@ def iter_scripts() -> list[tuple[str, str, Path]]:
 def scan() -> dict[str, int]:
     """返回 {违规 key: 次数}，key 形如 `<rule>|<relpath>`。"""
     counts: dict[str, int] = {}
+    ui_classes = client_class_names()
     for layer, rel, path in iter_scripts():
         if layer not in SHARED_LAYERS:
             continue
         raw = path.read_text(encoding="utf-8")
         code = code_only(raw)
+
+        # 共享层不得引用客户端 class_name（编译期依赖边）
+        for cls in ui_classes:
+            n = len(re.findall(rf"\b{cls}\b", code))
+            if n:
+                counts[f"client-class-{cls}|{rel}"] = counts.get(f"client-class-{cls}|{rel}", 0) + n
 
         for rule, pattern in BANNED_SYMBOLS:
             n = len(re.findall(pattern, code))

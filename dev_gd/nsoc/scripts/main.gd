@@ -492,6 +492,8 @@ func _wire_cell(cell: Node) -> void:
 	cell.long_press_canceled.connect(detail_panel.cancel_long_press)
 	# effects_changed：只在面板已开时刷新内容，不触发弹出
 	cell.effects_changed.connect(detail_panel.refresh_if_showing)
+	# 徽章刷新改由客户端订阅（规则层不再直接调用 UI，见重构文档.md §3.2）
+	cell.effects_changed.connect(EffectBadgeFactory.refresh_from_cell.bind(cell))
 	cell.card_dropped.connect(_on_cell_card_dropped)
 	cell.cleared.connect(_on_cell_cleared)
 

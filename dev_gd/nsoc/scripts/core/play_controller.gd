@@ -10,7 +10,9 @@ signal hand_consumed(slot_index: int, source_card)            # 通知 HandView 
 var _root: Control                          # 用于挂载飞入动画 visual
 var _cell_scene: PackedScene
 # 供 discard_hand_card effect 访问，弃置动画由 HandView 执行。
-var hand_view: HandView = null
+# 故意声明为 Node 而非 HandView：纯规则层不得依赖客户端类（重构文档.md §3.2）。
+# 调用点只在运行时按鸭子类型调用 discard_card() 等；服务器侧留空即可。
+var hand_view: Node = null
 
 func setup(root: Control, cell_scene: PackedScene) -> void:
 	_root = root

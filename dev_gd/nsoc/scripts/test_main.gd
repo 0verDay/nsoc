@@ -577,6 +577,8 @@ func _on_end_turn_pressed() -> void:
 func _wire_cell(cell: Node) -> void:
 	cell.long_press_requested.connect(_on_cell_long_press_requested)
 	cell.long_press_canceled.connect(detail_panel.cancel_long_press)
+	# 徽章刷新由客户端订阅 effects_changed（规则层不再直接调用 UI，重构文档.md §3.2）
+	cell.effects_changed.connect(EffectBadgeFactory.refresh_from_cell.bind(cell))
 	cell.card_dropped.connect(_on_cell_card_dropped)
 	cell.cleared.connect(_on_cell_cleared)
 
