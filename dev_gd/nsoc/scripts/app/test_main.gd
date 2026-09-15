@@ -473,6 +473,10 @@ func _on_pvp_surrender() -> void:
 	var slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_PLAYER)
 	if slots.is_empty():
 		return
+	# v2 权威模式：只发意图，等服务器的 auth/verdict / auth/state 决定结果
+	if Game.is_pvp and Game.v2_authority and Game.v2 != null:
+		Game.v2.surrender()
+		return
 	# 投降无法通过卡牌/动作锁步同步（"本地触发伤害"对端推算不出来），必须显式走网络。
 	if Game.is_pvp and Game.pvp_room_id != "":
 		Net.send_to_room("action/surrender", Game.pvp_room_id, {
@@ -560,6 +564,15 @@ func _show_game_over(victory: bool) -> void:
 # ── 回合 ─────────────────────────────────────────────────────────────
 func _on_end_turn_pressed() -> void:
 	if Game.is_pvp:
+		if Game.v2_authority and Game.v2 != null:
+			# v2 权威模式：只发意图 —— 单位行动、费用、回合推进全部由服务器裁决，
+			# 客户端等 auth/state / auth/event 回来再重绘（不再本地 run_pvp_phase）。
+			end_turn_btn.disabled = true
+			end_turn_btn.text = "结算中"
+			if Game.v2.end_turn():
+				return
+			end_turn_btn.disabled = false
+			return
 		if not Game.pvp_is_my_turn():
 			return
 		end_turn_btn.disabled = true

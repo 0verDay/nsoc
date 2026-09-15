@@ -174,6 +174,17 @@ jobs:
           fi
           grep -E "RULES_RESULT" rules.log
 
+      - name: v2 接线测试（auth/* → 镜像 + 本地盘面重绘）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/V2WiringTest.tscn > v2w.log 2>&1 || true
+          if ! grep -q "V2W_RESULT PASS" v2w.log; then
+            grep -E "V2W_CASE FAIL|V2W_RESULT" v2w.log || true
+            echo "::error::v2 接线测试未通过"
+            exit 1
+          fi
+          grep -E "V2W_RESULT" v2w.log
+
       - name: 权威盘面渲染测试（按 auth/state 重绘本地棋盘）
         run: |
           set -euo pipefail
@@ -315,6 +326,7 @@ jobs:
             authority.log
             scene.log
             rules.log
+            v2w.log
             abr.log
             v2bc.log
             amain.log

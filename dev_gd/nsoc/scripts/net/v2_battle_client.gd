@@ -1,5 +1,5 @@
 class_name V2BattleClient
-extends Node
+extends RefCounted
 
 ## v2 权威战斗客户端（客户端接入权威路径的核心，场景无关、可无头测试）。
 ##
@@ -112,7 +112,10 @@ func _send_intent(type: String, payload: Dictionary) -> bool:
 	if send_override.is_valid():
 		send_override.call(type, full)
 		return true
-	if not has_node("/root/Net") or not Net.is_connected_to_server():
+	# 纯对象（RefCounted）不入场景树，因此用 Engine 反查 autoload
+	var loop := Engine.get_main_loop()
+	var root: Node = loop.root if loop != null else null
+	if root == null or not root.has_node("/root/Net") or not Net.is_connected_to_server():
 		return false
 	Net.send_intent(type, full)
 	return true

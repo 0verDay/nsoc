@@ -96,6 +96,62 @@ var pvp_room_id:      String = ""
 # 双方用相同种子初始化各自的 DeckManager，保证洗牌顺序一致。
 var pvp_rng_seed:     int    = 0
 
+# ── v2 权威模式（客户端接入权威路径）──────────────────────────────────────
+# 打开后：客户端**不再本地结算**，操作变成 intent/*，盘面按 auth/state 重绘。
+# 默认关闭 → 老路径（v1 锁步 + action/*）行为逐字不变。
+var v2_authority: bool = false
+var v2: V2BattleClient = null
+
+## 打开 v2 权威模式：建客户端核心件、把 Net 的 auth/* 接到"更新镜像 + 重绘本地盘面"。
+## 由大厅在权威进程就绪时调用；重复调用幂等（换局时 reset）。
+func enable_v2_authority() -> void:
+	if v2 == null:
+		# V2BattleClient 是纯对象（RefCounted）：不入场景树，因此这里也没有 add_child
+		v2 = V2BattleClient.new()
+	v2.reset()
+	v2_authority = true
+	if has_node("/root/Net"):
+		if not Net.auth_state.is_connected(_on_auth_state):
+			Net.auth_state.connect(_on_auth_state)
+		if not Net.auth_event.is_connected(_on_auth_event):
+			Net.auth_event.connect(_on_auth_event)
+		if not Net.auth_reject.is_connected(_on_auth_reject):
+			Net.auth_reject.connect(_on_auth_reject)
+		if not Net.auth_verdict.is_connected(_on_auth_verdict):
+			Net.auth_verdict.connect(_on_auth_verdict)
+
+func disable_v2_authority() -> void:
+	v2_authority = false
+	if has_node("/root/Net"):
+		if Net.auth_state.is_connected(_on_auth_state):
+			Net.auth_state.disconnect(_on_auth_state)
+		if Net.auth_event.is_connected(_on_auth_event):
+			Net.auth_event.disconnect(_on_auth_event)
+		if Net.auth_reject.is_connected(_on_auth_reject):
+			Net.auth_reject.disconnect(_on_auth_reject)
+		if Net.auth_verdict.is_connected(_on_auth_verdict):
+			Net.auth_verdict.disconnect(_on_auth_verdict)
+	if v2 != null:
+		v2.reset()
+
+func _on_auth_state(payload: Dictionary) -> void:
+	if v2 == null:
+		return
+	v2.apply_state(payload)
+	# 服务器说盘面是什么样，就画成什么样（客户端不做任何本地裁决）
+	AuthBoardRenderer.apply(payload.get("board", {}) if payload.has("board") else {}, registry)
+
+func _on_auth_event(payload: Dictionary) -> void:
+	if v2 != null:
+		v2.apply_event(payload)
+
+func _on_auth_reject(payload: Dictionary) -> void:
+	if v2 != null:
+		v2.apply_reject(payload)
+
+func _on_auth_verdict(payload: Dictionary) -> void:
+	if v2 != null:
+		v2.apply_verdict(payload)
 # ── 1v3 / 多队伍扩展字段 ─────────────────────────────────────────────
 # 当前对局类型："1v1" / "1v3"；空串 = PVE。
 var pvp_match_type: String = ""
