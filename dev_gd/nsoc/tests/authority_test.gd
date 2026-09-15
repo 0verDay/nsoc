@@ -21,7 +21,7 @@ var _failed: int = 0
 ## 预期用例数。用于捕获"某个测试函数因运行时错误被静默中断"的情况：
 ## GDScript 的运行时错误不会终止 _ready()，只是让出错函数提前返回，
 ## 若不校验总数，测试会在没跑完的情况下打印 PASS（本项目已踩过一次）。
-const EXPECTED_CASES: int = 40
+const EXPECTED_CASES: int = 46
 
 
 func _ready() -> void:
@@ -40,6 +40,7 @@ func _ready() -> void:
 	_test_turn_advance()
 	_test_surrender_and_finish()
 	_test_server_rng_determinism()
+	_test_registries()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -227,6 +228,32 @@ func _test_server_rng_determinism() -> void:
 	var hc: Array = (c.view_for("p0")["you"]["hand"] as Array)
 	_check("确定性: 同种子发牌一致", ha == hb, "%s vs %s" % [str(ha), str(hb)])
 	_check("确定性: 不同种子发牌不同", ha != hc, "%s vs %s" % [str(ha), str(hc)])
+
+
+## 显式注册表完整性（重构文档.md §3.4-3）：
+## 注册表由"扫目录"改为显式路径表后，路径写错会导致某个效果/技能静默缺失。
+## 数量断言 + 关键 id 抽查可以在无头环境立刻发现这类错误。
+func _test_registries() -> void:
+	var eff: Array = Effects.ids()
+	var abi: Array = HeroAbilities.ids()
+	var act: Array = Actions.ids()
+	var obj: Array = Objectives.ids()
+	_check("注册表: 效果数量为 32", eff.size() == 32, str(eff.size()))
+	_check("注册表: 技能数量为 15", abi.size() == 15, str(abi.size()))
+	_check("注册表: 关卡动作数量为 10", act.size() == 10, str(act.size()))
+	_check("注册表: 关卡目标数量为 1", obj.size() == 1, str(obj))
+	var need_eff: Array = ["weaken", "inspire", "vigilance", "charge", "ash", "die_hard", "empower"]
+	var miss_eff: Array = []
+	for e in need_eff:
+		if not eff.has(e):
+			miss_eff.append(e)
+	_check("注册表: 卡牌引用的效果均已注册", miss_eff.is_empty(), str(miss_eff))
+	var need_abi: Array = ["restart", "yi_yong_jun", "flood_strategy_hero", "weishan_ability"]
+	var miss_abi: Array = []
+	for a in need_abi:
+		if not abi.has(a):
+			miss_abi.append(a)
+	_check("注册表: 英雄引用的技能均已注册", miss_abi.is_empty(), str(miss_abi))
 
 
 # ── 工具 ──────────────────────────────────────────────────────────────────

@@ -1,10 +1,31 @@
 extends Node
 
-# HeroAbilityRegistry —— 启动期扫描 res://scripts/abilities/*.gd 自动注册。
+# HeroAbilityRegistry —— 显式注册 res://scripts/abilities/*.gd。
 # 作为 autoload 单例，名字 "HeroAbilities"。
-# 兼容 .gd / .gdc / .remap 三种文件形式（适配安卓导出 mode=2），仿 EffectRegistry。
+#
+# 显式表理由同 EffectRegistry（重构文档.md §3.4-3）：无目录扫描、顺序确定、
+# 漏登记由 CI 的 tools/ci/check_content.py 拦下。
 
 const ABILITIES_DIR := "res://scripts/abilities/"
+
+## 显式注册表：新增技能脚本必须在此登记，路径按字典序排列。
+const ABILITY_PATHS: Array = [
+	"res://scripts/abilities/aid_fancheng_ability.gd",
+	"res://scripts/abilities/caocao_archery.gd",
+	"res://scripts/abilities/die_hard_display.gd",
+	"res://scripts/abilities/first_arrow_ability.gd",
+	"res://scripts/abilities/flood_dam_ability.gd",
+	"res://scripts/abilities/flood_strategy_hero.gd",
+	"res://scripts/abilities/qiaobian_ability.gd",
+	"res://scripts/abilities/reinforce_camp_ability.gd",
+	"res://scripts/abilities/restart.gd",
+	"res://scripts/abilities/straight_in_ability.gd",
+	"res://scripts/abilities/surrender_ability.gd",
+	"res://scripts/abilities/test_discard.gd",
+	"res://scripts/abilities/weishan_ability.gd",
+	"res://scripts/abilities/xiefang_ability.gd",
+	"res://scripts/abilities/yi_yong_jun.gd",
+]
 
 signal ability_used(ability_id: String)
 signal turn_reset
@@ -13,43 +34,27 @@ var _instances: Dictionary = {}     # id -> HeroAbility 实例
 var _used_this_turn: Dictionary = {} # id -> true
 
 func _ready() -> void:
-	_scan_and_register()
+	_register_explicit()
 
-func _scan_and_register() -> void:
-	var dir := DirAccess.open(ABILITIES_DIR)
-	if dir == null:
-		push_warning("HeroAbilityRegistry: cannot open %s" % ABILITIES_DIR)
-		return
-	var seen: Dictionary = {}
-	dir.list_dir_begin()
-	var fname := dir.get_next()
-	while fname != "":
-		if not dir.current_is_dir():
-			var ext: String = ""
-			if fname.ends_with(".gd"):
-				ext = ".gd"
-			elif fname.ends_with(".gdc"):
-				ext = ".gdc"
-			elif fname.ends_with(".remap"):
-				ext = ".remap"
-			if ext != "":
-				var stem: String = fname.substr(0, fname.length() - ext.length())
-				if ext == ".remap" and stem.ends_with(".gd"):
-					stem = stem.substr(0, stem.length() - 3)
-				if not seen.has(stem):
-					seen[stem] = true
-					var path := ABILITIES_DIR + stem + ".gd"
-					var script := load(path) as Script
-					if script == null:
-						push_warning("HeroAbilityRegistry: failed to load %s" % path)
-					else:
-						var inst = script.new()
-						_instances[stem] = inst
-		fname = dir.get_next()
-	dir.list_dir_end()
+func _register_explicit() -> void:
+	for path in ABILITY_PATHS:
+		var script := load(String(path)) as Script
+		if script == null:
+			push_error("HeroAbilityRegistry: failed to load %s" % path)
+			continue
+		var stem: String = String(path).get_file().get_basename()
+		_instances[stem] = script.new()
 
 func has(ability_id: String) -> bool:
 	return _instances.has(ability_id)
+
+## 已注册的全部 id（字典序，确定性输出）。
+func ids() -> Array:
+	var out: Array = []
+	for k in _instances.keys():
+		out.append(String(k))
+	out.sort()
+	return out
 
 func get_ability(ability_id: String):
 	return _instances.get(ability_id)

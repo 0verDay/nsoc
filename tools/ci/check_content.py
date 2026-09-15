@@ -363,6 +363,44 @@ def check_empire_maps() -> None:
                     err(f"{w}: {field}={v!r} 不在 shapes 中")
 
 
+# 显式注册表与目录的一致性（重构文档.md §3.4-3）。
+# 注册表从"启动期扫目录"改为显式路径表后，新增脚本必须登记；
+# 本检查保证"表 == 目录"（含基类等豁免项），否则 CI 失败。
+REGISTRY_TABLES = [
+    ("scripts/core/effect_registry.gd", "EFFECT_PATHS", "scripts/effects", {"effect_utils"}),
+    ("scripts/core/action_registry.gd", "ACTION_PATHS", "scripts/actions", set()),
+    ("scripts/core/hero_ability_registry.gd", "ABILITY_PATHS", "scripts/abilities", set()),
+    ("scripts/core/objective_registry.gd", "OBJECTIVE_PATHS", "scripts/objectives", {"objective"}),
+]
+
+
+def check_registries() -> None:
+    for reg_rel, const_name, dir_rel, skip in REGISTRY_TABLES:
+        reg = PROJECT / reg_rel
+        if not reg.exists():
+            err(f"{rel(reg)}: 注册表文件不存在")
+            continue
+        text = reg.read_text(encoding="utf-8")
+        m = re.search(rf"const\s+{const_name}\s*:\s*Array\s*=\s*\[(.*?)\]", text, re.S)
+        if not m:
+            err(f"{rel(reg)}: 找不到显式注册表 {const_name}")
+            continue
+        registered = set(re.findall(r'"(res://[^"]+\.gd)"', m.group(1)))
+        dir_path = PROJECT / dir_rel
+        if not dir_path.exists():
+            err(f"{rel(dir_path)}: 目录不存在")
+            continue
+        actual = {
+            f"res://{dir_rel}/{p.name}"
+            for p in sorted(dir_path.glob("*.gd"))
+            if p.stem not in skip
+        }
+        for p in sorted(actual - registered):
+            err(f"{reg_rel} {const_name}: 脚本未登记 → {p}")
+        for p in sorted(registered - actual):
+            err(f"{reg_rel} {const_name}: 登记了不存在的脚本 → {p}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--verbose", action="store_true")
@@ -401,6 +439,7 @@ def main() -> int:
         check_campaigns(campaigns)
 
     check_empire_maps()
+    check_registries()
 
     print(f"内容检查: 检查了 {len(list(DATA.rglob('*.json')))} 个 JSON")
     print(f"  卡牌 {len(card_names)} 张 / 英雄 {len(hero_keys)} 个")

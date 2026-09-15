@@ -1,14 +1,21 @@
 extends Node
 
-# ObjectiveRegistry —— 启动期扫描 res://scripts/objectives/*.gd 自动注册。
+# ObjectiveRegistry —— 显式注册 res://scripts/objectives/*.gd（不含基类 objective.gd）。
 # 作为 autoload 单例，名字 "Objectives"。
-# 仿 EffectRegistry / HeroAbilityRegistry，兼容 .gd / .gdc / .remap 三种文件形式。
+#
+# 显式表理由同 EffectRegistry（重构文档.md §3.4-3）：无目录扫描、顺序确定、
+# 漏登记由 CI 的 tools/ci/check_content.py 拦下。
 #
 # 战斗装载时由 GameContext.bootstrap 调用 setup_for_battle(level.objective) 激活；
 # 完成时（turn_started 检查通过）发射 objective_completed 信号，由 main / test_main
 # 连接到胜利展示路径。
 
 const OBJECTIVES_DIR := "res://scripts/objectives/"
+
+## 显式注册表：新增关卡目标必须在此登记（基类 objective.gd 不入表）。
+const OBJECTIVE_PATHS: Array = [
+	"res://scripts/objectives/survive_turns.gd",
+]
 
 signal objective_completed
 
@@ -20,47 +27,27 @@ var _active_params: Dictionary = {}
 var _completed: bool = false
 
 func _ready() -> void:
-	_scan_and_register()
+	_register_explicit()
 
-func _scan_and_register() -> void:
-	var dir := DirAccess.open(OBJECTIVES_DIR)
-	if dir == null:
-		push_warning("ObjectiveRegistry: cannot open %s" % OBJECTIVES_DIR)
-		return
-	var seen: Dictionary = {}
-	dir.list_dir_begin()
-	var fname := dir.get_next()
-	while fname != "":
-		if not dir.current_is_dir():
-			var ext: String = ""
-			if fname.ends_with(".gd"):
-				ext = ".gd"
-			elif fname.ends_with(".gdc"):
-				ext = ".gdc"
-			elif fname.ends_with(".remap"):
-				ext = ".remap"
-			if ext != "":
-				var stem: String = fname.substr(0, fname.length() - ext.length())
-				if ext == ".remap" and stem.ends_with(".gd"):
-					stem = stem.substr(0, stem.length() - 3)
-				# 跳过基类
-				if stem == "objective":
-					fname = dir.get_next()
-					continue
-				if not seen.has(stem):
-					seen[stem] = true
-					var path := OBJECTIVES_DIR + stem + ".gd"
-					var script := load(path) as Script
-					if script == null:
-						push_warning("ObjectiveRegistry: failed to load %s" % path)
-					else:
-						var inst = script.new()
-						_instances[stem] = inst
-		fname = dir.get_next()
-	dir.list_dir_end()
+func _register_explicit() -> void:
+	for path in OBJECTIVE_PATHS:
+		var script := load(String(path)) as Script
+		if script == null:
+			push_error("ObjectiveRegistry: failed to load %s" % path)
+			continue
+		var stem: String = String(path).get_file().get_basename()
+		_instances[stem] = script.new()
 
 func has(type_id: String) -> bool:
 	return _instances.has(type_id)
+
+## 已注册的全部 id（字典序，确定性输出）。
+func ids() -> Array:
+	var out: Array = []
+	for k in _instances.keys():
+		out.append(String(k))
+	out.sort()
+	return out
 
 func get_objective(type_id: String):
 	return _instances.get(type_id)
