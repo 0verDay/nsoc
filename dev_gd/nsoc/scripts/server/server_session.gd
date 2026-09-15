@@ -23,6 +23,8 @@ const WARN_CONTENT_MISMATCH := "content_mismatch"
 var match_id: String = ""
 
 var _authority: BattleAuthority = null
+## 权威盘面适配器（create_match 提供 config.board 时才有值）。
+var _board = null
 var _players: Array = []
 var _outbound: Dictionary = {}       # pid -> Array[消息]
 var _handshaken: Dictionary = {}     # pid -> bool
@@ -54,6 +56,19 @@ func create_match(config: Dictionary) -> void:
 
 	_authority = BattleAuthority.new()
 	_authority.start(config)
+
+	# 可选：接入权威盘面（服务器裁决落子）。
+	# config.board 形如 {"players": [...], "teams": {...}, "hero_hp": {...}, "level": {...}}。
+	# 未提供时保持骨架模式（只结算手牌/费用/回合），行为与以前完全一致。
+	if config.has("board"):
+		var adapter := AuthorityBoard.new()
+		var br: Dictionary = adapter.start(config["board"] as Dictionary)
+		if bool(br.get("ok", false)):
+			_authority.attach_board(adapter)
+			_board = adapter
+		else:
+			_audit.append({"event": "board_setup_failed",
+				"reason": String(br.get("reason", ""))})
 
 	for pid_raw in _players:
 		var pid := String(pid_raw)
@@ -176,6 +191,11 @@ func inbound_handled() -> int:
 
 func authority() -> BattleAuthority:
 	return _authority
+
+
+## 权威盘面适配器；未提供 config.board 时返回 null（骨架模式）。
+func board():
+	return _board
 
 
 func players() -> Array:

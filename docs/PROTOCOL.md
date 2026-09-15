@@ -141,7 +141,9 @@ AuthorityBoard                        权威盘面：装配（create_headless）
 ```
 
 **已完成（GDScript 侧）**：协议定义、权威核心、服务器会话层、**权威端棋盘落子与盘面视图**；
-124 条断言（`AuthorityTest` 46 + `ServerSessionTest` 32 + `AuthorityBoardTest` 25 + Go 10 + 其余 headless 套件）。
+会话入口 `BattleServerSession.create_match(config)` 支持可选 `config.board` 接入权威盘面
+（失败写审计并退回骨架模式）。
+124 条断言（`AuthorityTest` 46 + `ServerSessionTest` 32 + `AuthorityBoardTest` 30 + Go 10 + 其余 headless 套件）。
 **已完成（Go 中继侧）**：服务器专属消息拦截 / 房主校验 / 身份重写 / 每连接限速（`server/security.go` + 10 个单测）。
 
 **未完成**：

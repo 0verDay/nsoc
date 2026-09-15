@@ -19,7 +19,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 25
+const EXPECTED_CASES: int = 30
 
 var _passed: int = 0
 var _failed: int = 0
@@ -60,6 +60,7 @@ func _ready() -> void:
 	_test_rejects_are_free()
 	_test_deploy_and_view()
 	_test_insufficient_mana()
+	_test_session_wiring()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -218,3 +219,60 @@ func _test_insufficient_mana() -> void:
 	_check("费用: 费用不足时拒绝且不落子",
 		String(r.get("reason", "")) == NetProtocol.REJECT_NOT_ENOUGH_MANA
 		and not bool(_cell_dict("main_p1", 1, 1).get("has_card", false)), str(r))
+
+
+## 服务器会话入口（BattleServerSession）与权威盘面的接合：
+## 真实部署里棋盘是由会话层按 config.board 建起来的，这条链路必须可达。
+func _test_session_wiring() -> void:
+	Game.registry.clear()
+	var s := BattleServerSession.new()
+	s.configure(NetProtocol.VERSION, "abc")
+	s.create_match({
+		"match_id": "m_wired",
+		"seed": 7,
+		"players": ["p1", "p2"],
+		"decks": {"p1": [_unit, _unit, _unit], "p2": [_unit, _unit, _unit]},
+		"card_costs": {_unit: 1},
+		"hero_hp": {"p1": 30, "p2": 30},
+		"rate_limit_per_sec": -1,
+		"board": {"players": ["p1", "p2"], "teams": {"p1": "defender", "p2": "attacker"}},
+	})
+	_check("会话: config.board 存在时建出权威盘面", s.board() != null and s.authority().has_board())
+
+	var hello := {"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": "abc"}}
+	s.handle_client_message("p1", hello)
+	s.handle_client_message("p2", hello)
+	s.drain_outbound("p1")
+	s.drain_outbound("p2")
+
+	var r: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_PLAY_CARD,
+		"payload": {"card_name": _unit, "seq": 0, "target_slot_id": "main_p1", "row": 2, "col": 0}})
+	_check("会话: 意图经会话层落到权威盘面", bool(r.get("accepted", false)), str(r))
+	_check("会话: 盘面格子上确有该单位",
+		bool((s.board().state()["main_p1"]["cells"] as Dictionary).get("2,0", {}).get("has_card", false)),
+		str(s.board().state()["main_p1"]["cells"].get("2,0", {})))
+
+	var peer_events: Array = []
+	for m in s.drain_outbound("p2"):
+		var p: Dictionary = (m as Dictionary).get("payload", {})
+		peer_events.append(String(p.get("event", "")))
+	_check("会话: 对手收到 unit_deployed 权威事件", peer_events.has("unit_deployed"),
+		str(peer_events))
+
+	# 建盘失败（没有玩家）必须被审计，且不接盘面、不炸
+	var s2 := BattleServerSession.new()
+	s2.configure(NetProtocol.VERSION, "abc")
+	s2.create_match({
+		"match_id": "m_bad", "seed": 1, "players": ["p1", "p2"],
+		"decks": {"p1": [_unit], "p2": [_unit]}, "card_costs": {_unit: 1},
+		"hero_hp": {"p1": 30, "p2": 30}, "rate_limit_per_sec": -1,
+		"board": {"players": []},
+	})
+	var audited := false
+	for entry in s2.audit_log():
+		if String((entry as Dictionary).get("event", "")) == "board_setup_failed":
+			audited = true
+	_check("会话: 建盘失败写审计且不接盘面（骨架模式继续可用）",
+		s2.board() == null and audited and not s2.authority().has_board(),
+		str(s2.audit_log()))
