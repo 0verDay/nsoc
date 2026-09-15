@@ -14,6 +14,18 @@ https://github.com/qfwj-lyy/soc
 
 - 轶名 @yuyi-yutie
 
+## 文档
+
+现行规范统一放在 `docs/`（根目录不再散装文档）：
+
+| 文档 | 内容 |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 目录与分层、核心子系统、扩展点、对局模式、确定性、测试矩阵、常见陷阱 |
+| [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | 联机协议 v2（意图 / 权威）、消息表、反作弊规则 |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | 重构路线与**实时进度**、剩余工作、验收清单 |
+| [`重构文档.md`](重构文档.md) | 完整重构方案（评审稿）：目标架构、反作弊设计、清理清单、实施计划 |
+| [`docs/ARCHIVE-INDEX.md`](docs/ARCHIVE-INDEX.md) | 历史设计稿归档索引（`docs/archive/`） |
+
 ## dev1
 
 （命名dev为develop版本）
