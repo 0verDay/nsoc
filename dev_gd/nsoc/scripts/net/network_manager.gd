@@ -34,6 +34,9 @@ signal auth_request_choice(payload: Dictionary)
 
 ## 是否使用 v2 权威协议（意图上行 + 权威结果下行）。
 var use_v2: bool = false
+## 建房时是否**请求服务器权威这一局**（大厅用；权威进程不在时会静默退回 v1）。
+## 默认 false；可用环境变量 NSOC_AUTHORITATIVE=1 打开（部署/联调时无需改代码）。
+var want_authoritative: bool = false
 ## 连接建立后是否自动发 client/hello（v2 下必须握手才能发意图）。
 var auto_hello: bool = true
 var _hello_sent: bool = false
@@ -59,6 +62,8 @@ func _ready() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	_session_id = _uuid + "_" + str(rng.randi_range(1000, 9999))
+	# 联调/部署便利：NSOC_AUTHORITATIVE=1 时建房请求服务器权威（默认关闭）
+	want_authoritative = OS.get_environment("NSOC_AUTHORITATIVE") == "1"
 
 # ── 连接 / 断开 ──────────────────────────────────────────────────────
 func connect_to_server(host: String = "", port: int = 0) -> void:

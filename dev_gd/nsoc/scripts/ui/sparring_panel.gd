@@ -90,6 +90,9 @@ var _rooms: Array = []            # [{id, host_nickname, player_count}, ...]
 var _last_refresh_time: float = -REFRESH_COOLDOWN
 var _net_signals_bound: bool = false
 var _auto_create_pending: bool = false   # 连上服务器后自动 room/create 标志
+## 这一局是否由服务器权威裁决（由 room/create_ok / game/start 的 authoritative 字段决定）。
+## false = 走 v1 锁步（默认，也是"没有待命权威"时的降级路径）。
+var _authoritative: bool = false
 
 # 准备系统
 var _player_ready: Dictionary = {}   # uuid → bool（所有玩家的准备状态）
@@ -236,7 +239,12 @@ func _on_ready_after_connect() -> void:
 		# 我的房间：若尚未在房间内，则发 room/create（附带当前 match_type）
 		if _room_id == "" and _auto_create_pending:
 			_auto_create_pending = false
-			Net.send({"type": "room/create", "payload": {"match_type": _match_type}})
+			# want_authoritative（NSOC_AUTHORITATIVE=1）：请求"服务器权威"这一局；
+			# 中继没有待命权威时会在 room/create_ok 里回 authoritative=false，静默退回 v1。
+			Net.send({"type": "room/create", "payload": {
+				"match_type": _match_type,
+				"authoritative": Net.want_authoritative,
+			}})
 		_refresh_left_content()
 	elif _selected_idx == 1:
 		# 加入房间：拉一次房间列表（受冷却保护）
@@ -885,6 +893,8 @@ func _on_net_message(msg: Dictionary) -> void:
 			_player_decks.clear()
 			_player_heroes.clear()
 			_is_local_ready = false
+			# 中继如实告知这一局是否由服务器权威裁决（没有待命权威时 = false → 走 v1 锁步）
+			_authoritative = bool(payload.get("authoritative", false))
 			# 服务端返回 match_type 时以服务端为准；否则保留房主本地选择的 _match_type
 			var confirmed_mt: String = String(payload.get("match_type", ""))
 			if confirmed_mt != "":
@@ -1293,11 +1303,62 @@ func _on_start_game() -> void:
 		"per_player_heroes": per_player_heroes,
 		"rng_seed":          seed_value,
 		"slot_layout":       slot_layout,
+		# 告知所有客户端这一局是否走 v2 权威（中继派单成功时为 true）
+		"authoritative":     _authoritative,
 	}
 	Net.send_to_room("game/start", _room_id, start_payload)
+	# 权威模式：把**开局配置**交给权威进程（牌组 / 英雄 / 关卡布局）。
+	# 走的是 authority/start_match，中继只转给该房间的权威，不进 P2P 广播。
+	if _authoritative:
+		Net.send_to_room("authority/start_match", _room_id, _build_authority_config(
+			order, slot_layout, per_player_decks, per_player_heroes, seed_value))
 	# 房主自己直接处理进入游戏（不等服务端 echo，echo 会被 from==my_sid 过滤）
 	var fake_msg: Dictionary = {"type": "game/start", "room_id": _room_id, "payload": start_payload}
 	_handle_game_start(fake_msg, start_payload)
+
+
+## 组装权威端开局配置（players/teams/slot_ids/decks/hero_hp/level）。
+## 与 BattleAuthority.start 的 config 对齐；权威端会补齐 card_costs 等缺失字段。
+func _build_authority_config(order: Array, slot_layout: Array, decks: Dictionary,
+		heroes: Dictionary, seed_value: int) -> Dictionary:
+	var teams: Dictionary = {}
+	var slot_ids: Dictionary = {}
+	for entry in slot_layout:
+		var e: Dictionary = entry
+		var pid := String(e.get("owner_pid", ""))
+		if pid == "":
+			continue
+		if String(e.get("team_id", "")) != "":
+			teams[pid] = String(e["team_id"])
+		if String(e.get("slot_id", "")) != "":
+			slot_ids[pid] = String(e["slot_id"])
+	# 1v1（无 slot_layout）时按行动顺序分队：defender / attacker
+	if teams.is_empty():
+		for i in range(order.size()):
+			teams[String(order[i])] = "defender" if i == 0 else "attacker"
+	var hero_hp: Dictionary = {}
+	for pid in order:
+		hero_hp[String(pid)] = 30
+	var player_decks: Dictionary = {}
+	for pid in order:
+		player_decks[String(pid)] = (decks.get(String(pid), []) as Array).duplicate()
+	return {
+		"match_id":  "room_%s" % _room_id,
+		"seed":      seed_value,
+		"players":   order.duplicate(),
+		"teams":     teams,
+		"slot_ids":  slot_ids,
+		"hero_hp":   hero_hp,
+		"decks":     player_decks,
+		"hand_size": 3,
+		"rate_limit_per_sec": 20,
+		"board": {
+			"players":  order.duplicate(),
+			"teams":    teams,
+			"slot_ids": slot_ids,
+			"hero_hp":  hero_hp,
+		},
+	}
 
 
 # 收到 game/start：bootstrap_pvp + 切战斗场景
@@ -1377,6 +1438,15 @@ func _handle_game_start(msg: Dictionary, payload: Dictionary) -> void:
 
 	_unbind_net_signals()
 	Net.set_current_room_id(msg.get("room_id", _room_id))
+
+	# v2 权威模式（房主在 game/start 里广播）：打开客户端权威链路 ——
+	# 之后出牌/结束回合/投降走 intent/*，盘面按 auth/state 重绘；否则保持 v1 锁步。
+	if bool(payload.get("authoritative", false)):
+		Net.use_v2 = true
+		Game.enable_v2_authority()
+	else:
+		Net.use_v2 = false
+		Game.disable_v2_authority()
 
 	# 解析 match_type 和 slot_layout
 	var match_type: String = String(payload.get("match_type", "1v1"))
