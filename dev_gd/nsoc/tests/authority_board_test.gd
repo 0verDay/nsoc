@@ -19,7 +19,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 45
+const EXPECTED_CASES: int = 57
 
 var _passed: int = 0
 var _failed: int = 0
@@ -63,6 +63,7 @@ func _ready() -> void:
 	_test_session_wiring()
 	await _test_turn_phase()
 	await _test_board_hero_sync()
+	await _test_spell_play()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -317,9 +318,9 @@ func _test_turn_phase() -> void:
 	var r: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_END_TURN,
 		"payload": {"seq": 0}})
 	_check("回合: end_turn 被接受并登记待结算阶段",
-		bool(r.get("accepted", false)) and s.authority().has_pending_phase(), str(r))
+		bool(r.get("accepted", false)) and s.authority().has_pending_work(), str(r))
 	await s.tick()
-	_check("回合: 结算后待处理阶段清空", not s.authority().has_pending_phase())
+	_check("回合: 结算后待处理阶段清空", not s.authority().has_pending_work())
 	_check("回合: 服务器结算了攻击（相邻敌方单位阵亡）",
 		not dfd.has_card and dfd.card_name == "", str(dfd.to_dict()))
 	_check("回合: 阵亡按归属入墓（owner_slot_id 路由）",
@@ -333,7 +334,7 @@ func _test_turn_phase() -> void:
 	_check("回合: 回合已推进到 p2", s.authority().active_player() == "p2",
 		s.authority().active_player())
 	_check("回合: 无棋盘时不登记待结算阶段（骨架模式语义不变）",
-		not _make_skeleton_session().authority().has_pending_phase())
+		not _make_skeleton_session().authority().has_pending_work())
 
 
 ## 棋盘英雄血量 ↔ 权威终局判定：棋盘是真相来源，英雄阵亡必须产生 auth/verdict。
@@ -376,6 +377,97 @@ func _test_board_hero_sync() -> void:
 	for m in s.drain_outbound("p2"):
 		p2_types.append(String((m as Dictionary).get("type", "")))
 	_check("英雄: 向双方下发 auth/verdict", p2_types.has(NetProtocol.AUTH_VERDICT), str(p2_types))
+
+
+## 法术接入权威端：目标校验同步、效果在 tick 中执行（协程），并下发 spell_cast。
+func _test_spell_play() -> void:
+	# 取一张"无 await 效果"的真实法术（empower：对友方单位四维各 +1）
+	var spell_name := ""
+	for key in Game.card_db.keys():
+		var card = Game.card_db[key]
+		if card is CardSpell and (card.effects as Array).has("empower"):
+			spell_name = String(key)
+			break
+	_check("法术: 找到 empower 法术卡", spell_name != "", spell_name)
+	if spell_name == "":
+		# 补齐断言数量，避免"用例数异常"掩盖真实失败
+		for _i in range(10):
+			_check("法术: 跳过（卡库缺 empower）", false, "no empower spell")
+		return
+
+	Game.registry.clear()
+	var host := BattleSimHost.new()
+	add_child(host)
+	var s := BattleServerSession.new()
+	s.configure(NetProtocol.VERSION, "abc")
+	s.create_match({
+		"match_id": "m_spell", "seed": 17, "players": ["p1", "p2"],
+		# 牌库 3 张 = 开局手牌，保证手上有法术
+		"decks": {"p1": [spell_name, spell_name, spell_name],
+			"p2": [spell_name, spell_name, spell_name]},
+		"card_costs": {spell_name: 1}, "hero_hp": {"p1": 30, "p2": 30},
+		"rate_limit_per_sec": -1,
+		"board": {"players": ["p1", "p2"], "teams": {"p1": "defender", "p2": "attacker"}},
+		"sim_host": host,
+	})
+	var hello := {"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": "abc"}}
+	s.handle_client_message("p1", hello)
+	s.handle_client_message("p2", hello)
+	s.drain_outbound("p1")
+	s.drain_outbound("p2")
+
+	var b = s.board()
+	var ally: CellData = b.cell_at("main_p1", 2, 1)
+	ally.set_card(_unit, 2, {"front": 4, "back": 4, "left": 4, "right": 4}, false,
+		[], "main_p1", "initial", "defender")
+
+	# ① 目标格没有单位 → 非法目标（效果没机会跑，也就不会白扣费用）
+	var r1: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_PLAY_CARD,
+		"payload": {"card_name": spell_name, "seq": 0,
+			"target_slot_id": "main_p1", "row": 0, "col": 0}})
+	_check("法术: 指向空格 → illegal_target",
+		String(r1.get("reason", "")) == NetProtocol.REJECT_ILLEGAL_TARGET, str(r1))
+
+	# ② 有目标策略的法术缺 row/col → illegal_target
+	var r2: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_PLAY_CARD,
+		"payload": {"card_name": spell_name, "seq": 1, "target_slot_id": "main_p1"}})
+	_check("法术: 缺落点 → illegal_target",
+		String(r2.get("reason", "")) == NetProtocol.REJECT_ILLEGAL_TARGET, str(r2))
+	_check("法术: 两次拒绝后未消耗手牌与费用",
+		(s.authority().view_for("p1")["you"] as Dictionary)["hand"].size() == 3
+		and int(((s.authority().view_for("p1")["you"] as Dictionary)["mana"] as Dictionary)["current"]) == 1)
+
+	# ③ 合法目标 → 接受（效果排队）
+	var r3: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_PLAY_CARD,
+		"payload": {"card_name": spell_name, "seq": 2,
+			"target_slot_id": "main_p1", "row": 2, "col": 1}})
+	_check("法术: 合法目标被接受", bool(r3.get("accepted", false)), str(r3))
+	_check("法术: 接受后排入待结算队列（效果还没跑）",
+		s.authority().has_pending_work() and int(ally.health["front"]) == 4,
+		"%s / %s" % [str(s.authority().has_pending_work()), str(ally.health)])
+	_check("法术: 手牌 -1、费用 -1",
+		(s.authority().view_for("p1")["you"] as Dictionary)["hand"].size() == 2
+		and int(((s.authority().view_for("p1")["you"] as Dictionary)["mana"] as Dictionary)["current"]) == 0)
+
+	# ④ tick 执行效果
+	await s.tick()
+	_check("法术: tick 后效果已生效（四维各 +1）",
+		int(ally.health["front"]) == 5 and int(ally.health["back"]) == 5
+		and int(ally.health["left"]) == 5 and int(ally.health["right"]) == 5,
+		str(ally.health))
+	_check("法术: 待结算队列已清空", not s.authority().has_pending_work())
+
+	var events: Array = []
+	for m in s.drain_outbound("p2"):
+		events.append(String(((m as Dictionary).get("payload", {}) as Dictionary).get("event", "")))
+	_check("法术: 下发 card_played / spell_queued", events.has("card_played") and events.has("spell_queued"),
+		str(events))
+	_check("法术: 效果执行后下发 spell_cast（对手可见）", events.has("spell_cast"), str(events))
+
+	# ⑤ 用过的法术牌进权威墓地（与骨架模式语义一致：已打出的牌不再回手）
+	var grave: Array = (s.authority().view_for("p1")["you"] as Dictionary)["graveyard"]
+	_check("法术: 已打出的法术计入墓地", grave.has(spell_name), str(grave))
 
 
 func _make_skeleton_session() -> BattleServerSession:

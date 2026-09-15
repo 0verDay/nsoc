@@ -62,18 +62,40 @@ func has_board() -> bool:
 	return board != null
 
 
-# ── 待结算的棋盘阶段（服务器主循环驱动）────────────────────────────────────
+# ── 待结算的服务器动作（服务器主循环驱动）──────────────────────────────────
 var _pending_phase_pid: String = ""
+var _pending_spells: Array = []      # [{pid, card, payload}]：已接受、待执行效果的法术
 
-## 是否有"已接受但尚未结算"的结束回合意图。
-func has_pending_phase() -> bool:
-	return _pending_phase_pid != ""
+## 是否有"已接受但尚未在盘面上结算"的动作（法术效果 / 结束回合的行动阶段）。
+func has_pending_work() -> bool:
+	return _pending_phase_pid != "" or not _pending_spells.is_empty()
 
 
-## 结算待处理的棋盘行动阶段，然后完成回合推进并下发事件。
+## 结算待处理动作，然后完成回合推进并下发事件。
 ## 由服务器主循环（BattleServerSession.tick）调用；未接棋盘时是空操作。
-func run_pending_phase() -> void:
-	if _pending_phase_pid == "" or board == null:
+func run_pending_work() -> void:
+	if board == null:
+		return
+	# ① 排队中的法术效果：按接受顺序串行执行（保证确定性）
+	while not _pending_spells.is_empty():
+		var entry: Dictionary = _pending_spells.pop_front()
+		var spell_pid := String(entry.get("pid", ""))
+		var spell_card := String(entry.get("card", ""))
+		var res: Dictionary = await board.cast_spell(spell_pid, spell_card, entry.get("payload", {}))
+		# 已打出的法术按效果声明的去向入墓 / 除外（与客户端 PlayController._play_spell 一致）
+		var spell_info: Dictionary = res.get("spell", {})
+		if String(spell_info.get("destination", "graveyard")) == "banish":
+			_banish[spell_pid].append(spell_card)
+		else:
+			_grave[spell_pid].append(spell_card)
+		var payload: Dictionary = {
+			"event": "spell_cast", "pid": spell_pid, "card": spell_card,
+			"ok": bool(res.get("ok", false)),
+			"target": spell_info.duplicate(),
+		}
+		_emit("", payload)
+	# ② 待结算的行动阶段
+	if _pending_phase_pid == "":
 		return
 	var pid: String = _pending_phase_pid
 	_pending_phase_pid = ""
@@ -304,10 +326,11 @@ func _on_play_card(pid: String, seq: int, payload: Dictionary) -> Dictionary:
 	if int(mana.get("current", 0)) < cost:
 		return _reject(pid, NetProtocol.REJECT_NOT_ENOUGH_MANA, NetProtocol.INTENT_PLAY_CARD, seq)
 
-	# 接入棋盘后：先在权威盘面上校验并落子；失败则**不消耗手牌与费用**（原子性）
+	# 接入棋盘后：先在权威盘面上校验并落子；失败则**不消耗手牌与费用**（原子性）。
+	# 法术只做同步目标校验，效果执行排队到 run_pending_work()（协程），顺序即接受顺序。
 	var deployed: Dictionary = {}
 	if board != null:
-		deployed = board.deploy_unit(pid, card, payload)
+		deployed = board.validate_play(pid, card, payload)
 		if not bool(deployed.get("ok", false)):
 			return _reject(pid, String(deployed.get("reason", NetProtocol.REJECT_ILLEGAL_TARGET)),
 				NetProtocol.INTENT_PLAY_CARD, seq)
@@ -321,11 +344,18 @@ func _on_play_card(pid: String, seq: int, payload: Dictionary) -> Dictionary:
 		"authoritative": true,
 	}]
 	if board != null:
-		# 单位已落到权威盘面：下发落点与盘面单位属性（客户端只据此渲染）
-		var unit: Dictionary = (deployed.get("unit", {}) as Dictionary).duplicate()
-		unit["event"] = "unit_deployed"
-		unit["pid"] = pid
-		events.append(unit)
+		var kind := String(deployed.get("kind", ""))
+		if kind == "unit":
+			# 单位已落到权威盘面：下发落点与盘面单位属性（客户端只据此渲染）
+			var unit: Dictionary = (deployed.get("unit", {}) as Dictionary).duplicate()
+			unit["event"] = "unit_deployed"
+			unit["pid"] = pid
+			events.append(unit)
+		else:
+			# 法术：效果排队，tick 执行完再下发 spell_cast（含实际效果结果）
+			_pending_spells.append({"pid": pid, "card": card, "payload": payload.duplicate()})
+			events.append({"event": "spell_queued", "pid": pid, "card": card,
+				"target": (deployed.get("spell", {}) as Dictionary).duplicate()})
 	else:
 		# 骨架模式（无棋盘）：只记录"已打出"
 		_grave[pid].append(card)

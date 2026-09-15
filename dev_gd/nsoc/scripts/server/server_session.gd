@@ -215,8 +215,8 @@ func is_handshaken(pid: String) -> bool:
 func tick() -> void:
 	if _authority == null:
 		return
-	if _authority.has_pending_phase():
-		await _authority.run_pending_phase()
+	if _authority.has_pending_work():
+		await _authority.run_pending_work()
 	# 棋盘是权威模拟的真相来源：每次 tick 都把英雄血量同步进来（英雄阵亡即判终局），
 	# 然后路由事件（含 match_finished / auth/verdict）。
 	_authority.sync_board_state()

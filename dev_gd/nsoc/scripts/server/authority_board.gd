@@ -134,6 +134,73 @@ func deploy_unit(pid: String, card_name: String, payload: Dictionary) -> Diction
 	}}
 
 
+## 出牌总入口（**同步校验 + 落子**）：单位 → 落子；法术 → 只校验目标，效果排队到 tick 执行；
+## 装备 / 英雄技能暂未接入 → not_allowed（明确拒绝而不是静默放行）。
+## 返回值统一为 {"ok", "reason", "kind", ...}；`kind` ∈ {"unit", "spell"}。
+func validate_play(pid: String, card_name: String, payload: Dictionary) -> Dictionary:
+	var cdata = Game.get_card(card_name)
+	if cdata == null:
+		return {"ok": false, "reason": NetProtocol.REJECT_BAD_PAYLOAD}
+	if cdata is CardUnit:
+		var deployed: Dictionary = deploy_unit(pid, card_name, payload)
+		if bool(deployed.get("ok", false)):
+			deployed["kind"] = "unit"
+		return deployed
+	if cdata is CardSpell:
+		return _validate_spell(pid, cdata, payload)
+	return {"ok": false, "reason": NetProtocol.REJECT_NOT_ALLOWED}
+
+
+## 法术目标校验（同步）。effect 执行是协程，放在 cast_spell 里由 tick 驱动。
+func _validate_spell(pid: String, cdata, payload: Dictionary) -> Dictionary:
+	if not _by_pid.has(pid):
+		return {"ok": false, "reason": NetProtocol.REJECT_UNKNOWN_PLAYER}
+	var row := int(payload.get("row", -1))
+	var col := int(payload.get("col", -1))
+	var slot: BoardSlot = _by_slot_id.get(String(payload.get("target_slot_id", "")))
+	var target = null
+	if row >= 0 and col >= 0 and slot != null:
+		target = slot.board.get_cell(Vector2(row, col))
+	# 有目标策略的法术（friendly_unit / any_unit / enemy_unit）：目标格必须真有单位
+	var needs_target: bool = String(cdata.target) != ""
+	if needs_target and (target == null or not target.has_card):
+		return {"ok": false, "reason": NetProtocol.REJECT_ILLEGAL_TARGET}
+	return {"ok": true, "reason": "", "kind": "spell", "spell": {
+		"card": String(cdata.name),
+		"slot_id": slot.id if slot != null else "",
+		"row": row, "col": col,
+	}}
+
+
+## 执行法术效果（**协程**，由服务器 tick 调用；此前必须已通过 _validate_spell）。
+## 与客户端 PlayController._play_spell 同一套：Effects.resolve_destination + trigger_play。
+func cast_spell(pid: String, card_name: String, payload: Dictionary) -> Dictionary:
+	var cdata = Game.get_card(card_name)
+	if cdata == null or not (cdata is CardSpell):
+		return {"ok": false, "reason": NetProtocol.REJECT_BAD_PAYLOAD}
+	var check: Dictionary = _validate_spell(pid, cdata, payload)
+	if not bool(check.get("ok", false)):
+		return check
+	var slot: BoardSlot = _by_slot_id.get(String(payload.get("target_slot_id", "")))
+	var target = null
+	var row := int(payload.get("row", -1))
+	var col := int(payload.get("col", -1))
+	if slot != null and row >= 0 and col >= 0:
+		target = slot.board.get_cell(Vector2(row, col))
+
+	var ctx := Game.make_effect_context()
+	ctx.target_cell = target
+	var destination := "graveyard"
+	for eff in cdata.effects:
+		var dest := Effects.resolve_destination(eff, cdata, ctx)
+		if dest != "":
+			destination = dest
+		await Effects.trigger_play(eff, cdata, ctx)
+	var spell: Dictionary = check.get("spell", {})
+	spell["destination"] = destination
+	return {"ok": true, "reason": "", "kind": "spell", "spell": spell}
+
+
 ## 盘面公开状态（战棋里单位位置本就公开；隐藏信息只有手牌，由 view_for 处理）。
 func state() -> Dictionary:
 	var out: Dictionary = {}
