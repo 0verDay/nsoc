@@ -32,7 +32,7 @@ func on_play(_card_data, ctx) -> bool:
 
 	if should_die:
 		cell.play_death_effect()
-		await ctx.game.get_tree().create_timer(0.45).timeout
+		await Game.wait_delay(0.45)
 		if ctx.game.combat != null and ctx.game.combat.aborted:
 			return true
 		if not is_instance_valid(cell) or not cell.has_card:

@@ -50,7 +50,7 @@ func on_activate(ctx) -> void:
 		for c in enemies:
 			if is_instance_valid(c):
 				c.play_damage_effect()
-		await ctx.game.get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+		await Game.wait_delay(CombatSystem.DEATH_DELAY)
 		if Game.combat != null and Game.combat.aborted:
 			return
 
@@ -58,7 +58,7 @@ func on_activate(ctx) -> void:
 			if not is_instance_valid(c) or not c.has_card:
 				continue
 			c.play_death_effect()
-		await ctx.game.get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+		await Game.wait_delay(CombatSystem.DEATH_DELAY)
 		if Game.combat != null and Game.combat.aborted:
 			return
 

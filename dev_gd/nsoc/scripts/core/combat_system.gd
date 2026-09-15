@@ -119,7 +119,7 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 			attacker._update_hp_labels()
 			attacker.play_damage_effect()
 
-	await get_tree().create_timer(ATTACK_HIT_DELAY).timeout
+	await Game.wait_delay(ATTACK_HIT_DELAY)
 	# 退出到菜单时 aborted=true 或节点已被 free，协程 resume 后立即返回
 	if aborted or not is_instance_valid(self):
 		return
@@ -128,7 +128,7 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 	if dead_cells.size() > 0:
 		for dc in dead_cells:
 			dc.play_death_effect()
-		await get_tree().create_timer(DEATH_DELAY).timeout
+		await Game.wait_delay(DEATH_DELAY)
 		# 退出到菜单时 aborted=true 或节点已被 free
 		if aborted or not is_instance_valid(self):
 			return
@@ -163,6 +163,16 @@ func move_card(start, end) -> void:
 	# 跨盘移动时也保留单位"原属盘"和"出处"，死亡按归属/出处入墓
 	var owner_id: String = start.owner_slot_id
 	var origin_str: String = start.origin
+
+	# 服务器/无头瞬时模式：跳过位移动画与 tween 等待，直接完成数据转移。
+	# 状态转移与下面的动画路径逐字一致（只是不等 tween.finished）。
+	# 见 game_context.gd 的 instant_battle 说明：两条黄金路径在两种模式下哈希必须相同。
+	if Game.instant_battle:
+		start.clear_card()
+		if is_instance_valid(end):
+			end.set_card(cname, atk, hp, is_e, effs, owner_id, origin_str)
+			end.has_charged = charged
+		return
 
 	var visual = _cell_scene.instantiate()
 	_root.add_child(visual)

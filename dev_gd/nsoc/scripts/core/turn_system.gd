@@ -547,7 +547,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 								return
 						elif probe_hit_hero and target_hero.is_valid():
 							target_hero.call(probe_dest.attack, "unit_direct")
-							await get_tree().create_timer(STEP_INTERVAL).timeout
+							await Game.wait_delay(STEP_INTERVAL)
 						if is_instance_valid(probe_dest) and probe_dest.has_card:
 							probe_dest.has_attacked = true
 							probe_dest.has_charged = true
@@ -645,7 +645,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		if not on_home_board and hero_resolver.is_valid():
 			hero_resolver.call(cell.attack, "unit_direct")
 		cell.has_attacked = true
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 		return
 
 	# 向 goal_row 推进一格
@@ -663,7 +663,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		if not is_instance_valid(board) or not is_instance_valid(target):
 			return
 		target.has_attacked = true
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 		if _combat == null or _combat.aborted or not is_instance_valid(board) or not is_instance_valid(target):
 			return
 		await _trigger_vigilance_on_board(target, for_enemy, board)
@@ -727,7 +727,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, target_slots: Array) -> bool:
 	if attack_candidates.size() > 0:
 		var pick: Dictionary = attack_candidates[Game.rand_index(attack_candidates.size())]
 		var tgt = pick["cell"]
-		await get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
+		await Game.wait_delay(CombatSystem.ATTACK_HIT_DELAY)
 		if _combat == null or _combat.aborted or not is_instance_valid(cell) or not cell.has_card:
 			cell.has_attacked = true
 			return true
@@ -802,7 +802,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, target_slots: Array) -> bool:
 					return true
 			elif probe_hit_hero and ply_slot2.hero_resolver.is_valid():
 				ply_slot2.hero_resolver.call(probe_dest.attack, "unit_direct")
-				await get_tree().create_timer(STEP_INTERVAL).timeout
+				await Game.wait_delay(STEP_INTERVAL)
 			if is_instance_valid(probe_dest) and probe_dest.has_card:
 				probe_dest.has_attacked = true
 				probe_dest.has_charged = true
@@ -901,7 +901,7 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 	if cell.row == goal_row:
 		if hero_resolver.is_valid():
 			hero_resolver.call(cell.attack, "unit_direct")
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 		if _combat == null or _combat.aborted:
 			return null
 		return cell
@@ -956,7 +956,7 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 	elif hit_hero and hero_resolver.is_valid():
 		# PVP 锁步：见 _process_cell 同处注释，hero_resolver 天然对称，无需广播。
 		hero_resolver.call(dest.attack, "unit_direct")
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 		if _combat == null or _combat.aborted:
 			return null
 
@@ -974,7 +974,7 @@ func _run_spawn_phase() -> void:
 		if slot.spawners.advance(slot.board, _card_resolver):
 			any_spawned = true
 	if any_spawned:
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 # ── 警戒触发 ────────────────────────────────────────────────────────
 func _trigger_vigilance_on_board(entered_cell, mover_for_enemy: bool,
 		board: BoardModel) -> void:
@@ -1016,7 +1016,7 @@ func _self_destruct_yi_bing(cell) -> void:
 	if cell == null or not cell.has_card:
 		return
 	cell.play_death_effect()
-	await get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+	await Game.wait_delay(CombatSystem.DEATH_DELAY)
 	if _combat == null or _combat.aborted or not is_instance_valid(cell):
 		return
 	if Game != null and Game.play != null:

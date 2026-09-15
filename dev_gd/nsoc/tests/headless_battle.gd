@@ -37,6 +37,7 @@ var _turns: int = DEFAULT_TURNS
 var _chapter: String = DEFAULT_CHAPTER
 var _seed: int = DEFAULT_SEED
 var _watchdog_sec: int = DEFAULT_WATCHDOG_SEC
+var _instant: bool = false   # --instant：跳过动画等待（服务器模式），状态必须与普通模式一致
 var _turn_active: bool = false
 var _turn_start_ms: int = 0
 var _fail: String = ""
@@ -62,6 +63,8 @@ func _parse_args() -> void:
 			_seed = int(a.split("=")[1])
 		elif a.begins_with("--watchdog="):
 			_watchdog_sec = int(a.split("=")[1])
+		elif a.begins_with("--instant"):
+			_instant = true
 
 
 ## 看门狗（独立协程，与回合循环并发）：保证进程一定退出。
@@ -99,6 +102,8 @@ func _run() -> void:
 	Game.pending_chapter_config = _chapter
 	# 固定规则随机源：所有影响对局的随机都走 Game.battle_rng（§3.4-7）
 	Game.pending_battle_seed = _seed
+	Game.instant_battle = _instant
+	print("INSTANT %d" % (1 if _instant else 0))
 	if Game.get("pending_empire_battle") != null:
 		Game.pending_empire_battle = {}
 	if Game.get("empire_state") != null:

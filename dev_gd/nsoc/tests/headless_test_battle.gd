@@ -30,6 +30,7 @@ const DEFAULT_WATCHDOG_SEC := 300
 var _turns: int = DEFAULT_TURNS
 var _seed: int = DEFAULT_SEED
 var _watchdog_sec: int = DEFAULT_WATCHDOG_SEC
+var _instant: bool = false   # --instant：跳过动画等待（服务器模式）
 var _front_row_resolved_count: int = 0
 var _fail: String = ""
 
@@ -51,6 +52,8 @@ func _parse_args() -> void:
 			_seed = int(a.split("=")[1])
 		elif a.begins_with("--watchdog="):
 			_watchdog_sec = int(a.split("=")[1])
+		elif a.begins_with("--instant"):
+			_instant = true
 
 
 func _start_watchdog() -> void:
@@ -66,6 +69,8 @@ func _run() -> void:
 	Game.pending_chapter_config = ""
 	Game.pending_level_path = ""
 	Game.pending_battle_seed = _seed
+	Game.instant_battle = _instant
+	print("INSTANT %d" % (1 if _instant else 0))
 	if Game.get("pending_empire_battle") != null:
 		Game.pending_empire_battle = {}
 	if Game.get("empire_state") != null:

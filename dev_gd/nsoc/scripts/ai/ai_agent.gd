@@ -52,7 +52,7 @@ func take_turn() -> void:
 			if refund_card != null:
 				_hand_buf.append(refund_card)
 		else:
-			await get_tree().create_timer(STEP_DELAY).timeout
+			await Game.wait_delay(STEP_DELAY)
 			if not is_inside_tree():
 				break
 

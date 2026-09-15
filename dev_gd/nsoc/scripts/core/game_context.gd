@@ -63,6 +63,22 @@ func shuffle_in_place(arr: Array) -> void:
 		arr[i] = arr[j]
 		arr[j] = tmp
 
+
+# ── 动画等待入口（重构文档.md §3.4-6）────────────────────────────────────
+# 规则推进需要"等动画放完"的节拍，但服务器/无头批量结算不该真的等：
+#   - 客户端：instant_battle = false → 按动画时长等待（表现与原来完全一致）
+#   - 服务器/CI：instant_battle = true → 立即返回，瞬时推进
+# 只跳过"等待"，不改变任何状态转移 —— 两种模式下两条黄金路径的状态哈希必须相同。
+var instant_battle: bool = false
+
+
+## 等待一段动画时长；instant_battle 时立即返回。
+## 规则层的所有等待都必须走这里，不再直接 create_timer（由 CI 分层检查约束）。
+func wait_delay(seconds: float) -> void:
+	if instant_battle:
+		return
+	await get_tree().create_timer(seconds).timeout
+
 # ── PVP 回合状态 ────────────────────────────────────────────────────────
 # action_order：游戏开始时服务器分配的行动顺序（uuid 数组）。
 # active_player_idx：当前行动玩家在 action_order 中的下标；结束回合后 +1 取模。
