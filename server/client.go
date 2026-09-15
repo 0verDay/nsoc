@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -30,6 +31,13 @@ type Client struct {
 	nickname string
 	roomID   string
 	send     chan []byte
+
+	// 安全策略状态（只在 Hub 单 goroutine 内读写，无需加锁）。
+	// 详见 security.go。
+	rateWindowStart time.Time // 当前限速窗口起点
+	rateWindowCount int       // 当前窗口内已收到的消息数
+	droppedMessages int       // 因超限被丢弃的消息数
+	forgedMessages  int       // 因伪造服务器专属/房主专属消息被丢弃的次数
 }
 
 func (c *Client) readLoop() {

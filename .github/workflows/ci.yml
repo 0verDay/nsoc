@@ -29,6 +29,25 @@ jobs:
       - name: 内容与数据一致性检查
         run: python tools/ci/check_content.py
 
+  go-server:
+    name: Go 中继服务（编译 + 安全策略测试）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 安全策略测试（重构文档 §4.1 止血）
+        run: go test -v ./...
+
   godot-import:
     name: Godot 导入与脚本解析
     runs-on: ubuntu-latest

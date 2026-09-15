@@ -117,6 +117,16 @@ func _safeSendClose(ch chan []byte) {
 func (h *Hub) route(in inboundMsg) {
 	msg := in.msg
 	c := in.client
+	// ① 每连接限速（20 条/秒，超限丢弃 + 记日志，不断开连接）
+	if !h.allowRate(c) {
+		return
+	}
+	// ② 服务器专属消息：客户端发来一律丢弃 + 记日志（不转发、不执行）
+	if serverOnlyMessageType(msg.Type) {
+		c.forgedMessages++
+		log.Printf("SECURITY drop forged server-only message type=%s uuid=%s", msg.Type, c.uuid)
+		return
+	}
 	switch msg.Type {
 	case "room/create":
 		h.handleCreate(c, msg)
@@ -342,9 +352,12 @@ func (h *Hub) handleUpdateConfig(c *Client, msg *Message) {
 
 // forward 业务消息转发。
 //   - 不在房间内的客户端发的消息直接丢弃
-//   - game/start 标记房间为 Started（拒新玩家加入）
-//   - game/end 广播后销毁房间（决策 1.1：战斗结算后销毁）
+//   - game/start 只允许房主发送，否则丢弃 + 记日志；通过后标记房间 Started（拒新玩家加入）
+//   - payload 中的身份字段（player_id / uuid）改写为发送连接的真实 uuid
 //   - 其他按 to 字段路由：all/空 = 全员；host = 房主；其他 = 精确 uuid
+//
+// 注意：game/end 已在 route 阶段按"服务器专属消息"拦下，客户端无法再触发房间销毁；
+// 房间由 room/leave、断线清理与房间过期回收。
 func (h *Hub) forward(c *Client, msg *Message) {
 	if c.roomID == "" {
 		return
@@ -355,14 +368,15 @@ func (h *Hub) forward(c *Client, msg *Message) {
 	}
 	room.LastActive = time.Now()
 	if msg.Type == "game/start" {
+		if room.HostUUID != c.uuid {
+			c.forgedMessages++
+			log.Printf("SECURITY drop non-host game/start uuid=%s host=%s", c.uuid, room.HostUUID)
+			return
+		}
 		room.Started = true
 	}
-	if msg.Type == "game/end" {
-		h.broadcast(room, msg, "")
-		delete(h.rooms, room.ID)
-		log.Printf("room %s destroyed (game/end)", room.ID)
-		return
-	}
+	// 身份字段一律以真实连接 uuid 为准（防止冒充他人结束回合 / 上报牌组）
+	msg.Payload = rewriteIdentityFields(msg.Payload, c.uuid)
 	// from 已在 readLoop 填好
 	data, _ := json.Marshal(msg)
 	target := msg.To
