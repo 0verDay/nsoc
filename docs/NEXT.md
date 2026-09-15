@@ -35,10 +35,17 @@
 开打 → 采集证据。
 
 **验收通过的标准（我会核对被你发回来的证据）：**
-1. 两端**各自**的 `STATE_HASH` 一致（同种子同输入）
-2. 客户端篡改消息（伪造 `game/end` / 冒充他人 `player_id` / 伪造断线）**无效**
-3. 关掉权威进程后建房 → 客户端**静默退回 v1**，不炸局
-4. 权威进程崩溃重启后，房间不残留
+1. 两端**各自**的 `STATE_HASH` 一致（同种子同输入）—— ⚠️ **有障碍**：`STATE_HASH` 只有无头测试场景（`tests/headless_*.gd`）会打印，真实 GUI 对局没有这个输出，需要在客户端加一行打印、或改用 `auth/state` 逐字比对
+2. 客户端篡改消息（伪造 `game/end` / 冒充他人 `player_id` / 伪造断线）**无效** —— ✅ 传输层已用外网探测验过；GUI 对局只需复看中继日志
+3. 关掉权威进程后建房 → 客户端**静默退回 v1**，不炸局 —— ✅ 已验（`room/create_ok` 回 `authoritative=false`）
+4. 权威进程崩溃重启后，房间不残留 —— ⏳ 待验
+
+**已经就位的部分（2026-09 更新）：**
+- 中继已在腾讯云真机上线（Windows Server + NSSM，`server/deploy/`），反作弊链路全部可用；
+- 权威进程**不需要每局重启**：中继在房间销毁时释放、权威在对局结束时主动交还、断线会退避重连（见 `docs/DEPLOY.md` §4.1）；
+- 可复用的云上端到端验收脚本：`powershell -File tools\ci\run_e2e_cloud.ps1 -RelayHost <IP> -AuthorityKey <key> -StartAuthority`
+  （跨公网实测 `E2E_RESULT PASS`：建房 → 派单 → `start_match` → `auth/hello`/`auth/state` → `intent/end_turn` → 两端都收到 `phase_resolved`/`turn_started`）；
+- 只有一个权威实例时，**同一时间只有一个房间能走 v2**（第二个房间静默退回 v1）—— 这是待命池大小为 1 的必然结果，不是缺陷。
 
 ### A2. 两条需要你点头的仓库收尾（要求 4 的尾巴）
 
@@ -46,6 +53,7 @@
 |---|---|---|
 | `dev1/` 目录 | 还在（7 个条目），历史遗留 | 一句话确认：**标注废弃**还是**直接删** |
 | 4 个已合并的远端旧分支 | `origin/branch_3v3`、`origin/multi-chessboard-branch`、`origin/multiplayer_1v3_branch`、`origin/multiplayer_branch` | 一句话确认是否删除（你之前说"先不用管"，这里只是挂着） |
+| 中继重新部署 | 线上跑的是**止血版**（无权威派单） | 用 `server/deploy/nsoc-server.exe` 覆盖并重启 NSSM 服务（见 `docs/DEPLOY.md` §3） |
 
 ---
 

@@ -153,10 +153,17 @@
 | 步骤 | 消息 | 说明 |
 |---|---|---|
 | 权威注册 | `room/authority_join{room_id, key}` | 连接需带 `role=authority`；`key` 必须等于中继环境变量 `NSOC_AUTHORITY_KEY`。**未配置该环境变量时一律拒绝**（默认安全：任何客户端都不能自称权威）。成功回 `authority/joined{players, match_type, host_uuid}` |
+| 权威交还 | `room/authority_release{room_id}` | 权威**主动**表示对局已结束，中继把它摘出房间并回 `authority/released{room_id, reason}`，该连接重新变为「待命」。玩家发这条会被记为伪造消息并忽略 |
+| 权威释放 | `authority/released{room_id, reason}` | 中继告诉权威「你已经不在任何房间了」，`reason` ∈ `match_finished`（权威主动交还）/ `room_empty` / `room_empty_after_leave` / `room_expired`（房间销毁时中继主动释放）。权威收到后丢掉会话、以无房号重新注册为待命 |
 | 意图上行 | `intent/*`、`client/*` | 房间注册了权威时**只发给权威**，不进 P2P 广播（对手看不到意图、也无法自行结算）；未注册时保持原转发行为 |
 | 权威下行 | `auth/*` | 由权威连接发出：`to==""` 广播给房间全员，`to=<pid>` 只发该玩家。**不做身份重写**（权威载荷里的 `player_id` 合法代表某个玩家） |
 | 玩家伪造 | `auth/*`、`game/end`、`disconnect/notify`… | 玩家发来一律丢弃 + 记日志（§6.1） |
-| 权威断线 | — | 房间的 `AuthorityUUID` 清空；对局退回 v1 转发语义（不崩、不静默判负） |
+| 权威断线 | — | 房间的 `AuthorityUUID` 清空；对局退回 v1 转发语义（不崩、不静默判负）。权威进程侧会退避重连并重新注册（见 `server/authority_main.gd`） |
+
+> **一个权威进程可以连续服务多局**：派单会把权威连接的 `roomID` 钉在房间上，而「待命」
+> 的判定要求 `roomID == ""`。因此房间销毁时中继会主动发 `authority/released` 把它放回待命池，
+> 对局结束时权威也会主动交还。两条路径缺一条都会表现为"一个权威进程只能服务一局"——
+> 第二局起会静默退回 v1（中继回 `authoritative=false`），而客户端不会报错。
 
 > 部署时需要设置 `NSOC_AUTHORITY_KEY`（见 §6.1 与 `server/main.go`）。
 > 客户端侧开关：`Net.use_v2 = true` 后连接建立自动发 `client/hello`，

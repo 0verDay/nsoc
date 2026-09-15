@@ -75,6 +75,24 @@ Linux 等价：把 `$env:X` 换成 `export X=`，可执行文件换成对应平�
 - 权威日志里每次操作都有 `accepted=true/false`（`false` 会给出 `reason`，如 `not_your_turn`、`stale_seq`）；
 - 客户端收到 `auth/event` 的 `board_action`（attack/death/move）与 `phase_resolved`。
 
+### 4.1 一个权威进程可以连续服务多局
+
+**不需要**每局重启权威进程。生命周期如下（中继与权威两侧配合）：
+
+| 时机 | 中继 | 权威进程 |
+|---|---|---|
+| 有权威模式建房 | 从待命池派单 → `authority/host_room` | 带回房号重新注册 → `authority/joined` |
+| 大厅开局 | 转发 `authority/start_match`（只给权威） | 建对局、下发 `auth/hello` / `auth/state` |
+| 对局结束（终局判定） | — | 主动发 `room/authority_release` |
+| 玩家全部退房 / 房间 60 分钟过期 | 销毁房间并把权威放回待命 → `authority/released` | 丢会话、以无房号重新注册 → `authority/ready` |
+| WS 断开 | — | 退避重连（1s→30s 封顶），连上后重新注册 |
+
+日志上应该看到循环：`ready, waiting for room assignment` → `assigned room=xxxxx` →
+`start_match players=[...]` → `released room=xxxxx reason=... -> standby` → 又回到 `ready`。
+
+> 如果第二局起客户端悄悄退回 v1（`room/create_ok` 里 `authoritative=false`），说明中继或权威
+> 少了上面某一步 —— 旧版中继只会表现为"一个权威进程只能服务一局"，且**不报任何错**。
+
 ## 5. 故障排查
 
 | 现象 | 原因 | 处理 |
@@ -84,6 +102,8 @@ Linux 等价：把 `$env:X` 换成 `export X=`，可执行文件换成对应平�
 | `authority/rejected {reason:"no_such_room"}` | 用 `--room=` 指定了一个不存在的房号 | 去掉 `--room` 让它待命，或先建房再启动 |
 | 客户端 `auth/reject {reason:"not_handshaken"}` | 握手发生在权威开局之前 | 正常流程会自动重握手；若持续出现，检查客户端 `Net.use_v2` 是否被打开 |
 | 玩家之间仍能互相看到 `action/*` | 该局走的是 v1 | 这是"无权威时的降级"，符合预期；要 v2 请按 §3 起权威 |
+| 第二局开始退回 v1 | 中继/权威没有把权威放回待命（旧版中继会这样） | 确认中继是含 `room/authority_release` 的新版；权威日志里应出现 `released room=... -> standby`（见 §4.1） |
+| 权威日志停在 `relay connection closed` 不再动 | 旧版权威不会重连 | 更新 `server/authority_main.gd`；新版会退避重连并在日志里打 `reconnecting to relay` |
 | Godot 输出 `Failed to read the root certificate store` / `user://logs` | headless 环境无证书库 / 无 user 目录 | 无害噪音，可忽略 |
 | 跨机连不上 | 端口/防火墙 | 放行 8080（或你设的 PORT）；公网建议放在反向代理后并启用 WSS |
 
