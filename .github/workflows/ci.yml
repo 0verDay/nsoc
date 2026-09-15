@@ -207,6 +207,17 @@ jobs:
           fi
           grep -E "HSETUP_RESULT" hsetup.log
 
+      - name: 无头完整攻击结算测试（表现开关关闭）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeadlessCombatTest.tscn > hcombat.log 2>&1 || true
+          if ! grep -q "HCOMBAT_RESULT PASS" hcombat.log; then
+            grep -E "HCOMBAT_CASE FAIL|HCOMBAT_RESULT" hcombat.log || true
+            echo "::error::无头战斗结算测试未通过"
+            exit 1
+          fi
+          grep -E "HCOMBAT_RESULT" hcombat.log
+
       - name: 服务器会话层测试（反向验证反作弊边界）
         run: |
           set -euo pipefail
@@ -252,6 +263,7 @@ jobs:
             board.log
             cellview.log
             hsetup.log
+            hcombat.log
             server.log
             tb1.log
             tb2.log

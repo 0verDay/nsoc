@@ -17,6 +17,14 @@ var _play_controller: PlayController        # 死亡时回调（牌入墓/除外
 # 退出到菜单时置 true，所有 await 后检查此 flag 并提前 return，避免 invalid 引用报错。
 var aborted: bool = false
 
+## 表现开关（§3.4-6：服务器复用同一份战斗规则的关键一道缝）。
+##   true  = 客户端：挥击 / 受击闪烁 / 血量标签 / 死亡动画 + 按动画时长等待
+##   false = 无头（服务器权威端 / 无头测试）：只做纯结算 + 死亡清算（入墓 / 除外 / on_kill），
+##           **不碰任何视图、不建 tween、不等待**
+## 与 `Game.instant_battle` 正交：后者只把等待压到 0（客户端"跳过动画"用），
+## 本开关才是不产生表现的语义开关。默认 true，客户端行为逐字不变。
+var presentation_enabled: bool = true
+
 func setup(root: Control, cell_scene: PackedScene, play_controller: PlayController) -> void:
 	_root = root
 	_cell_scene = cell_scene
@@ -99,39 +107,41 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 	# ① 纯结算
 	var dead_cells: Array = resolve_attack(attacker, defender_data_list)
 
-	# ② 表现：挥击 + 逐格受击闪烁/血量刷新
-	if attacker != null and is_instance_valid(attacker):
-		attacker.play_attack_effect()
-	for defender_data in defender_data_list:
-		var defender = defender_data.cell
-		if is_instance_valid(defender):
-			defender._update_hp_labels()
-			defender.play_damage_effect()
+	# ② 表现：挥击 + 逐格受击闪烁/血量刷新（无头/服务器模式整段跳过）
+	if presentation_enabled:
+		if attacker != null and is_instance_valid(attacker):
+			attacker.play_attack_effect()
+		for defender_data in defender_data_list:
+			var defender = defender_data.cell
+			if is_instance_valid(defender):
+				defender._update_hp_labels()
+				defender.play_damage_effect()
 
-	# 攻击者只有真的掉血（疑兵反伤）才闪红，避免每次攻击都误闪
-	if attacker_valid:
-		var took_damage: bool = false
-		for s in Orientation.SIDES:
-			if int(attacker.health.get(s, 0)) != int(attacker_hp_before.get(s, 0)):
-				took_damage = true
-				break
-		if took_damage:
-			attacker._update_hp_labels()
-			attacker.play_damage_effect()
+		# 攻击者只有真的掉血（疑兵反伤）才闪红，避免每次攻击都误闪
+		if attacker_valid:
+			var took_damage: bool = false
+			for s in Orientation.SIDES:
+				if int(attacker.health.get(s, 0)) != int(attacker_hp_before.get(s, 0)):
+					took_damage = true
+					break
+			if took_damage:
+				attacker._update_hp_labels()
+				attacker.play_damage_effect()
 
-	await Game.wait_delay(ATTACK_HIT_DELAY)
-	# 退出到菜单时 aborted=true 或节点已被 free，协程 resume 后立即返回
-	if aborted or not is_instance_valid(self):
-		return
-
-	# ③ 死亡表现 + 清算
-	if dead_cells.size() > 0:
-		for dc in dead_cells:
-			dc.play_death_effect()
-		await Game.wait_delay(DEATH_DELAY)
-		# 退出到菜单时 aborted=true 或节点已被 free
+		await Game.wait_delay(ATTACK_HIT_DELAY)
+		# 退出到菜单时 aborted=true 或节点已被 free，协程 resume 后立即返回
 		if aborted or not is_instance_valid(self):
 			return
+
+	# ③ 死亡表现 + 清算（清算是规则，两种模式都必须执行）
+	if dead_cells.size() > 0:
+		if presentation_enabled:
+			for dc in dead_cells:
+				dc.play_death_effect()
+			await Game.wait_delay(DEATH_DELAY)
+			# 退出到菜单时 aborted=true 或节点已被 free
+			if aborted or not is_instance_valid(self):
+				return
 		# 收集 victim 快照（card_name / is_enemy / owner_slot_id / origin）供 handle_kills 使用，
 		# 因 clear_card 会清空这些字段。owner_slot_id / origin 用于 terrify 等 on_kill 效果
 		# 准确路由到对应墓地（跨盘冲锋单位 cell.slot_id 已变，不能再用）。
@@ -171,7 +181,8 @@ func move_card(start, end) -> void:
 	# 服务器/无头瞬时模式：跳过位移动画与 tween 等待，直接完成数据转移。
 	# 状态转移与下面的动画路径逐字一致（只是不等 tween.finished）。
 	# 见 game_context.gd 的 instant_battle 说明：两条黄金路径在两种模式下哈希必须相同。
-	if Game.instant_battle:
+	# presentation_enabled=false（无头/服务器）也走这条：此时没有 cell_scene / _root 可用。
+	if Game.instant_battle or not presentation_enabled:
 		start.clear_card()
 		if is_instance_valid(end):
 			end.set_card(cname, atk, hp, is_e, effs, owner_id, origin_str)
