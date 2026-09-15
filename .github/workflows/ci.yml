@@ -166,6 +166,25 @@ jobs:
           fi
           grep -E "SERVER_RESULT" server.log
 
+      - name: 多棋盘 PVE 冒烟（TestMain + 6 盘 + AI）
+        run: |
+          set -euo pipefail
+          run_tb() {
+            timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeadlessTestBattle.tscn -- \
+              --turns=2 --seed=20260101 --watchdog=240 > "$1" 2>&1 || true
+          }
+          run_tb tb1.log
+          run_tb tb2.log
+          grep -q "TESTBATTLE_RESULT PASS" tb1.log || { tail -n 40 tb1.log; echo "::error::多棋盘冒烟未通过"; exit 1; }
+          grep -q "TESTBATTLE_RESULT PASS" tb2.log || { tail -n 40 tb2.log; echo "::error::多棋盘冒烟第二次未通过"; exit 1; }
+          H1="$(grep -E '^STATE_HASH' tb1.log | awk '{print $2}')"
+          H2="$(grep -E '^STATE_HASH' tb2.log | awk '{print $2}')"
+          echo "multi-board STATE_HASH tb1=$H1 tb2=$H2"
+          if [ "$H1" != "$H2" ]; then
+            echo "::error::多棋盘路径两次运行状态哈希不一致"
+            exit 1
+          fi
+
       - name: 上传冒烟日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -179,4 +198,6 @@ jobs:
             scene.log
             rules.log
             server.log
+            tb1.log
+            tb2.log
           if-no-files-found: ignore

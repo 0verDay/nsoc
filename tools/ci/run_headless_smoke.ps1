@@ -87,8 +87,8 @@ function Get-SmokeResult {
         $turns[[int]$m.Groups[1].Value] = $m.Groups[2].Value
     }
     $state = [regex]::Match($Text, '(?m)^STATE_HASH\s+([0-9a-f]{64})\s*$').Groups[1].Value
-    # Accepts both smoke (SMOKE_RESULT) and authority (AUTHORITY_RESULT) test scenes.
-    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|AUTHORITY)_RESULT\s+(\S+)\s*(.*)$')
+    # Accepts smoke (SMOKE_RESULT) / authority (AUTHORITY_RESULT) / multi-board (TESTBATTLE_RESULT).
+    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|AUTHORITY|TESTBATTLE)_RESULT\s+(\S+)\s*(.*)$')
     return [pscustomobject]@{
         TurnHashes = $turns
         StateHash  = $state
