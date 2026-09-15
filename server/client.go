@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -30,6 +31,7 @@ type Client struct {
 	uuid     string
 	nickname string
 	roomID   string
+	role     string // "player"（默认）或 "authority"（可信权威进程；见 security.go）
 	send     chan []byte
 
 	// 安全策略状态（只在 Hub 单 goroutine 内读写，无需加锁）。
@@ -92,6 +94,11 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 	uuid := r.URL.Query().Get("uuid")
 	nickname := r.URL.Query().Get("nickname")
+	// role=authority：权威进程连接（真正注册还要在 room/authority_join 里带上正确 key）
+	role := strings.TrimSpace(r.URL.Query().Get("role"))
+	if role == "" {
+		role = "player"
+	}
 	if uuid == "" {
 		conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"auth/rejected","payload":{"reason":"missing_uuid"}}`))
 		conn.Close()
@@ -105,6 +112,7 @@ func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		conn:     conn,
 		uuid:     uuid,
 		nickname: nickname,
+		role:     role,
 		send:     make(chan []byte, 32),
 	}
 	hub.register <- client

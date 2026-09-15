@@ -30,6 +30,14 @@ import (
 )
 
 func main() {
+	// 权威进程注册密钥（环境变量 NSOC_AUTHORITY_KEY）；未设置时**禁用**权威注册
+	// （默认安全：任何客户端都不能自称权威）。详见 security.go / hub.handleAuthorityJoin。
+	if k := loadAuthorityKey(); k == "" {
+		log.Printf("NSOC_AUTHORITY_KEY not set: authority registration disabled")
+	} else {
+		log.Printf("authority registration enabled (key length=%d)", len(k))
+	}
+
 	hub := NewHub()
 	go hub.Run()
 

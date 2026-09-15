@@ -22,6 +22,22 @@ signal connection_failed(reason: String)
 signal disconnected
 signal message_received(msg: Dictionary)
 
+# ── v2 权威协议下行信号（客户端接入权威路径用）──────────────────────────
+# 默认 use_v2 = false：老路径（action/* + message_received）行为逐字不变。
+# 打开后连接建立即自动发 client/hello，并按 auth/* 类型分发到下面的信号。
+signal auth_hello(payload: Dictionary)
+signal auth_state(payload: Dictionary)
+signal auth_event(payload: Dictionary)
+signal auth_reject(payload: Dictionary)
+signal auth_verdict(payload: Dictionary)
+signal auth_request_choice(payload: Dictionary)
+
+## 是否使用 v2 权威协议（意图上行 + 权威结果下行）。
+var use_v2: bool = false
+## 连接建立后是否自动发 client/hello（v2 下必须握手才能发意图）。
+var auto_hello: bool = true
+var _hello_sent: bool = false
+
 # 连接状态
 const STATE_DISCONNECTED: int = 0
 const STATE_CONNECTING:   int = 1
@@ -83,6 +99,9 @@ func _process(_delta: float) -> void:
 			if _state != STATE_CONNECTED:
 				_state = STATE_CONNECTED
 				connected.emit()
+				if use_v2 and auto_hello and not _hello_sent:
+					_hello_sent = true
+					send_client_hello()
 			_drain_packets()
 		WebSocketPeer.STATE_CONNECTING:
 			pass  # 等待
@@ -90,17 +109,42 @@ func _process(_delta: float) -> void:
 			if _state != STATE_DISCONNECTED:
 				_state = STATE_DISCONNECTED
 				_peer = null
+				_hello_sent = false
 				disconnected.emit()
 
 func _drain_packets() -> void:
 	while _peer != null and _peer.get_available_packet_count() > 0:
 		var raw: PackedByteArray = _peer.get_packet()
-		var text: String = raw.get_string_from_utf8()
-		var d = JSON.parse_string(text)
-		if typeof(d) == TYPE_DICTIONARY:
-			message_received.emit(d)
-		else:
-			push_warning("Net: invalid JSON: %s" % text.left(120))
+		handle_inbound_text(raw.get_string_from_utf8())
+
+## 处理一条入站文本。**公开**以便无网络环境下测试分发逻辑（_drain_packets 也走这里）。
+func handle_inbound_text(text: String) -> void:
+	var d = JSON.parse_string(text)
+	if typeof(d) != TYPE_DICTIONARY:
+		push_warning("Net: invalid JSON: %s" % text.left(120))
+		return
+	message_received.emit(d)
+	if use_v2:
+		_dispatch_auth(d)
+
+## 按 v2 协议把 auth/* 分发到各自的信号（客户端只渲染权威结果，不做本地裁决）。
+func _dispatch_auth(d: Dictionary) -> void:
+	var payload: Dictionary = d.get("payload", {}) if typeof(d.get("payload", {})) == TYPE_DICTIONARY else {}
+	match String(d.get("type", "")):
+		NetProtocol.AUTH_HELLO:
+			auth_hello.emit(payload)
+		NetProtocol.AUTH_STATE:
+			auth_state.emit(payload)
+		NetProtocol.AUTH_EVENT:
+			auth_event.emit(payload)
+		NetProtocol.AUTH_REJECT:
+			auth_reject.emit(payload)
+		NetProtocol.AUTH_VERDICT:
+			auth_verdict.emit(payload)
+		NetProtocol.AUTH_REQUEST_CHOICE:
+			auth_request_choice.emit(payload)
+		_:
+			pass   # room/* 等非权威消息仍由 message_received 处理
 
 # ── 发送 API ─────────────────────────────────────────────────────────
 func send(msg: Dictionary) -> void:
@@ -112,12 +156,53 @@ func send(msg: Dictionary) -> void:
 # 便捷包装：自动填 room_id 与 to 字段。
 func send_to_room(type: String, room_id: String,
 		payload: Dictionary = {}, to: String = "all") -> void:
-	send({
+	send(build_message(type, payload, to, room_id))
+
+
+## 构造一条 v1 业务消息（纯函数，便于无网络测试）。
+func build_message(type: String, payload: Dictionary = {},
+		to: String = "all", room_id: String = "") -> Dictionary:
+	return {
 		"type":    type,
 		"to":      to,
 		"room_id": room_id,
 		"payload": payload,
+	}
+
+
+## 构造一条 v2 意图消息（纯函数）。意图没有 `to` 字段：服务器按连接身份路由，
+# 客户端不上报身份，也不上报结果。
+func build_intent(type: String, payload: Dictionary = {}) -> Dictionary:
+	return {
+		"type":    type,
+		"room_id": _current_room_id,
+		"payload": payload,
+	}
+
+
+## 发一条 v2 意图（intent/*）。服务器结算后通过 auth/* 回话。
+func send_intent(type: String, payload: Dictionary = {}) -> void:
+	send(build_intent(type, payload))
+
+
+## 发握手（v2 必需）：上报协议版本与内容哈希，服务器据此拒绝不兼容客户端。
+func send_client_hello(content_hash: String = "") -> void:
+	send({
+		"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": content_hash},
 	})
+
+
+## 发 heartbeat（v2）。
+func send_client_ping() -> void:
+	send({"type": NetProtocol.CLIENT_PING, "payload": {}})
+
+
+## 给某张卡的意图补上 `seq`（服务器要求序号单调递增；由调用方持有计数器）。
+func next_intent(type: String, payload: Dictionary, seq: int) -> Dictionary:
+	var out: Dictionary = payload.duplicate()
+	out["seq"] = seq
+	return build_intent(type, out)
 
 
 # 发给指定 uuid。

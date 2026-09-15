@@ -139,7 +139,31 @@
 > 投降因此改为显式网络消息（v1 路径 `action/surrender`，v2 路径 `intent/surrender`），
 > 否则对端推算不出"本地触发的自杀伤害"。
 
-## 7. 实现分层与当前状态
+## 7. 权威进程与中继的对接（拓扑）
+
+权威规则跑在 **Godot headless 权威进程**里（GDScript 规则只有一份）；Go 中继仍是传输层，
+但要知道"这一局由谁裁决"：
+
+```
+玩家 A ─┐                        ┌─ intent/*  →  权威进程（BattleServerSession + AuthorityBoard）
+        ├─ Go 中继（房间/转发） ─┤
+玩家 B ─┘                        └─ auth/*    ←  （按 to 广播或定向）
+```
+
+| 步骤 | 消息 | 说明 |
+|---|---|---|
+| 权威注册 | `room/authority_join{room_id, key}` | 连接需带 `role=authority`；`key` 必须等于中继环境变量 `NSOC_AUTHORITY_KEY`。**未配置该环境变量时一律拒绝**（默认安全：任何客户端都不能自称权威）。成功回 `authority/joined{players, match_type, host_uuid}` |
+| 意图上行 | `intent/*`、`client/*` | 房间注册了权威时**只发给权威**，不进 P2P 广播（对手看不到意图、也无法自行结算）；未注册时保持原转发行为 |
+| 权威下行 | `auth/*` | 由权威连接发出：`to==""` 广播给房间全员，`to=<pid>` 只发该玩家。**不做身份重写**（权威载荷里的 `player_id` 合法代表某个玩家） |
+| 玩家伪造 | `auth/*`、`game/end`、`disconnect/notify`… | 玩家发来一律丢弃 + 记日志（§6.1） |
+| 权威断线 | — | 房间的 `AuthorityUUID` 清空；对局退回 v1 转发语义（不崩、不静默判负） |
+
+> 部署时需要设置 `NSOC_AUTHORITY_KEY`（见 §6.1 与 `server/main.go`）。
+> 客户端侧开关：`Net.use_v2 = true` 后连接建立自动发 `client/hello`，
+> 入站 `auth/*` 分发到 `auth_hello/auth_state/auth_event/auth_reject/auth_verdict/auth_request_choice` 信号；
+> 默认 `false` 时老路径（`action/*` + `message_received`）行为逐字不变。
+
+## 8. 实现分层与当前状态
 
 ```
 传输层（Go 中继：房间/转发/限速）      server/*.go

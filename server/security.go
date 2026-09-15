@@ -18,12 +18,33 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"os"
 	"strings"
 	"time"
 )
 
 // 每连接每秒允许的消息数；超限丢弃，不主动断开连接。
 const rateLimitPerSec = 20
+
+// 权威进程（Godot headless 权威服务器）的连接标识。
+//   role=authority 的连接：不限速、不做身份重写/房主校验 —— 它是可信服务器侧，
+//   且它下发的 auth/* 载荷里会合法携带"某个玩家"的字段（重写会破坏它）。
+// 注册需要 NSOC_AUTHORITY_KEY 与 payload.key 一致；**未配置 key 时禁用注册**
+// （默认安全：任何人都不能自称权威）。
+const authorityRole = "authority"
+
+// authorityKey 由 main() 从环境变量 NSOC_AUTHORITY_KEY 读入；测试可直接赋值。
+var authorityKey = ""
+
+// loadAuthorityKey 读环境变量（部署时设置）。
+func loadAuthorityKey() string {
+	authorityKey = strings.TrimSpace(os.Getenv("NSOC_AUTHORITY_KEY"))
+	return authorityKey
+}
+
+func isAuthority(c *Client) bool {
+	return c != nil && c.role == authorityRole
+}
 
 // serverOnlyMessageTypes 只允许服务器产生的消息类型。
 // 客户端发来这些类型时一律丢弃 —— 它们要么是服务器的推送，要么会直接改动权威状态。
@@ -90,8 +111,12 @@ func rewriteIdentityFields(payload json.RawMessage, senderUUID string) json.RawM
 }
 
 // allowRate 每连接限速：滚动 1 秒窗口内不超过 rateLimitPerSec 条。
+// 权威连接不限速（它要广播全场事件）。
 // 只在 Hub 单 goroutine 内调用，因此无需加锁。
 func (h *Hub) allowRate(c *Client) bool {
+	if isAuthority(c) {
+		return true
+	}
 	now := time.Now()
 	if c.rateWindowStart.IsZero() || now.Sub(c.rateWindowStart) >= time.Second {
 		c.rateWindowStart = now

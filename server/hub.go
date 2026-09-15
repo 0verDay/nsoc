@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"log"
 	"math/rand"
+	"strings"
 	"time"
 )
 
@@ -83,6 +84,12 @@ func (h *Hub) handleDisconnect(c *Client) {
 		}
 	}
 
+	// 权威进程断线：清掉注册（房间仍在，但 v2 意图不再有裁决者；v1 路径不受影响）
+	if room.AuthorityUUID == c.uuid {
+		room.AuthorityUUID = ""
+		log.Printf("authority left room=%s uuid=%s", room.ID, c.uuid)
+	}
+
 	// 若断线的是房主且房间仍有其他玩家，随机转让房主
 	newHostUUID := room.HostUUID
 	if room.HostUUID == c.uuid && len(room.Players) > 0 {
@@ -121,8 +128,9 @@ func (h *Hub) route(in inboundMsg) {
 	if !h.allowRate(c) {
 		return
 	}
-	// ② 服务器专属消息：客户端发来一律丢弃 + 记日志（不转发、不执行）
-	if serverOnlyMessageType(msg.Type) {
+	// ② 服务器专属消息：**玩家**发来一律丢弃 + 记日志（不转发、不执行）。
+	//    权威连接例外 —— 它本身就是服务器侧，auth/* 正该由它下发。
+	if !isAuthority(c) && serverOnlyMessageType(msg.Type) {
 		c.forgedMessages++
 		log.Printf("SECURITY drop forged server-only message type=%s uuid=%s", msg.Type, c.uuid)
 		return
@@ -138,9 +146,71 @@ func (h *Hub) route(in inboundMsg) {
 		h.handleLeave(c, msg)
 	case "room/update_config":
 		h.handleUpdateConfig(c, msg)
+	case "room/authority_join":
+		h.handleAuthorityJoin(c, msg)
 	default:
 		h.forward(c, msg)
 	}
+}
+
+// handleAuthorityJoin 权威进程加入某个房间（可信服务器侧注册）。
+// 门槛：连接 role=authority **且** payload.key == NSOC_AUTHORITY_KEY（未配置 key 则一律拒绝）。
+// 成功后：room.AuthorityUUID = c.uuid，并把当前玩家名单回给权威进程。
+func (h *Hub) handleAuthorityJoin(c *Client, msg *Message) {
+	var payload struct {
+		RoomID string `json:"room_id"`
+		Key    string `json:"key"`
+	}
+	_ = json.Unmarshal(msg.Payload, &payload)
+	roomID := payload.RoomID
+	if roomID == "" {
+		roomID = c.roomID
+	}
+	if !isAuthority(c) {
+		c.forgedMessages++
+		log.Printf("SECURITY authority join rejected (role=%q) uuid=%s", c.role, c.uuid)
+		c.push(&Message{Type: "authority/rejected",
+			Payload: jsonRaw(map[string]any{"reason": "not_authority_role"})})
+		return
+	}
+	if authorityKey == "" || payload.Key != authorityKey {
+		c.forgedMessages++
+		log.Printf("SECURITY authority join rejected (bad key) uuid=%s room=%s", c.uuid, roomID)
+		c.push(&Message{Type: "authority/rejected",
+			Payload: jsonRaw(map[string]any{"reason": "bad_key"})})
+		return
+	}
+	room, ok := h.rooms[roomID]
+	if !ok {
+		c.push(&Message{Type: "authority/rejected",
+			Payload: jsonRaw(map[string]any{"reason": "no_such_room"})})
+		return
+	}
+	room.AuthorityUUID = c.uuid
+	room.LastActive = time.Now()
+	c.roomID = roomID
+	roster := make([]string, 0, len(room.Players))
+	for _, p := range room.Players {
+		roster = append(roster, p.uuid)
+	}
+	log.Printf("authority joined room=%s uuid=%s players=%v", roomID, c.uuid, roster)
+	c.push(&Message{Type: "authority/joined",
+		Payload: jsonRaw(map[string]any{
+			"room_id": roomID, "players": roster, "match_type": room.MatchType,
+			"host_uuid": room.HostUUID,
+		})})
+}
+
+// authorityOf 取房间当前的权威连接（未注册则 nil）。
+func (h *Hub) authorityOf(room *Room) *Client {
+	if room == nil || room.AuthorityUUID == "" {
+		return nil
+	}
+	c, ok := h.clients[room.AuthorityUUID]
+	if !ok {
+		return nil
+	}
+	return c
 }
 
 func (h *Hub) handleCreate(c *Client, msg *Message) {
@@ -367,6 +437,16 @@ func (h *Hub) forward(c *Client, msg *Message) {
 		return
 	}
 	room.LastActive = time.Now()
+
+	// 权威进程发来的 auth/*：按 `to` 路由给玩家（或广播）。不做身份重写、不做房主校验
+	// —— 它是可信服务器侧，载荷里的 player_id 是合法的"某个玩家"。
+	if isAuthority(c) {
+		if strings.HasPrefix(msg.Type, "auth/") {
+			h.routeToPlayers(room, msg, msg.To, nil)
+		}
+		return
+	}
+
 	if msg.Type == "game/start" {
 		if room.HostUUID != c.uuid {
 			c.forgedMessages++
@@ -375,11 +455,36 @@ func (h *Hub) forward(c *Client, msg *Message) {
 		}
 		room.Started = true
 	}
+
+	// v2 意图与控制消息：房间有权威进程时**只发给权威**（不进 P2P 广播，
+	// 避免对手提前看到意图 / 客户端自行结算）。未注册权威时保持原转发行为。
+	if authorityMsgType(msg.Type) {
+		if auth := h.authorityOf(room); auth != nil {
+			data, _ := json.Marshal(msg)
+			h.deliver(auth, data)
+			return
+		}
+	}
+
 	// 身份字段一律以真实连接 uuid 为准（防止冒充他人结束回合 / 上报牌组）
 	msg.Payload = rewriteIdentityFields(msg.Payload, c.uuid)
 	// from 已在 readLoop 填好
 	data, _ := json.Marshal(msg)
-	target := msg.To
+	h.routeToPlayers(room, msg, msg.To, data)
+}
+
+// authorityMsgType 判断该 type 是否属于"v2 上行、必须交给权威进程裁决"的消息。
+func authorityMsgType(t string) bool {
+	return strings.HasPrefix(t, "intent/") || strings.HasPrefix(t, "client/")
+}
+
+// routeToPlayers 按 `to` 把一条消息投递给房间玩家。
+//   ""/"all" = 全员；"host" = 房主；其他 = 精确 uuid。
+// data 为 nil 时按 msg 序列化（权威路径会复用同一序列化结果）。
+func (h *Hub) routeToPlayers(room *Room, msg *Message, target string, data []byte) {
+	if data == nil {
+		data, _ = json.Marshal(msg)
+	}
 	switch target {
 	case "all", "":
 		for _, p := range room.Players {

@@ -23,6 +23,9 @@ type Room struct {
 	MaxPlayers int       // 按 MatchType 决定：1v1=2, 1v3=4, 3v3=6
 	CreatedAt  time.Time
 	LastActive time.Time
+	// 权威进程连接的 uuid（v2 权威服务器；未注册时为空串）。
+	// 见 hub.handleAuthorityJoin：房间有权威时，intent/* 只发给它，auth/* 由它下发。
+	AuthorityUUID string
 }
 
 func (r *Room) PlayerList() []RoomPlayer {
