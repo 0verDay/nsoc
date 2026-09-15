@@ -19,7 +19,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 30
+const EXPECTED_CASES: int = 39
 
 var _passed: int = 0
 var _failed: int = 0
@@ -61,6 +61,7 @@ func _ready() -> void:
 	_test_deploy_and_view()
 	_test_insufficient_mana()
 	_test_session_wiring()
+	await _test_turn_phase()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -276,3 +277,71 @@ func _test_session_wiring() -> void:
 	_check("会话: 建盘失败写审计且不接盘面（骨架模式继续可用）",
 		s2.board() == null and audited and not s2.authority().has_board(),
 		str(s2.audit_log()))
+
+
+## 权威端**回合推进**：end_turn → 服务器用 TurnSystem 结算本单位行动 → 推进回合。
+## 这条链路是"服务器能自己算完一整局"的核心。
+func _test_turn_phase() -> void:
+	Game.registry.clear()
+	# 运行时宿主（建节点、入树）由部署入口/测试负责；服务器层只接收注入。
+	var host := BattleSimHost.new()
+	add_child(host)
+	var s := BattleServerSession.new()
+	s.configure(NetProtocol.VERSION, "abc")
+	s.create_match({
+		"match_id": "m_phase", "seed": 11, "players": ["p1", "p2"],
+		"decks": {"p1": [_unit, _unit, _unit], "p2": [_unit, _unit, _unit]},
+		"card_costs": {_unit: 1}, "hero_hp": {"p1": 30, "p2": 30},
+		"rate_limit_per_sec": -1,
+		"board": {"players": ["p1", "p2"], "teams": {"p1": "defender", "p2": "attacker"}},
+		"sim_host": host,
+	})
+	_check("回合: 模拟宿主已注入权威盘面", s.board() != null and s.board().has_sim())
+	var b = s.board()
+	# 服务器会话要求先握手（与真实客户端一致）
+	var hello := {"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": "abc"}}
+	s.handle_client_message("p1", hello)
+	s.handle_client_message("p2", hello)
+	s.drain_outbound("p1")
+	s.drain_outbound("p2")
+	# p1 盘上：p1 单位（owner=main_p1）与 p2 单位（owner=main_p2）相邻 → 应发生攻击
+	var atk: CellData = b.cell_at("main_p1", 2, 1)
+	atk.set_card(_unit, 5, {"front": 5, "back": 5, "left": 5, "right": 5}, false,
+		[], "main_p1", "initial", "defender")
+	var dfd: CellData = b.cell_at("main_p1", 2, 2)
+	dfd.set_card(_unit, 0, {"front": 1, "back": 1, "left": 1, "right": 1}, false,
+		[], "main_p2", "initial", "attacker")
+
+	var r: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_END_TURN,
+		"payload": {"seq": 0}})
+	_check("回合: end_turn 被接受并登记待结算阶段",
+		bool(r.get("accepted", false)) and s.authority().has_pending_phase(), str(r))
+	await s.tick()
+	_check("回合: 结算后待处理阶段清空", not s.authority().has_pending_phase())
+	_check("回合: 服务器结算了攻击（相邻敌方单位阵亡）",
+		not dfd.has_card and dfd.card_name == "", str(dfd.to_dict()))
+	_check("回合: 阵亡按归属入墓（owner_slot_id 路由）",
+		b.slot_at("main_p2").graveyard.size() == 1, str(b.slot_at("main_p2").graveyard.size()))
+	_check("回合: 攻击方仍在原位", atk.has_card and atk.card_name == _unit)
+
+	var events: Array = []
+	for m in s.drain_outbound("p2"):
+		events.append(String(((m as Dictionary).get("payload", {}) as Dictionary).get("event", "")))
+	_check("回合: 下发 phase_resolved 权威事件", events.has("phase_resolved"), str(events))
+	_check("回合: 回合已推进到 p2", s.authority().active_player() == "p2",
+		s.authority().active_player())
+	_check("回合: 无棋盘时不登记待结算阶段（骨架模式语义不变）",
+		not _make_skeleton_session().authority().has_pending_phase())
+
+
+func _make_skeleton_session() -> BattleServerSession:
+	var s := BattleServerSession.new()
+	s.configure(NetProtocol.VERSION, "abc")
+	s.create_match({
+		"match_id": "m_skel", "seed": 3, "players": ["p1", "p2"],
+		"decks": {"p1": [_unit], "p2": [_unit]}, "card_costs": {_unit: 1},
+		"hero_hp": {"p1": 30, "p2": 30}, "rate_limit_per_sec": -1,
+	})
+	s.handle_client_message("p1", {"type": NetProtocol.INTENT_END_TURN, "payload": {"seq": 0}})
+	return s

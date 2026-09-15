@@ -62,6 +62,34 @@ func has_board() -> bool:
 	return board != null
 
 
+# ── 待结算的棋盘阶段（服务器主循环驱动）────────────────────────────────────
+var _pending_phase_pid: String = ""
+
+## 是否有"已接受但尚未结算"的结束回合意图。
+func has_pending_phase() -> bool:
+	return _pending_phase_pid != ""
+
+
+## 结算待处理的棋盘行动阶段，然后完成回合推进并下发事件。
+## 由服务器主循环（BattleServerSession.tick）调用；未接棋盘时是空操作。
+func run_pending_phase() -> void:
+	if _pending_phase_pid == "" or board == null:
+		return
+	var pid: String = _pending_phase_pid
+	_pending_phase_pid = ""
+	for slot in board.slots_of(pid):
+		if _finished:
+			return
+		await board.resolve_slot_actions(slot.id)
+		# 粗粒度权威事件：本盘这一阶段的动作已由服务器算完，客户端据 board 视图重绘。
+		# （细粒度逐动作事件待与 auth 事件流对齐后再补）
+		_emit("", {"event": "phase_resolved", "pid": pid, "slot_id": String(slot.id)})
+		if _finished:
+			return
+	for ev in _on_end_turn(pid):
+		_emit("", ev)
+
+
 # ── 事件流 ────────────────────────────────────────────────────────────────
 var _events: Array = []                # [{"to": pid|"", "payload": {...}}]
 
@@ -149,7 +177,13 @@ func submit_intent(pid: String, type: String, payload: Dictionary) -> Dictionary
 	var result: Dictionary
 	match type:
 		NetProtocol.INTENT_END_TURN:
-			result = _accept(pid, seq, type, _on_end_turn(pid))
+			if board != null:
+				# 接入棋盘后：单位行动必须由服务器先结算（异步、需 await 协程），
+				# 因此这里只登记"待结算阶段"，由 run_pending_phase() 完成回合推进。
+				_pending_phase_pid = pid
+				result = _accept(pid, seq, type, {"event": "phase_pending", "pid": pid})
+			else:
+				result = _accept(pid, seq, type, _on_end_turn(pid))
 		NetProtocol.INTENT_PLAY_CARD:
 			result = _on_play_card(pid, seq, payload)
 		NetProtocol.INTENT_SURRENDER:

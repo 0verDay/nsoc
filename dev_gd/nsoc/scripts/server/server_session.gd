@@ -64,6 +64,9 @@ func create_match(config: Dictionary) -> void:
 		var adapter := AuthorityBoard.new()
 		var br: Dictionary = adapter.start(config["board"] as Dictionary)
 		if bool(br.get("ok", false)):
+			# 模拟宿主由部署入口 / 测试注入（服务器层不建节点、不碰场景树）
+			if config.has("sim_host"):
+				adapter.attach_sim(config["sim_host"])
 			_authority.attach_board(adapter)
 			_board = adapter
 		else:
@@ -204,6 +207,18 @@ func players() -> Array:
 
 func is_handshaken(pid: String) -> bool:
 	return bool(_handshaken.get(pid, false))
+
+
+## 服务器主循环每帧调用一次：结算待处理的棋盘行动阶段（若有）并路由事件。
+## 未接棋盘时是空操作；接棋盘后 `intent/end_turn` 只登记待结算，真正的单位行动
+## 由这里用 TurnSystem 算完（无表现、无等待），再推进回合并下发权威事件。
+func tick() -> void:
+	if _authority == null:
+		return
+	if not _authority.has_pending_phase():
+		return
+	await _authority.run_pending_phase()
+	_route_authority_events()
 
 
 # ══ 内部 ══════════════════════════════════════════════════════════════════

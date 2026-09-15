@@ -38,6 +38,9 @@ LAYER_DIRS: list[tuple[str, Path]] = [
     ("net", SCRIPTS / "net"),
     ("client", SCRIPTS / "ui"),
     ("app", SCRIPTS / "app"),  # 场景控制器：main / test_main / main_menu / splash
+    # 运行时宿主层（Godot headless 入口 / BattleSimHost）：**允许**碰场景树 ——
+    # 它本身就是"把节点挂进树"的那一层。scripts/server 因此得以保持场景树无关。
+    ("host", PROJECT / "server"),
 ]
 
 # 必须保持"纯规则"的层：不得出现 UI / 场景树 / 反射 / 资源路径。

@@ -17,6 +17,21 @@ extends RefCounted
 var _by_pid: Dictionary = {}        # pid -> Array[BoardSlot]（1v3/3v3 下一个玩家可有多盘）
 var _by_slot_id: Dictionary = {}    # slot_id -> BoardSlot
 
+# ── 模拟宿主（**注入**，本层不建节点）────────────────────────────────────
+# 分层检查要求 scripts/server/ 与规则层同规：不得碰场景树。因此"用 TurnSystem 跑行动阶段"
+# 的运行时宿主（BattleSimHost，见 dev_gd/nsoc/server/battle_sim_host.gd）由部署入口 /
+# 测试建好并入树后注入这里；本类只持有引用并 await 它。
+var _sim = null
+
+
+## 注入模拟宿主（BattleSimHost）。服务器层因此保持场景树无关。
+func attach_sim(host) -> void:
+	_sim = host
+
+
+func has_sim() -> bool:
+	return _sim != null
+
 
 ## 建盘。config：
 ##   players: Array[pid]                 按行动顺序
@@ -149,3 +164,17 @@ func _resolve_slot(pid: String, slot_id: String) -> BoardSlot:
 		if slot.id == slot_id:
 			return slot
 	return null
+
+
+# ══ 权威端回合结算（委托给注入的 BattleSimHost；规则仍是客户端同一套）══════
+
+## 结算某个 slot 的自动行动阶段（该盘单位的攻击 / 推进 / 冲锋 / 死亡清算）。
+## 返回 {"ok": bool, "reason": String}。
+func resolve_slot_actions(slot_id: String) -> Dictionary:
+	if not _by_slot_id.has(slot_id):
+		return {"ok": false, "reason": NetProtocol.REJECT_ILLEGAL_TARGET}
+	if _sim == null:
+		# 没注入宿主（例如只做落子校验的场景）：如实报告而不是假装结算过
+		return {"ok": false, "reason": "no_sim"}
+	await _sim.resolve_slot_actions(slot_id)
+	return {"ok": true, "reason": ""}
