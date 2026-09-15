@@ -1,0 +1,70 @@
+name: CI
+
+# 重构文档.md §7 阶段 0：CI 骨架
+# 三项检查：分层规则（棘轮）/ 内容一致性 / Godot 脚本解析
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: 4.7.2-stable
+
+jobs:
+  static-checks:
+    name: 静态检查（分层 + 内容）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 分层规则检查（重构文档 §3.2）
+        run: python tools/ci/check_layers.py
+
+      - name: 内容与数据一致性检查
+        run: python tools/ci/check_content.py
+
+  godot-import:
+    name: Godot 导入与脚本解析
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 Godot headless
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/godot"
+          URL="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          echo "下载 $URL"
+          curl -fsSL -o "$RUNNER_TEMP/godot.zip" "$URL"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          BIN="$(find "$RUNNER_TEMP/godot" -maxdepth 1 -type f -name 'Godot_v*' | head -n1)"
+          chmod +x "$BIN"
+          echo "GODOT_BIN=$BIN" >> "$GITHUB_ENV"
+
+      - name: 导入并检查脚本解析
+        run: |
+          set +e
+          "$GODOT_BIN" --headless --path dev_gd/nsoc --import > import.log 2>&1
+          code=$?
+          set -e
+          echo "Godot 退出码: $code"
+          tail -n 40 import.log
+          # 只把"脚本/场景加载失败"视为错误；证书库、user:// 等环境级报错忽略
+          if grep -nE "SCRIPT ERROR|Parse Error|Failed to load script|Cannot open file from path 'res://scenes" import.log; then
+            echo "::error::检测到 GDScript 解析或场景加载错误"
+            exit 1
+          fi
+
+      - name: 上传导入日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-import-log
+          path: import.log
+          if-no-files-found: ignore
