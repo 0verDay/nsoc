@@ -29,11 +29,26 @@ func abort() -> void:
 # 旧 API 兼容：英雄受伤面板闪红已下沉到 BoardSlot.damage_hero。
 # 调用方应改为通过 slot.hero_resolver / slot.damage_hero。
 
-func attack_cells(attacker, defender_data_list: Array) -> void:
-	var a_atk: int = attacker.attack
-	var dead_cells: Array = []
+# ── 纯结算（无表现）────────────────────────────────────────────────────────
+# 重构文档.md §3.4-6：伤害数学必须与动画/计时器分离，服务器才能无头复用同一份规则。
+# 本函数不碰场景树、不创建 tween、不刷新任何 UI 标签。
 
-	attacker.play_attack_effect()
+## 任一面 <= 0 即阵亡（通用规则，与特效无关）。
+static func is_cell_dead(cell) -> bool:
+	if cell == null or not is_instance_valid(cell):
+		return false
+	for s in Orientation.SIDES:
+		if int(cell.health.get(s, 0)) <= 0:
+			return true
+	return false
+
+
+## 把一次攻击应用到 defender_data_list（元素形如 {"cell":..., "opp_dir":...}）。
+## 返回本次阵亡的 cell 列表（含被"疑兵"反伤致死的攻击者）。
+## 注意：只改数据，不产生任何表现。
+static func resolve_attack(attacker, defender_data_list: Array) -> Array:
+	var a_atk: int = int(attacker.attack) if attacker != null and is_instance_valid(attacker) else 0
+
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
 		# defender_data.opp_dir 为屏幕绝对方向（top/bottom/left/right），
@@ -57,40 +72,59 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 				defender.health[s] = 0
 			if attacker != null and is_instance_valid(attacker) and attacker.has_card:
 				for s in Orientation.SIDES:
-					attacker.health[s] = max(attacker.health[s] - 2, 0)
-				attacker._update_hp_labels()
-				attacker.play_damage_effect()
-		defender._update_hp_labels()
-		defender.play_damage_effect()
+					attacker.health[s] = max(int(attacker.health[s]) - 2, 0)
+
+	var dead_cells: Array = []
+	for defender_data in defender_data_list:
+		var defender = defender_data.cell
+		if not is_instance_valid(defender):
+			continue
+		if is_cell_dead(defender) and not dead_cells.has(defender):
+			dead_cells.append(defender)
+
+	# 攻击者也可能因为攻击疑兵被反伤致死（任一面 <=0），同步纳入死亡清算。
+	if attacker != null and is_instance_valid(attacker) and attacker.has_card \
+			and is_cell_dead(attacker) and not dead_cells.has(attacker):
+		dead_cells.append(attacker)
+
+	return dead_cells
+
+
+## 攻击结算 + 表现（挥击、受击闪烁、血量标签、死亡动画、入墓清算）。
+## 规则部分完全委托给 resolve_attack，本函数只负责"怎么演"和时序。
+func attack_cells(attacker, defender_data_list: Array) -> void:
+	var attacker_valid: bool = attacker != null and is_instance_valid(attacker) and attacker.has_card
+	var attacker_hp_before: Dictionary = attacker.health.duplicate() if attacker_valid else {}
+
+	# ① 纯结算
+	var dead_cells: Array = resolve_attack(attacker, defender_data_list)
+
+	# ② 表现：挥击 + 逐格受击闪烁/血量刷新
+	if attacker != null and is_instance_valid(attacker):
+		attacker.play_attack_effect()
+	for defender_data in defender_data_list:
+		var defender = defender_data.cell
+		if is_instance_valid(defender):
+			defender._update_hp_labels()
+			defender.play_damage_effect()
+
+	# 攻击者只有真的掉血（疑兵反伤）才闪红，避免每次攻击都误闪
+	if attacker_valid:
+		var took_damage: bool = false
+		for s in Orientation.SIDES:
+			if int(attacker.health.get(s, 0)) != int(attacker_hp_before.get(s, 0)):
+				took_damage = true
+				break
+		if took_damage:
+			attacker._update_hp_labels()
+			attacker.play_damage_effect()
 
 	await get_tree().create_timer(ATTACK_HIT_DELAY).timeout
 	# 退出到菜单时 aborted=true 或节点已被 free，协程 resume 后立即返回
 	if aborted or not is_instance_valid(self):
 		return
 
-	for defender_data in defender_data_list:
-		var defender = defender_data.cell
-		if not is_instance_valid(defender):
-			continue
-		# 任意一面 <=0 即视为阵亡（通用规则，与 frail 特效无关）
-		var dead: bool = false
-		for s in Orientation.SIDES:
-			if defender.health[s] <= 0:
-				dead = true
-				break
-		if dead and not dead_cells.has(defender):
-			dead_cells.append(defender)
-
-	# 攻击者也可能因为攻击疑兵被反伤致死（任一面 <=0），同步纳入死亡清算。
-	if attacker != null and is_instance_valid(attacker) and attacker.has_card:
-		var attacker_dead: bool = false
-		for s in Orientation.SIDES:
-			if attacker.health[s] <= 0:
-				attacker_dead = true
-				break
-		if attacker_dead and not dead_cells.has(attacker):
-			dead_cells.append(attacker)
-
+	# ③ 死亡表现 + 清算
 	if dead_cells.size() > 0:
 		for dc in dead_cells:
 			dc.play_death_effect()

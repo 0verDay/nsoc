@@ -18,7 +18,7 @@ extends Node
 ## 注意：GDScript 的运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 33
+const EXPECTED_CASES: int = 41
 
 var _passed: int = 0
 var _failed: int = 0
@@ -41,6 +41,7 @@ func _ready() -> void:
 	_test_battle_mode()
 	_test_slot_order()
 	_test_battle_rng()
+	_test_combat_resolve()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -265,6 +266,88 @@ func _test_battle_rng() -> void:
 	var arr_b: Array = [1, 2, 3, 4, 5, 6, 7, 8]
 	Game.shuffle_in_place(arr_b)
 	_check("随机源: 同种子洗牌结果一致", arr_a == arr_b, "%s vs %s" % [str(arr_a), str(arr_b)])
+
+
+# ══ 战斗结算（§3.4-6：规则与表现分离）═══════════════════════════════════
+
+## 最小替身：只为 CombatSystem.resolve_attack 提供数据字段，
+## 不含任何表现方法 —— 若结算函数偷偷调用 UI，本测试会立刻报错。
+class FakeCell:
+	extends Node
+
+	var card_name: String = "fake"
+	var health: Dictionary = {"front": 5, "back": 5, "left": 5, "right": 5}
+	var effects: Array = []
+	var is_enemy: bool = false
+	var has_card: bool = true
+	var attack: int = 2
+	var owner_slot_id: String = ""
+	var slot_id: String = ""
+	var origin: String = ""
+
+	func _init(p_hp: int = 5, p_effects: Array = [], p_is_enemy: bool = false, p_atk: int = 2) -> void:
+		health = {"front": p_hp, "back": p_hp, "left": p_hp, "right": p_hp}
+		effects = p_effects
+		is_enemy = p_is_enemy
+		attack = p_atk
+
+
+func _test_combat_resolve() -> void:
+	# 普通攻击：只扣对位面（玩家视角 opp_dir=top → side=front）
+	var atk := FakeCell.new(5, [], false, 2)
+	var dfd := FakeCell.new(5, [], false, 0)
+	var dead: Array = CombatSystem.resolve_attack(atk, [{"cell": dfd, "opp_dir": "top"}])
+	_check("结算: 普通攻击只扣对位面（top → front）",
+		int(dfd.health["front"]) == 3 and int(dfd.health["back"]) == 5
+		and int(dfd.health["left"]) == 5 and int(dfd.health["right"]) == 5, str(dfd.health))
+	_check("结算: 未阵亡时阵亡名单为空", dead.is_empty(), str(dead.size()))
+	atk.free(); dfd.free()
+
+	# 虚弱：受到任意方向伤害时四面同扣
+	var atk2 := FakeCell.new(5, [], false, 2)
+	var dfd2 := FakeCell.new(5, ["frail"], false, 0)
+	CombatSystem.resolve_attack(atk2, [{"cell": dfd2, "opp_dir": "top"}])
+	_check("结算: 虚弱（frail）四面同扣",
+		int(dfd2.health["front"]) == 3 and int(dfd2.health["back"]) == 3
+		and int(dfd2.health["left"]) == 3 and int(dfd2.health["right"]) == 3, str(dfd2.health))
+	atk2.free(); dfd2.free()
+
+	# 浸水：受任何伤害后四面归零，并移除标记（一次性）
+	var atk3 := FakeCell.new(5, [], false, 1)
+	var dfd3 := FakeCell.new(9, ["soaked"], false, 0)
+	CombatSystem.resolve_attack(atk3, [{"cell": dfd3, "opp_dir": "top"}])
+	_check("结算: 浸水（soaked）四面归零且标记被移除",
+		int(dfd3.health["front"]) == 0 and int(dfd3.health["back"]) == 0
+		and not dfd3.effects.has("soaked"), "%s %s" % [str(dfd3.health), str(dfd3.effects)])
+	atk3.free(); dfd3.free()
+
+	# 疑兵：被攻击即自爆，并使攻击者四面各 -2
+	var atk4 := FakeCell.new(5, [], false, 3)
+	var dfd4 := FakeCell.new(5, ["yi_bing"], false, 0)
+	var dead4: Array = CombatSystem.resolve_attack(atk4, [{"cell": dfd4, "opp_dir": "top"}])
+	_check("结算: 疑兵（yi_bing）自爆且攻击者四面 -2",
+		int(dfd4.health["front"]) == 0 and int(atk4.health["front"]) == 3
+		and int(atk4.health["right"]) == 3, "%s %s" % [str(dfd4.health), str(atk4.health)])
+	_check("结算: 阵亡名单含自爆的防御者、不含仍存活（3 血）的攻击者",
+		dead4.has(dfd4) and not dead4.has(atk4), "size=%d atk=%s" % [dead4.size(), str(atk4.health)])
+	atk4.free(); dfd4.free()
+
+	# 攻击者被反伤致死：必须进入阵亡名单（原实现在延迟分支里补判）
+	var atk5 := FakeCell.new(2, [], false, 1)
+	var dfd5 := FakeCell.new(5, ["yi_bing"], false, 0)
+	var dead5: Array = CombatSystem.resolve_attack(atk5, [{"cell": dfd5, "opp_dir": "top"}])
+	_check("结算: 攻击者被反伤致死后进入阵亡名单",
+		CombatSystem.is_cell_dead(atk5) and dead5.has(atk5), str(atk5.health))
+	atk5.free(); dfd5.free()
+
+	# is_cell_dead：任一面 <= 0 即为真
+	var alive := FakeCell.new(1, [], false, 0)
+	var gone := FakeCell.new(1, [], false, 0)
+	gone.health["left"] = 0
+	_check("结算: is_cell_dead 判定任一面 <=0",
+		not CombatSystem.is_cell_dead(alive) and CombatSystem.is_cell_dead(gone),
+		"%s %s" % [str(alive.health), str(gone.health)])
+	alive.free(); gone.free()
 
 
 # ══ 工具 ═════════════════════════════════════════════════════════════════
