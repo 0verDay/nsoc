@@ -3,6 +3,13 @@ extends Node
 
 # 战斗动画与伤害结算。
 
+## ── 细粒度动作信号（重构文档.md §4.2「细粒度逐动作事件」）──────────────────
+## 客户端可以据此逐步播动画；**服务器权威端把它们转成 auth/event 下发给客户端**。
+## 纯增量：不接信号时行为与以前逐字相同。
+signal damage_dealt(payload: Dictionary)     # 一次攻击的伤害结果（双方血量）
+signal units_died(payload: Dictionary)       # 本次攻击造成的阵亡名单
+signal move_resolved(payload: Dictionary)    # 一次移动的结果（起点 → 终点）
+
 const HERO_HIT_FADE: float = 0.5
 const ATTACK_HIT_DELAY: float = 0.45
 const DEATH_DELAY: float = 0.45
@@ -107,6 +114,9 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 	# ① 纯结算
 	var dead_cells: Array = resolve_attack(attacker, defender_data_list)
 
+	# ①b 细粒度事件：伤害结果（此时阵亡格还没被清空，血量是"打完"的值）
+	_emit_damage_dealt(attacker, attacker_valid, defender_data_list)
+
 	# ② 表现：挥击 + 逐格受击闪烁/血量刷新（无头/服务器模式整段跳过）
 	if presentation_enabled:
 		if attacker != null and is_instance_valid(attacker):
@@ -154,14 +164,52 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 				"owner_slot_id": dc.owner_slot_id,
 				"slot_id": dc.slot_id,
 				"origin": dc.origin,
+				# 落点：客户端播阵亡动画 / 服务器定位死亡格都要用（纯增量字段）
+				"row": int(dc.row),
+				"col": int(dc.col),
 			}
 			_play_controller.handle_unit_death(dc)
 			if dc.has_card:
 				dc.clear_card()
 			victims.append(snap)
+		# 细粒度事件：本次阵亡名单（用 clear 之前拍好的快照）
+		units_died.emit({"kind": "death", "deaths": victims.duplicate()})
 		# 攻击者击杀回调（冲阵等）。attacker 自身可能因警戒等被打死，需校验 has_card。
 		if attacker != null and attacker.has_card:
 			await _play_controller.handle_kills(attacker, victims)
+
+## 细粒度事件：一次攻击的伤害结果（双方血量快照，JSON 友好、只读）。
+func _emit_damage_dealt(attacker, attacker_valid: bool, defender_data_list: Array) -> void:
+	var defenders: Array = []
+	for defender_data in defender_data_list:
+		var d = defender_data.cell
+		if d == null or not is_instance_valid(d):
+			continue
+		defenders.append(_cell_snapshot(d))
+	var payload: Dictionary = {
+		"kind": "attack",
+		"attacker": _cell_snapshot(attacker) if attacker_valid else {},
+		"defenders": defenders,
+	}
+	damage_dealt.emit(payload)
+
+
+## 把一格的状态拍成 JSON 友好的快照（含落点与四维；血量是拷贝，不会被后续清空影响）。
+func _cell_snapshot(cell) -> Dictionary:
+	if cell == null or not is_instance_valid(cell):
+		return {}
+	return {
+		"slot_id": String(cell.slot_id),
+		"row": int(cell.row),
+		"col": int(cell.col),
+		"card": String(cell.card_name),
+		"attack": int(cell.attack),
+		"health": (cell.health as Dictionary).duplicate(),
+		"is_enemy": bool(cell.is_enemy),
+		"team_id": String(cell.team_id),
+		"owner_slot_id": String(cell.owner_slot_id),
+	}
+
 
 func move_card(start, end) -> void:
 	var cname: String = start.card_name
@@ -189,6 +237,7 @@ func move_card(start, end) -> void:
 			if moved_team != "":
 				end.team_id = moved_team
 			end.has_charged = charged
+			_emit_move_resolved(cname, start, end)
 		return
 
 	var visual = _cell_scene.instantiate()
@@ -240,3 +289,14 @@ func move_card(start, end) -> void:
 	if moved_team != "":
 		end.team_id = moved_team
 	end.has_charged = charged
+	_emit_move_resolved(cname, start, end)
+
+
+## 细粒度事件：一次移动的结果（起点格此时已空，终点格已有单位）。
+func _emit_move_resolved(cname: String, start, end) -> void:
+	move_resolved.emit({
+		"kind": "move",
+		"card": cname,
+		"from": _cell_snapshot(start),
+		"to": _cell_snapshot(end),
+	})

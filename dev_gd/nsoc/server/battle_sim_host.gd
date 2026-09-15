@@ -19,6 +19,10 @@ var _combat: CombatSystem = null
 var _pc: PlayController = null
 var _turn: TurnSystem = null
 
+## 动作事件接收器（由 AuthorityBoard 设置）：每次攻击/阵亡/移动各回调一次，
+## 用来把"细粒度逐动作事件"转成 auth/event 下发给客户端。
+var action_sink: Callable = Callable()
+
 
 ## 幂等装配。宿主自身必须已入场景树（`TurnSystem` 内部会 `_combat.get_tree()`）。
 func setup_once() -> void:
@@ -39,6 +43,13 @@ func setup_once() -> void:
 	_turn.name = "AuthorityTurnSystem"
 	add_child(_turn)
 	_turn.setup(_combat, Callable(Game, "get_card"))
+	# 细粒度动作事件：CombatSystem 的三个信号 → action_sink
+	if not _combat.damage_dealt.is_connected(_on_combat_action):
+		_combat.damage_dealt.connect(_on_combat_action)
+	if not _combat.units_died.is_connected(_on_combat_action):
+		_combat.units_died.connect(_on_combat_action)
+	if not _combat.move_resolved.is_connected(_on_combat_action):
+		_combat.move_resolved.connect(_on_combat_action)
 	# 前排跨盘选择：无头环境没人点 UI（`_run_front_row_selection` 会一直等）。
 	# 先用**确定性兜底**（第一个敌队盘，与 tests/headless_test_battle.gd 同款）；
 	# 待会话层接入 auth/request_choice 后改为询问玩家本人。
@@ -58,6 +69,12 @@ func resolve_slot_actions(slot_id: String) -> void:
 func _on_front_row_requested(_cell) -> void:
 	var targets: Array = Game.registry.enemy_targets() if Game.registry != null else []
 	_turn.resolve_front_row_selection(String(targets[0].id) if not targets.is_empty() else "")
+
+
+## CombatSystem 的细粒度动作 → action_sink（权威端据此下发 auth/event）。
+func _on_combat_action(payload: Dictionary) -> void:
+	if action_sink.is_valid():
+		action_sink.call(payload)
 
 
 func combat() -> CombatSystem:

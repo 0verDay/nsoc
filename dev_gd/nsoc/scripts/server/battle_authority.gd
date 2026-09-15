@@ -185,8 +185,13 @@ func run_pending_work() -> void:
 		if _finished:
 			return
 		await board.resolve_slot_actions(slot.id)
-		# 粗粒度权威事件：本盘这一阶段的动作已由服务器算完，客户端据 board 视图重绘。
-		# （细粒度逐动作事件待与 auth 事件流对齐后再补）
+		# 细粒度逐动作事件：客户端可据此逐步播动画（盘面最终态仍以 auth/state 为准）
+		for act in board.take_action_events():
+			var ev: Dictionary = (act as Dictionary).duplicate()
+			ev["event"] = "board_action"
+			ev["pid"] = pid
+			ev["slot_id"] = String(slot.id)
+			_emit("", ev)
 		_emit("", {"event": "phase_resolved", "pid": pid, "slot_id": String(slot.id)})
 		if _finished:
 			return

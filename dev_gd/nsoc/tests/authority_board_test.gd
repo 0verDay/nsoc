@@ -19,7 +19,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 86
+const EXPECTED_CASES: int = 88
 
 var _passed: int = 0
 var _failed: int = 0
@@ -531,9 +531,15 @@ func _test_turn_phase() -> void:
 	_check("回合: 攻击方仍在原位", atk.has_card and atk.card_name == _unit)
 
 	var events: Array = []
+	var action_kinds: Array = []
 	for m in s.drain_outbound("p2"):
-		events.append(String(((m as Dictionary).get("payload", {}) as Dictionary).get("event", "")))
+		var p: Dictionary = (m as Dictionary).get("payload", {})
+		events.append(String(p.get("event", "")))
+		if String(p.get("event", "")) == "board_action":
+			action_kinds.append(String(p.get("kind", "")))
 	_check("回合: 下发 phase_resolved 权威事件", events.has("phase_resolved"), str(events))
+	_check("回合: 下发细粒度 board_action（attack）", action_kinds.has("attack"), str(action_kinds))
+	_check("回合: 下发细粒度 board_action（death）", action_kinds.has("death"), str(action_kinds))
 	_check("回合: 回合已推进到 p2", s.authority().active_player() == "p2",
 		s.authority().active_player())
 	_check("回合: 无棋盘时不登记待结算阶段（骨架模式语义不变）",

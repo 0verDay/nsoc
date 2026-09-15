@@ -22,11 +22,27 @@ var _by_slot_id: Dictionary = {}    # slot_id -> BoardSlot
 # 的运行时宿主（BattleSimHost，见 dev_gd/nsoc/server/battle_sim_host.gd）由部署入口 /
 # 测试建好并入树后注入这里；本类只持有引用并 await 它。
 var _sim = null
+## 细粒度动作事件缓存（攻击/阵亡/移动；由 BattleAuthority 取走转成 auth/event）。
+var _action_events: Array = []
 
 
 ## 注入模拟宿主（BattleSimHost）。服务器层因此保持场景树无关。
 func attach_sim(host) -> void:
 	_sim = host
+	if _sim != null:
+		_sim.action_sink = Callable(self, "_on_sim_action")
+
+
+## 模拟宿主报来的细粒度动作（攻击/阵亡/移动）。缓存起来，由 run_pending_work 取走下发。
+func _on_sim_action(payload: Dictionary) -> void:
+	_action_events.append(payload.duplicate(true))
+
+
+## 取走（并清空）本阶段累积的动作事件。
+func take_action_events() -> Array:
+	var out: Array = _action_events.duplicate(true)
+	_action_events.clear()
+	return out
 
 
 func has_sim() -> bool:

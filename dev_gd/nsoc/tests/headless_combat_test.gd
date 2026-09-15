@@ -22,7 +22,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 13
+const EXPECTED_CASES: int = 16
 
 var _passed: int = 0
 var _failed: int = 0
@@ -99,10 +99,25 @@ func _test_no_presentation_kill() -> void:
 		[], "", "initial", "team_b")
 
 	var nodes_before: int = _combat.get_child_count()
+	# 细粒度动作信号（服务器转成 auth/event 下发用）
+	var dmg_events: Array = []
+	var death_events: Array = []
+	_combat.damage_dealt.connect(func(p): dmg_events.append(p))
+	_combat.units_died.connect(func(p): death_events.append(p))
 	await _combat.attack_cells(atk, [{"cell": dfd, "opp_dir": "top"}])
 
 	_check("无表现: 结算已生效（防守方对位面变负）",
 		int(dfd.health["front"]) == -3, str(dfd.health))
+	_check("事件: damage_dealt 带攻守双方血量快照",
+		dmg_events.size() == 1
+		and int(((dmg_events[0] as Dictionary)["defenders"][0] as Dictionary)["health"]["front"]) == -3
+		and String(((dmg_events[0] as Dictionary)["defenders"][0] as Dictionary)["slot_id"]) == "hc_e",
+		str(dmg_events))
+	_check("事件: units_died 带阵亡名单（清空前的快照）",
+		death_events.size() == 1
+		and String(((death_events[0] as Dictionary)["deaths"][0] as Dictionary)["card_name"]) == _card
+		and int(((death_events[0] as Dictionary)["deaths"][0] as Dictionary)["row"]) == 0,
+		str(death_events))
 	_check("无表现: 阵亡单位已从盘面清空", not dfd.has_card and dfd.card_name == "")
 	_check("无表现: 攻击方存活", atk.has_card)
 	_check("无表现: 全程不产生任何表现节点（CombatSystem 未挂 visual）",
@@ -154,9 +169,17 @@ func _test_instant_move() -> void:
 	src.set_card(_card, 3, {"front": 4, "back": 4, "left": 4, "right": 4}, false,
 		["charge"], "", "hand", "team_a")
 	var dst: CellData = _enemy.board.get_cell(Vector2(2, 2))
+	var move_events: Array = []
+	_combat.move_resolved.connect(func(p): move_events.append(p))
 	_combat.move_card(src, dst)
 	_check("移动: 表现开关关闭时 move_card 仍走瞬时路径（不建 visual）",
 		not src.has_card and dst.has_card and dst.card_name == _card)
+	_check("事件: move_resolved 带起点（已空）与终点快照",
+		move_events.size() == 1
+		and String((move_events[0] as Dictionary)["card"]) == _card
+		and String(((move_events[0] as Dictionary)["to"] as Dictionary)["slot_id"]) == "hc_e"
+		and int(((move_events[0] as Dictionary)["to"] as Dictionary)["row"]) == 2,
+		str(move_events))
 	_check("移动: owner_slot_id / origin / team_id 全保留",
 		dst.owner_slot_id == "hc_p" and dst.origin == "hand" and dst.team_id == "team_a",
 		"%s %s %s" % [dst.owner_slot_id, dst.origin, dst.team_id])
