@@ -12,7 +12,7 @@ extends Node
 const ROWS: int = 3
 const COLS: int = 3
 
-var grid_cells: Dictionary = {}    # Vector2(r,c) -> Cell node
+var grid_cells: Dictionary = {}    # Vector2(r,c) -> Cell 节点（客户端）或 CellData（无头/服务器）
 
 # 四向：dir 名称 ↔ 偏移 ↔ 对位面（屏幕绝对方向，cell 邻接物理坐标）
 const DIRECTIONS: Array = [
@@ -62,7 +62,7 @@ func back_row() -> int:
 
 
 
-func register_cell(cell: Node) -> void:
+func register_cell(cell) -> void:
 	grid_cells[Vector2(cell.row, cell.col)] = cell
 
 func get_cell(pos: Vector2):
