@@ -62,11 +62,10 @@ var _main_enemy_nodes: Array = []
 
 func _ready() -> void:
 	visible = false
-	# bootstrap 前记录：有 chapter config/level_path 且不是帝国出征 = 战役模式（不接 AI）
-	var _is_campaign: bool = (
-		Game.pending_chapter_config != "" or Game.pending_level_path != ""
-	) and Game.pending_empire_battle.is_empty()
 	Game.bootstrap()
+	# 对局模式由 Game 显式给出（重构文档.md §3.4-4），取代此处原先临时推断的 _is_campaign。
+	# CAMPAIGN 的语义与旧判断完全一致：脚本化关卡（章节/关卡 JSON）不接 AI。
+	var _is_campaign: bool = Game.battle_mode == BattleMode.Kind.CAMPAIGN
 
 	_apply_styles()
 

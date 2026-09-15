@@ -23,6 +23,10 @@ var manas: Dictionary = {}        # player_id -> ManaSystem
 # 当前本地玩家身份。PVE 固定 "player_main"；PVP 由 NetworkManager 在握手时注入 uuid。
 var local_player_id: String = "player_main"
 
+# 显式对局模式（BattleMode.Kind）。由 bootstrap() / bootstrap_pvp() 设置，
+# 取代过去分散的隐式判断（见 scripts/core/battle_mode.gd 的语义说明）。
+var battle_mode: int = BattleMode.Kind.CAMPAIGN
+
 # PVP 模式开关。bootstrap() 末尾置 false；bootstrap_pvp() 置 true。
 # 业务模块据此跳过 spawner / spell_caster / scripted_events / dialogue 等 PVE 专属流程。
 var is_pvp: bool = false
@@ -339,9 +343,13 @@ func _clear_pending_inputs() -> void:
 func bootstrap() -> void:
 	# 帝国模式出征：在所有标准 PVE 装载之前走专属分支
 	if not pending_empire_battle.is_empty():
+		battle_mode = BattleMode.Kind.EMPIRE
 		_bootstrap_empire(pending_empire_battle)
 		pending_empire_battle = {}
 		return
+	# 显式模式：脚本化关卡（章节/关卡 JSON）为 CAMPAIGN，否则为 SKIRMISH。
+	# 该判断与 main.gd 既有的 _is_campaign 完全等价，保证行为不变。
+	battle_mode = BattleMode.from_pending(pending_chapter_config, pending_level_path, false)
 	# 战斗启动：
 	#   1. 关卡：先解析 level（含战役章节专属字段 hero_key / initial_mana）
 	#   2. 玩家英雄 = hero.json[hero_key]，hero_key 来自章节 JSON；缺失回退 BATTLE_HERO_KEY
@@ -456,6 +464,7 @@ const _EMPIRE_ENABLE_BY_N: Dictionary = {
 
 
 func _bootstrap_empire(ctx: Dictionary) -> void:
+	battle_mode = BattleMode.Kind.EMPIRE
 	is_pvp = false
 	local_player_id = "player_main"
 	clear_extra_decks_and_manas()
@@ -585,6 +594,7 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 		match_type: String = "1v1",           # "1v1" / "1v3"
 		teams_map: Dictionary = {},           # { team_id: [pid,...] }，空=自动推断
 		slot_layout: Array = []) -> void:     # [{ slot_id, owner_pid, team_id, slot_index }]
+	battle_mode = BattleMode.Kind.PVP
 	is_pvp = true
 	local_player_id = p_local_pid
 

@@ -113,6 +113,10 @@ func _run() -> void:
 		_fail = "装配超时（%d ms 内 Game.registry 仍无 slot）" % BOOT_TIMEOUT_MSEC
 		return
 	print("BOOT slots=%d" % Game.registry.slots.size())
+	print("BATTLE_MODE %s" % BattleMode.name_of(Game.battle_mode))
+	if Game.battle_mode != BattleMode.Kind.CAMPAIGN:
+		_fail = "冒烟章节应判定为 CAMPAIGN 模式，实际 %s" % BattleMode.name_of(Game.battle_mode)
+		return
 
 	if not await _wait_intro_finished(main):
 		_fail = "入场动画超时（IntroInputBlocker 未被释放）"

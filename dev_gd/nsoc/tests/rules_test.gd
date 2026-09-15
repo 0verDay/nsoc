@@ -18,7 +18,7 @@ extends Node
 ## 注意：GDScript 的运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 25
+const EXPECTED_CASES: int = 29
 
 var _passed: int = 0
 var _failed: int = 0
@@ -38,6 +38,7 @@ func _ready() -> void:
 	_test_mana()
 	_test_deck()
 	_test_markup()
+	_test_battle_mode()
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
@@ -187,6 +188,32 @@ func _test_markup() -> void:
 		MarkupParser.parse("见{ally:赵云}与{enemy:曹操}") \
 			== "见[color=#74c0fc]赵云[/color]与[color=#ff6b6b]曹操[/color]",
 		MarkupParser.parse("见{ally:赵云}与{enemy:曹操}"))
+
+
+# ══ BattleMode ═══════════════════════════════════════════════════════════
+
+func _test_battle_mode() -> void:
+	_check("模式: 名称映射正确",
+		BattleMode.name_of(BattleMode.Kind.CAMPAIGN) == "campaign"
+		and BattleMode.name_of(BattleMode.Kind.SKIRMISH) == "skirmish"
+		and BattleMode.name_of(BattleMode.Kind.EMPIRE) == "empire"
+		and BattleMode.name_of(BattleMode.Kind.PVP) == "pvp"
+		and BattleMode.name_of(99) == "unknown",
+		BattleMode.name_of(99))
+	_check("模式: 合法性校验",
+		BattleMode.is_valid(BattleMode.Kind.PVP) and not BattleMode.is_valid(-1)
+		and not BattleMode.is_valid(4), str(BattleMode.is_valid(4)))
+	_check("模式: 默认 AI 判定",
+		BattleMode.default_uses_ai(BattleMode.Kind.SKIRMISH)
+		and BattleMode.default_uses_ai(BattleMode.Kind.EMPIRE)
+		and not BattleMode.default_uses_ai(BattleMode.Kind.CAMPAIGN)
+		and not BattleMode.default_uses_ai(BattleMode.Kind.PVP), "AI 判定不符")
+	_check("模式: 由 pending 派生",
+		BattleMode.from_pending("res://data/chapters/x.json", "", false) == BattleMode.Kind.CAMPAIGN
+		and BattleMode.from_pending("", "res://data/test_level.json", false) == BattleMode.Kind.CAMPAIGN
+		and BattleMode.from_pending("", "", false) == BattleMode.Kind.SKIRMISH
+		and BattleMode.from_pending("", "", true) == BattleMode.Kind.EMPIRE,
+		"派生结果不符")
 
 
 # ══ 工具 ═════════════════════════════════════════════════════════════════
