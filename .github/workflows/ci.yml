@@ -336,6 +336,32 @@ jobs:
           fi
           grep -E "ROD_RESULT" rod.log
 
+      - name: PVP 三路径冒烟（1v1 / 1v3 / 3v3，真实 TestMain 场景 + 确定性替身）
+        run: |
+          set -euo pipefail
+          run_pvp() {
+            timeout 600 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeadlessPvp.tscn -- \
+              --turns=2 --watchdog=480 > "$1" 2>&1 || true
+          }
+          run_pvp pvp1.log
+          run_pvp pvp2.log
+          grep -q "PVP_RESULT PASS" pvp1.log || {
+            grep -E "PVP_CASE FAIL|PVP_RESULT" pvp1.log || true
+            tail -n 40 pvp1.log
+            echo "::error::PVP 三路径冒烟未通过"
+            exit 1
+          }
+          grep -q "PVP_RESULT PASS" pvp2.log || { tail -n 40 pvp2.log; echo "::error::PVP 冒烟第二次未通过"; exit 1; }
+          for c in 1v1 1v3 3v3; do
+            H1="$(grep -E "^PVP_HASH $c " pvp1.log | awk '{print $3}')"
+            H2="$(grep -E "^PVP_HASH $c " pvp2.log | awk '{print $3}')"
+            echo "PVP $c STATE_HASH $H1 / $H2"
+            if [ -z "$H1" ] || [ "$H1" != "$H2" ]; then
+              echo "::error::PVP $c 两次运行状态哈希不一致"
+              exit 1
+            fi
+          done
+
       - name: 上传冒烟日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -361,6 +387,8 @@ jobs:
             aboard.log
             server.log
             rod.log
+            pvp1.log
+            pvp2.log
             tb1.log
             tb2.log
           if-no-files-found: ignore

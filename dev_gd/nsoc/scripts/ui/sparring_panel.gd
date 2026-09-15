@@ -1363,78 +1363,22 @@ func _build_authority_config(order: Array, slot_layout: Array, decks: Dictionary
 
 # 收到 game/start：bootstrap_pvp + 切战斗场景
 func _handle_game_start(msg: Dictionary, payload: Dictionary) -> void:
-	var order: Array = []
-	var raw_order = payload.get("action_order", [])
-	if typeof(raw_order) == TYPE_ARRAY:
-		for v in raw_order:
-			order.append(String(v))
-	if order.is_empty():
-		for p in _players:
-			order.append(p.uuid)
-
-	var rng_seed: int = int(payload.get("rng_seed", 0))
-
 	# 确保 card_db 已装载（bootstrap_pvp 内部会兜底，但提前装载可减少重复 IO）
 	if Game.card_db.size() == 0:
 		var all := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
 		for c in all:
 			Game.card_db[c.name] = c
 
-	# 读取 per_player_decks（格式：{ uuid: [card_name, ...] }）
-	# 取本地玩家自己的牌组；若字段缺失（旧服务端），回退到 deck_names 共用牌组（向后兼容）
 	var my_sid: String = Net.get_session_id()
-	var per_player_deck_cards: Dictionary = {}
+	var fallback_order: Array = []
+	for p in _players:
+		fallback_order.append(p.uuid)
 
-	var raw_ppd = payload.get("per_player_decks", {})
-	if typeof(raw_ppd) == TYPE_DICTIONARY and not raw_ppd.is_empty():
-		# 新协议：每位玩家独立牌组
-		for pid_raw in raw_ppd.keys():
-			var pid: String = String(pid_raw)
-			var names_raw = raw_ppd[pid_raw]
-			var cards: Array = []
-			if typeof(names_raw) == TYPE_ARRAY:
-				for n in names_raw:
-					var c = Game.get_card(String(n))
-					if c != null:
-						cards.append(c)
-			per_player_deck_cards[pid] = cards
-	else:
-		# 旧协议回退：deck_names 为所有人共用
-		var deck_names: Array = []
-		var raw_names = payload.get("deck_names", [])
-		if typeof(raw_names) == TYPE_ARRAY:
-			for v in raw_names:
-				deck_names.append(String(v))
-		var shared_cards: Array = []
-		for n in deck_names:
-			var c = Game.get_card(n)
-			if c != null:
-				shared_cards.append(c)
-		for pid_raw in order:
-			per_player_deck_cards[String(pid_raw)] = shared_cards.duplicate()
-
-	# 本地玩家的牌组缺失时，用本地 DeckStorage 自补（离线兜底）
-	if not per_player_deck_cards.has(my_sid) or per_player_deck_cards[my_sid].is_empty():
-		var local_names: Array = _collect_deck_names()
-		var local_cards: Array = []
-		for n in local_names:
-			var c = Game.get_card(n)
-			if c != null:
-				local_cards.append(c)
-		per_player_deck_cards[my_sid] = local_cards
-
-	# 解析 per_player_heroes（格式：{ uuid: hero_key }）
-	# 本地玩家 hero_key 缺失时回退到 DeckStorage.get_selected_hero()
-	var per_player_heroes: Dictionary = {}
-	var raw_pph = payload.get("per_player_heroes", {})
-	if typeof(raw_pph) == TYPE_DICTIONARY:
-		for pid_raw in raw_pph.keys():
-			var hkey: String = String(raw_pph[pid_raw])
-			if hkey != "":
-				per_player_heroes[String(pid_raw)] = hkey
-	# 本地玩家英雄兜底
-	if not per_player_heroes.has(my_sid) or per_player_heroes[my_sid] == "":
-		per_player_heroes[my_sid] = DeckStorage.get_selected_hero()
+	# 载荷解析走 PvpStart（唯一入口）—— headless PVP 冒烟用同一份逻辑，
+	# 保证"冒烟通过"等价于"真实大厅入口通过"。
+	var cfg: Dictionary = PvpStart.resolve(payload, my_sid,
+		_collect_deck_names(), DeckStorage.get_selected_hero(),
+		Game.card_db, fallback_order)
 
 	_unbind_net_signals()
 	Net.set_current_room_id(msg.get("room_id", _room_id))
@@ -1448,18 +1392,9 @@ func _handle_game_start(msg: Dictionary, payload: Dictionary) -> void:
 		Net.use_v2 = false
 		Game.disable_v2_authority()
 
-	# 解析 match_type 和 slot_layout
-	var match_type: String = String(payload.get("match_type", "1v1"))
-	var slot_layout: Array = []
-	var raw_sl = payload.get("slot_layout", [])
-	if typeof(raw_sl) == TYPE_ARRAY:
-		for entry in raw_sl:
-			if typeof(entry) == TYPE_DICTIONARY:
-				slot_layout.append(entry)
-
 	# 用 session_id 作本地玩家标识，确保同机两实例 ID 不同
-	Game.bootstrap_pvp(my_sid, order, per_player_deck_cards, [], rng_seed,
-		per_player_heroes, match_type, {}, slot_layout)
+	Game.bootstrap_pvp(my_sid, cfg.order, cfg.per_player_deck_cards, [], cfg.rng_seed,
+		cfg.per_player_heroes, cfg.match_type, {}, cfg.slot_layout)
 	get_tree().change_scene_to_file("res://scenes/TestMain.tscn")
 
 
