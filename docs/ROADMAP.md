@@ -31,12 +31,11 @@
 ## 剩余工作（按建议顺序）
 
 1. **仓库收尾**：`dev1/` 标注废弃、删除 4 个已合并的远端旧分支（需你确认）
-2. ~~**`cell.gd` 数据/表现分离**~~ ✅ 已完成（`CellData` 纯数据层 + `Cell` 退化为视图 + `RulesOnDataTest` 证明规则层真的跑在纯数据盘上）
-3. ~~**客户端接入权威路径**~~ ✅ 已完成（出牌/法术/装备/技能/跨盘/选择/结束回合/投降 → `intent/*`；`auth/*` → `V2BattleClient` 镜像 + `AuthBoardRenderer` + 手牌/费用/回合按钮渲染；`board_action` 逐动作事件）
-4. ~~**Go 侧止血**~~ ✅ 已完成（`server/security.go` + `security_test.go`，`go test` 全绿 + 9 个权威用例）
-5. ~~**`main`/`test_main` 合一**~~ ✅ 已完成（基类 `BattleSceneBase`；五条路径哈希逐位不变）
-6. **部署 + 跨机验收**（需要你提供主机/端口/密钥，见 `docs/DEPLOY.md`）
-7. 次要：`turn_system` 拉直 `await`、`board_slot_factory` 纯数据化、`BattleSession` 提取、UI 三胞胎收敛、`Control` 依赖清理
+2. **部署 + 跨机验收**（需要你提供主机/端口/密钥，见 `docs/DEPLOY.md`）
+3. **分层深化收尾**：反射调用收敛（`has_method` 34 + `.call` 13）、表现依赖下沉（`Control`/`Tween`/`get_tree` 约 12 处）、`board_slot_factory` 的 `grid_cells` 类型收敛 —— 逐项做法与验收门槛见 `docs/NEXT.md` B 组
+4. **打包**：一条命令产出三件产物 + `version.json`（缺无头服 preset 与打包脚本）
+5. 次要：`BattleSession` 提取、UI 三胞胎收敛
+6. 已完成（不再排）：`cell.gd` 数据/表现分离 ✅、客户端接入权威路径 ✅、Go 侧止血 ✅、`main`/`test_main` 合一 ✅、规则纯数据盘验收 ✅、装备按权威渲染 ✅
 
 ## 验收标准（每阶段结束逐条勾）
 

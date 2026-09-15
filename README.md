@@ -23,6 +23,7 @@ https://github.com/qfwj-lyy/soc
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 目录与分层、核心子系统、扩展点、对局模式、确定性、测试矩阵、常见陷阱 |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | 联机协议 v2（意图 / 权威）、消息表、反作弊规则 |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | **部署与联调清单**：中继 + 权威进程 + 客户端的启动命令、验收步骤、故障排查 |
+| [`docs/NEXT.md`](docs/NEXT.md) | **下一步工作清单**：哪些需要你出手（部署/跨机验收/仓库收尾）、哪些我可以直接做、每步的验收门槛 |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | 重构路线与**实时进度**、剩余工作、验收清单 |
 | [`重构文档.md`](重构文档.md) | 完整重构方案（评审稿）：目标架构、反作弊设计、清理清单、实施计划 |
 | [`docs/ARCHIVE-INDEX.md`](docs/ARCHIVE-INDEX.md) | 历史设计稿归档索引（`docs/archive/`） |
