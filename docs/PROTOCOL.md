@@ -51,6 +51,20 @@
 **不消耗手牌与费用**（原子性）。单位属性（攻击 / 四维血量 / 效果）一律取自服务器卡库，
 客户端上报的任何结果字段都被忽略。
 
+**已接入权威端的意图**（其余仍 `not_allowed`）：
+
+| type | 服务器校验 | 效果执行 |
+|---|---|---|
+| `intent/play_card`（单位） | 手牌 / 费用 / 盘归属 / 格空 | 立即落子（同步） |
+| `intent/play_card`（法术） | 手牌 / 费用 / 目标格（有目标策略时必须有单位） | 排队，`tick` 中执行 `Effects.trigger_play` |
+| `intent/play_equip` | 手牌 / 费用 / 必须是 `CardEquipment` | 立即生成装备实例（**不入墓**，破损才入墓） |
+| `intent/activate_equip` | 装备归属 / 耐久 / 每回合一次 | 排队，`tick` 中 `EquipmentInstance.activate` |
+| `intent/activate_hero` | 技能已注册 / **必须属于该英雄** / `can_activate` / 费用 / 每回合一次 | 排队，`tick` 中 `on_activate` |
+| `intent/end_turn` | 回合归属 | 登记待结算，`tick` 中由 `TurnSystem` 算完整侧行动再推进回合 |
+
+> 权威端的费用 / 每回合状态**只从服务器自身状态读取**（`ctx.mana_system` 等注入缝），
+> 绝不采信客户端 payload 里的任何数值字段。
+
 `seq` 必须**单调递增**：重复或回退会被拒（`stale_seq`），用于防重放。
 
 ### 3.2 控制消息
@@ -68,7 +82,7 @@
 | type | 载荷 | 说明 |
 |---|---|---|
 | `auth/hello` | `protocol, match_id, you, players, content_hash, warning` | 握手回执 |
-| `auth/state` | `turn, active, you{hand, mana, hero, graveyard, draw_count, seq_ack}, others[{hand_count, …}], board{slot_id: {owner, team_id, faction, hero, cells{"r,c": cell}, graveyard, banished}}` | **按玩家过滤**的视图：自己手牌明文，对手手牌只有数量；**盘面是公开信息**（战棋单位位置本就可见），由权威端 `AuthorityBoard.state()` 下发 |
+| `auth/state` | `turn, active, you{hand, mana, hero, graveyard, draw_count, seq_ack, equipments}, others[{hand_count, …, equipments}], board{slot_id: {owner, team_id, faction, hero, cells{"r,c": cell}, graveyard, banished}}` | **按玩家过滤**的视图：自己手牌明文，对手手牌只有数量；**盘面与装备是公开信息**（战棋单位位置 / 装备本就可见），由权威端 `AuthorityBoard` + 权威装备表下发 |
 | `auth/event` | `event, pid, …` | 权威事件流（`match_started` / `turn_started` / `card_played` / `card_drawn` / `card_ended` / `intent_accepted` …） |
 | `auth/request_choice` | `request_id, kind, options` | 要求玩家做选择（取代旧实现里"效果 await 玩家点 UI"） |
 | `auth/verdict` | `finished, winner` | 胜负（客户端不再自行判定） |
@@ -149,10 +163,10 @@ AuthorityBoard                        权威盘面：装配（create_headless）
 **未完成**：
 - **客户端尚未接入** —— `TestMain` 仍走 v1 的 `action/*` 路径（结果广播与胜负已改为本端推导，
   不再信任对端消息，但出牌/装备等仍是"客户端算完再广播"，服务器不校验规则）；
-- **权威端只结算"单位落子 + 单侧行动阶段"** —— 法术 / 装备 / 英雄技能尚未接入；英雄血量在
-  棋盘（`BoardSlot.hero`）与权威 `_hero_hp` 之间**还没打通**（棋盘上的英雄阵亡暂不会触发
-  `auth/verdict`）；前排跨盘选择目前是确定性兜底，待换成 `auth/request_choice`；
-  `TurnSystem` 的逐动作事件流（细粒度 `auth/event`）待补 —— 现在下发的是粗粒度
-  `phase_resolved` + `auth/state.board`；
+- **装备/技能已接入，但"读客户端全局"的效果是空操作** —— 例如 `gain_mana_1` 读 `Game.mana`
+  （服务器侧为 null → 静默无效）。英雄技能与装备的**前置校验**已通过 `ctx` 注入缝复用，
+  但效果体本身仍需逐个迁移到 `ctx` 访问器；前排跨盘选择目前是确定性兜底，
+  待换成 `auth/request_choice`；`TurnSystem` 的逐动作事件流（细粒度 `auth/event`）待补
+  —— 现在下发的是粗粒度 `phase_resolved` + `auth/state.board`；
 - **中继层仍是转发** —— Go 侧已按 §6.1 止血，但尚无对局规则；v1 与 v2 两套路径并存，
   待客户端接入 v2 后删除 `action/*`。
