@@ -45,6 +45,13 @@ func handle_equip(data) -> void:
 	var full = data.get("full_data")
 	if not (full is CardEquipment):
 		return
+	# v2 权威模式：**不本地扣费、不本地装备** —— 装备是服务器状态，
+	# 服务器裁决后由 auth/state.you.equipments 把英雄装备栏画回来（AuthEquipRenderer）。
+	if Game.v2_authority and Game.v2 != null:
+		if Game.v2.play_equip(String(full.name)):
+			var src_v2 = data.get("source_card")
+			hand_consumed.emit(_consume_src_card(src_v2), src_v2)
+		return
 	if not Game.mana.spend(int(data.cost)):
 		return
 	var src = data.get("source_card")

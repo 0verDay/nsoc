@@ -336,6 +336,17 @@ jobs:
           fi
           grep -E "ROD_RESULT" rod.log
 
+      - name: 权威装备渲染测试（auth/state → 英雄装备栏）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeroRenderTest.tscn > hrender.log 2>&1 || true
+          if ! grep -q "HRENDER_RESULT PASS" hrender.log; then
+            grep -E "HRENDER_CASE FAIL|HRENDER_RESULT" hrender.log || true
+            echo "::error::权威装备渲染测试未通过"
+            exit 1
+          fi
+          grep -E "HRENDER_RESULT" hrender.log
+
       - name: PVP 三路径冒烟（1v1 / 1v3 / 3v3，真实 TestMain 场景 + 确定性替身）
         run: |
           set -euo pipefail
@@ -387,6 +398,7 @@ jobs:
             aboard.log
             server.log
             rod.log
+            hrender.log
             pvp1.log
             pvp2.log
             tb1.log

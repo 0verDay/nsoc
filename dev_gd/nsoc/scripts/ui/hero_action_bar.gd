@@ -293,6 +293,11 @@ func _on_equip_btn_pressed(inst: EquipmentInstance) -> void:
 	# PVP：非当前行动玩家不能激活装备
 	if Game.is_pvp and not Game.pvp_is_my_turn():
 		return
+	# v2 权威模式：本地**不执行**装备效果，只把"激活装备"变成意图；
+	# 耐久扣减 / 破损失效 / 入墓全部由服务器裁决后经 auth/state 画回来。
+	if Game.v2_authority and Game.v2 != null and Game.is_pvp:
+		await _v2_send_activate_intent(inst)
+		return
 	var ctx = _make_ctx()
 	# 需要目标：锁 UI → 进入选择模式 → 等待选择 → 解锁
 	var req_target: String = inst.required_target()
@@ -327,6 +332,34 @@ func _on_equip_btn_pressed(inst: EquipmentInstance) -> void:
 	var success_no_target: bool = await inst.activate(ctx)
 	if success_no_target:
 		_pvp_broadcast_equip_activation(inst, null)
+
+# v2 权威模式：把"激活装备"发成 intent/activate_equip。
+# 需要目标的装备（required_target 非空）先走本端选目标 UI，把落点一起发过去 ——
+# 服务器只校验"这个目标合不合法"，不替玩家选目标。
+func _v2_send_activate_intent(inst: EquipmentInstance) -> void:
+	var slot_id: String = ""
+	var row: int = -1
+	var col: int = -1
+	var req_target: String = inst.required_target()
+	if req_target != "":
+		var sel_ctx = _make_ctx()
+		if typeof(sel_ctx) == TYPE_DICTIONARY:
+			push_warning("HeroActionBar: ctx 为字典，无法调用 pick_target_async")
+			return
+		if Game.turn != null:
+			Game.turn.is_running = true
+		var chosen_cell = await sel_ctx.pick_target_async(req_target)
+		if Game.turn != null:
+			Game.turn.is_running = false
+		if chosen_cell == null:
+			return   # 取消：不发意图
+		slot_id = String(chosen_cell.slot_id)
+		row = int(chosen_cell.row)
+		col = int(chosen_cell.col)
+	if inst.card_data == null:
+		return
+	if Game.v2.activate_equip(String(inst.card_data.name), slot_id, row, col):
+		_refresh_equipment_button(inst)
 
 # PVP 广播包装：仅 PVP 模式 + Game.play 存在时调用。
 # play_controller 内部按 effect 白名单决定是否实际发包。

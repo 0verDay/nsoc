@@ -500,18 +500,25 @@ func _wire_cell(cell: Node) -> void:
 
 # v2 权威模式：把 auth/state 渲染到本端 UI。
 #   - 手牌：按 you.hand 重建（不再依赖 Game.deck 的本地抽牌）
+#   - 装备：按 you.equipments 重建英雄装备栏（AuthEquipRenderer，无变化不重写）
 #   - 费用：按 you.mana 覆盖本地 ManaSystem 并刷新 UI
 #   - 回合按钮：只有轮到我且未终局时可点
 # 盘面由 Game._on_auth_state → AuthBoardRenderer 负责，这里不重复。
-func _on_auth_state_render(_payload: Dictionary) -> void:
+func _on_auth_state_render(payload: Dictionary) -> void:
 	var v2 = Game.v2
 	if v2 == null:
 		return
 	hand_view.replace_hand_with(v2.hand)
+	var you = payload.get("you", {})
+	if typeof(you) == TYPE_DICTIONARY:
+		# 装备是公开信息，服务器说了算：本端只在**权威列表变化**时重建（避免按钮动画重播）
+		AuthEquipRenderer.apply((you as Dictionary).get("equipments", []))
 	if Game.mana != null:
 		Game.mana.current = int(v2.mana.get("current", Game.mana.current))
 		Game.mana.maximum = int(v2.mana.get("maximum", Game.mana.maximum))
 		_on_mana_changed(Game.mana.current, Game.mana.maximum)
+	if is_instance_valid(hero_action_bar):
+		hero_action_bar._refresh_all()
 	if is_instance_valid(end_turn_btn):
 		end_turn_btn.disabled = not v2.is_my_turn(Game.local_player_id)
 		if not end_turn_btn.disabled:

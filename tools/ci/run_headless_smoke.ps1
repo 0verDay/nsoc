@@ -88,8 +88,8 @@ function Get-SmokeResult {
     }
     $state = [regex]::Match($Text, '(?m)^STATE_HASH\s+([0-9a-f]{64})\s*$').Groups[1].Value
     # Accepts smoke (SMOKE_RESULT) / authority (AUTHORITY_RESULT) / multi-board (TESTBATTLE_RESULT)
-    # / rules-on-data (ROD_RESULT) / pvp paths (PVP_RESULT).
-    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|AUTHORITY|TESTBATTLE|ROD|PVP)_RESULT\s+(\S+)\s*(.*)$')
+    # / rules-on-data (ROD_RESULT) / pvp paths (PVP_RESULT) / hero-equip render (HRENDER_RESULT).
+    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|AUTHORITY|TESTBATTLE|ROD|PVP|HRENDER)_RESULT\s+(\S+)\s*(.*)$')
     return [pscustomobject]@{
         TurnHashes = $turns
         StateHash  = $state

@@ -40,6 +40,7 @@ var _seed: int = DEFAULT_SEED
 var _watchdog_sec: int = DEFAULT_WATCHDOG_SEC
 var _instant: bool = false
 var _only: String = ""
+var _dump: bool = false
 var _passed: int = 0
 var _failed: int = 0
 var _front_row_resolved: int = 0
@@ -70,6 +71,8 @@ func _parse_args() -> void:
 			_only = a.split("=")[1]
 		elif a.begins_with("--instant"):
 			_instant = true
+		elif a.begins_with("--dump"):
+			_dump = true
 
 
 func _start_watchdog() -> void:
@@ -119,6 +122,13 @@ func _run_case(c: Dictionary) -> void:
 		return
 
 	_check_assembly(cname, match_type, pids)
+	# 跨对局复用 deck（本地玩家的 deck 是长寿命实例）不得把上一局的墓地 / 除外带进来：
+	# 这条断言正是抓出 DeckManager.reshuffle(initial) 漏清墓地/除外的那个 bug 的地方。
+	if Game.deck != null:
+		_check(cname, Game.deck.graveyard.is_empty() and Game.deck.banished.is_empty(),
+			"新对局开局本端墓地/除外为空（复用 deck 无上一局残留）")
+	if _dump:
+		print("PVP_BOOTJSON %s %s" % [cname, StateHash.canonical_json()])
 
 	if not Game.turn.front_row_action_requested.is_connected(_on_front_row_requested):
 		Game.turn.front_row_action_requested.connect(_on_front_row_requested)

@@ -18,7 +18,7 @@ extends Node
 ## 注意：GDScript 的运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 48
+const EXPECTED_CASES: int = 51
 
 var _passed: int = 0
 var _failed: int = 0
@@ -177,6 +177,32 @@ func _test_deck() -> void:
 	var d = dm3.draw_card()
 	dm3.banish(d)
 	_check("牌堆: banish 进入除外区", dm3.banished.size() == 1, str(dm3.banished.size()))
+
+	# 新对局初始化必须清空墓地 / 除外：本地玩家的 deck 是跨对局复用的长寿命实例，
+	# 只清 draw_pile 会把上一局的墓地/除外带进新对局（PVP headless 冒烟抓到的真 bug）。
+	var dm4 := DeckManager.new()
+	dm4.setup([FakeCard.new("E", 2)])
+	dm4.send_to_graveyard(dm4.draw_card())
+	dm4.banish(dm4.draw_card())
+	_check("牌堆: 复用实例上残留了墓地/除外（前置条件）",
+		dm4.graveyard.size() == 1 and dm4.banished.size() == 1,
+		"grave=%d banish=%d" % [dm4.graveyard.size(), dm4.banished.size()])
+	dm4.setup([FakeCard.new("E", 2)])
+	_check("牌堆: 新对局 setup 清空墓地 / 除外（复用实例不带上一局残留）",
+		dm4.graveyard.is_empty() and dm4.banished.is_empty() and dm4.draw_pile.size() == 2,
+		"grave=%d banish=%d draw=%d" % [dm4.graveyard.size(), dm4.banished.size(), dm4.draw_pile.size()])
+	var seeded_ok: bool = _seeded_clears()
+	_check("牌堆: setup_seeded 走同一条清理路径", seeded_ok,
+		"ok" if seeded_ok else "setup_seeded 后仍有残留")
+
+
+## setup_seeded（PVP 每人一手牌）也必须清空墓地 / 除外。
+func _seeded_clears() -> bool:
+	var dm := DeckManager.new()
+	dm.setup([FakeCard.new("F", 1)])
+	dm.send_to_graveyard(dm.draw_card())
+	dm.setup_seeded([FakeCard.new("F", 1)], 12345)
+	return dm.graveyard.is_empty() and dm.banished.is_empty() and dm.draw_pile.size() == 1
 
 
 # ══ MarkupParser ═════════════════════════════════════════════════════════
