@@ -56,8 +56,6 @@ func ids() -> Array:
 	out.sort()
 	return out
 
-func get_ability(ability_id: String):
-	return _instances.get(ability_id)
 
 func get_display_name(ability_id: String) -> String:
 	var inst = _instances.get(ability_id)
@@ -71,11 +69,6 @@ func get_description(ability_id: String) -> String:
 		return inst.description()
 	return ""
 
-func get_cost(ability_id: String) -> int:
-	var inst = _instances.get(ability_id)
-	if inst and inst.has_method("cost"):
-		return int(inst.cost())
-	return 0
 
 func can_activate(ability_id: String, ctx) -> bool:
 	var inst = _instances.get(ability_id)

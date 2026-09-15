@@ -54,46 +54,8 @@ func setup(combat: CombatSystem, card_resolver: Callable) -> void:
 	_combat = combat
 	_card_resolver = card_resolver
 
-# 兼容旧 API：返回 ENEMY 盘的 (board, hero_resolver) 数组视图。
-# front_row_selector / 旧测试代码仍按此读取。
-func get_extra_board_configs() -> Array:
-	var out: Array = []
-	var reg := _registry()
-	if reg == null:
-		return out
-	var main_player_slot: BoardSlot = reg.main_player()
-	for slot in reg.slots:
-		if slot == main_player_slot:
-			continue
-		out.append({"board": slot.board, "hero_resolver": slot.hero_resolver})
-	return out
 
-# 兼容旧 API：把外部 BoardModel 包装为一个敌方 BoardSlot 加入 registry。
-func register_extra_board(board: BoardModel, hero_resolver: Callable) -> void:
-	var reg := _registry()
-	if reg == null or reg.get_by_board(board) != null:
-		return
-	var slot := BoardSlot.new()
-	slot.name = "ExtraSlot_%d" % reg.slots.size()
-	add_child(slot)
-	slot.setup(
-		"extra_%d" % reg.slots.size(),
-		BoardSlot.FACTION_ENEMY,
-		BoardSlot.ROLE_ENEMY,
-		board, null, null, hero_resolver,
-	)
-	reg.add(slot)
 
-func unregister_extra_board(board: BoardModel) -> void:
-	var reg := _registry()
-	if reg == null:
-		return
-	var slot: BoardSlot = reg.get_by_board(board)
-	if slot == null:
-		return
-	reg.remove(slot.id)
-	if is_instance_valid(slot):
-		slot.queue_free()
 
 # 外部（test_main）调用：玩家完成棋盘选择后，传入棋盘标识（"" = 本棋盘）。
 func resolve_front_row_selection(target_id: String) -> void:
@@ -123,8 +85,6 @@ func consume_cross_choice(source_slot_id: String, row: int, col: int) -> String:
 			return String(c.target_slot_id)
 	return ""
 
-func clear_cross_choices() -> void:
-	_pending_cross_choices.clear()
 
 # 多队伍 PVP 跨盘选择广播（1v3 守方拥有者 / 3v3 任意拥有者）。
 # 远端 test_main 收到后调 enqueue_cross_choice 入队。

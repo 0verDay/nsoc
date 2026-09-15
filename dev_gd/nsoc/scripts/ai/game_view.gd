@@ -37,21 +37,7 @@ func opponent_slots() -> Array:
 			out.append(s)
 	return out
 
-func empty_cells_of(slot: BoardSlot) -> Array:
-	var out: Array = []
-	if slot == null or slot.board == null:
-		return out
-	for c in slot.board.grid_cells.values():
-		if is_instance_valid(c) and not c.has_card:
-			out.append(c)
-	return out
 
-# 从本 AI 视角判断某格是否是"己方单位"（敌方 AI → is_enemy=true；友军 AI → is_enemy=false）
-func is_own_unit(cell) -> bool:
-	var own := own_slot()
-	if own == null:
-		return false
-	return cell.is_enemy == (own.faction == BoardSlot.FACTION_ENEMY)
 
 # 从本 AI 视角判断某格是否是"对方单位"
 func is_target_unit(cell) -> bool:

@@ -75,8 +75,6 @@ func ids() -> Array:
 	out.sort()
 	return out
 
-func get_effect(eff_id: String):
-	return _instances.get(eff_id)
 
 func get_display_name(eff_id: String) -> String:
 	var inst = _instances.get(eff_id)

@@ -44,18 +44,6 @@ static func resolve_empty_cell(board_id: String):
 		return null
 	return empties[Game.rand_index(empties.size())]
 
-# ── Hero 目标 ──────────────────────────────────────────────────────────────
-# 返回 HeroState 或 null。
-static func resolve_hero(strategy: String, _params: Dictionary = {}):
-	if not _has_game():
-		return null
-	match strategy:
-		"player_hero":
-			return Game.player_hero()
-		"enemy_hero":
-			return Game.enemy_main_hero()
-		_:
-			return null
 
 # ── 私有 ──────────────────────────────────────────────────────────────────
 

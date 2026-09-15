@@ -56,9 +56,6 @@ func take_turn() -> void:
 			if not is_inside_tree():
 				break
 
-# 跨盘即时回调：turn_system 走到本 AI 单位 front_row 时调用
-func on_cross_requested(cell) -> String:
-	return strategy.choose_cross_target(view, cell)
 
 # ── 手牌缓冲 ─────────────────────────────────────────────────────────────────
 

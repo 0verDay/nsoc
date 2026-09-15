@@ -47,11 +47,6 @@ static func back_row_of_slot(slot: BoardSlot) -> int:
 		return ROWS - 1   # 后排（英雄所在）始终是 row=ROWS-1
 	return back_row_of(slot.faction)
 
-# 推进方向（向 front 走）：多队伍 PVP 全员 step=-1（向 row=0）；PVE/1v1 回退 faction
-static func step_of_slot(slot: BoardSlot) -> int:
-	if slot.team_id != "":
-		return -1   # 所有多队伍 PVP 盘均向 row=0 推进
-	return -1 if slot.faction == FACTION_PLAYER else 1
 
 # 推进方向（向 front 走）：玩家 -1（row 减小），敌方 +1（row 增大）
 static func step_of(faction: int) -> int:
@@ -65,11 +60,7 @@ func front_row() -> int:
 func back_row() -> int:
 	return 0
 
-func is_front_row(r: int) -> bool:
-	return r == ROWS - 1
 
-func is_back_row(r: int) -> bool:
-	return r == 0
 
 func register_cell(cell: Node) -> void:
 	grid_cells[Vector2(cell.row, cell.col)] = cell
@@ -77,24 +68,6 @@ func register_cell(cell: Node) -> void:
 func get_cell(pos: Vector2):
 	return grid_cells.get(pos)
 
-# 按行迭代 cell。faction=0（PLAYER）按 row 0→ROWS-1（后排到前排）；
-# faction=1（ENEMY）按 row ROWS-1→0（也是从后排到前排，因为敌方盘 row=0 也是后排）。
-# 注意：行内列方向沿用旧约定：PLAYER col 0→2，ENEMY col 2→0（"自身视角的左→右"）。
-func iter_cells(faction: int) -> Array:
-	var out: Array = []
-	if faction == 0:
-		for r in range(ROWS):
-			for c in range(COLS):
-				var key := Vector2(r, c)
-				if grid_cells.has(key):
-					out.append(grid_cells[key])
-	else:
-		for r in range(ROWS - 1, -1, -1):
-			for c in range(COLS - 1, -1, -1):
-				var key := Vector2(r, c)
-				if grid_cells.has(key):
-					out.append(grid_cells[key])
-	return out
 
 # 寻找相邻敌人。for_enemy=true 表示发起者是敌方。
 func find_adjacent_enemies(cell, for_enemy: bool) -> Array:

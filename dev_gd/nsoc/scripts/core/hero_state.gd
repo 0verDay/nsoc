@@ -51,12 +51,6 @@ func apply_damage(amount: int) -> void:
 		is_dead = true
 		died.emit()
 
-# 治疗：恢复 amount 点，不超过 max_health。amount<=0 时无效。
-func heal(amount: int) -> void:
-	if amount <= 0:
-		return
-	health = min(health + amount, max_health)
-	health_changed.emit(health)
 
 # 回满血量。
 func heal_full() -> void:

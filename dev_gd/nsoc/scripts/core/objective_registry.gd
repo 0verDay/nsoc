@@ -49,8 +49,6 @@ func ids() -> Array:
 	out.sort()
 	return out
 
-func get_objective(type_id: String):
-	return _instances.get(type_id)
 
 # ── 战斗装载 ────────────────────────────────────────────────────────
 # objective_data: 章节 JSON 的 "objective" 字段（{"type":..., 其它参数}）。

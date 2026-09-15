@@ -127,8 +127,6 @@ func team_of_player(pid: String) -> String:
 func players_of_team(team_id: String) -> Array:
 	return pvp_teams.get(team_id, [])
 
-func is_player_alive(pid: String) -> bool:
-	return not pvp_dead_players.has(pid)
 
 func mark_player_dead(pid: String) -> void:
 	if not pvp_dead_players.has(pid):
@@ -702,7 +700,7 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 	for pid_raw in all_player_ids:
 		pvp_action_order.append(String(pid_raw))
 	pvp_active_idx = 0
-	# pvp_room_id 由 pvp_lobby 在切场景前单独注入 Net，这里取回做镜像
+	# pvp_room_id 由 sparring_panel 在切场景前单独注入 Net，这里取回做镜像
 	pvp_room_id = Net.get_current_room_id()
 
 	# ── 1v3 多人字段初始化 ────────────────────────────────────────────

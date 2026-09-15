@@ -119,9 +119,6 @@ func send_to_room(type: String, room_id: String,
 		"payload": payload,
 	})
 
-# 发给房主（to = "host"）。
-func send_to_host(type: String, room_id: String, payload: Dictionary = {}) -> void:
-	send_to_room(type, room_id, payload, "host")
 
 # 发给指定 uuid。
 func send_to(type: String, room_id: String, target_uuid: String,
@@ -132,7 +129,7 @@ func send_to(type: String, room_id: String, target_uuid: String,
 func is_connected_to_server() -> bool:
 	return _state == STATE_CONNECTED
 
-# 当前所在房间号（由 pvp_lobby 在切场景前注入）。
+# 当前所在房间号（由大厅面板 SparringPanel 在切场景前注入）。
 # 战斗场景通过此字段发 action/* 消息。
 var _current_room_id: String = ""
 
@@ -142,8 +139,6 @@ func set_current_room_id(rid: String) -> void:
 func get_current_room_id() -> String:
 	return _current_room_id
 
-func get_uuid() -> String:
-	return _uuid
 
 # 本次会话唯一标识（含随机后缀），用于玩家身份识别。
 func get_session_id() -> String:

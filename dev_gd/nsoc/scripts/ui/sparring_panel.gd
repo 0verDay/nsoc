@@ -35,8 +35,6 @@ const MODE_NAMES: Array = [
 
 # ── 测试期网络默认值（跳过昵称 / 服务器配置环节） ─────────────────────────
 const DEFAULT_NICKNAME: String = "player"
-const DEFAULT_HOST:     String = "127.0.0.1"
-const DEFAULT_PORT:     int    = 8080
 
 # ── 房间列表刷新冷却 ────────────────────────────────────────────────────
 const REFRESH_COOLDOWN: float = 3.0
@@ -536,53 +534,6 @@ func _build_match_type_row(parent_vbox: VBoxContainer) -> void:
 # 插在 ModeBtn0「我的房间」与其他模式按钮之间。
 var _right_mode_btns: Dictionary = {}  # mt → Button
 
-func _build_right_mode_selector(vbox: VBoxContainer) -> void:
-	# 分隔线
-	var sep := HSeparator.new()
-	sep.add_theme_color_override("color", Color("#dee2e6"))
-	vbox.add_child(sep)
-	vbox.move_child(sep, 1)   # 插在 ModeBtn0 (index=0) 后面
-
-	# 标题
-	var lbl := Label.new()
-	lbl.text = "对战模式"
-	lbl.add_theme_font_size_override("font_size", FONT_SIZE_SMALL - 2)
-	lbl.add_theme_color_override("font_color", Color.WHITE)
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(lbl)
-	vbox.move_child(lbl, 2)
-
-	# 1v1 / 1v3 / 3v3 按钮行
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
-	vbox.add_child(row)
-	vbox.move_child(row, 3)
-
-	for mt in ["1v1", "1v3", "3v3"]:
-		var btn := Button.new()
-		btn.text = mt
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.add_theme_font_size_override("font_size", FONT_SIZE_SMALL - 2)
-		btn.add_theme_color_override("font_color",         Color.WHITE)
-		btn.add_theme_color_override("font_hover_color",   Color.WHITE)
-		btn.add_theme_color_override("font_pressed_color", Color.WHITE)
-		_right_mode_btns[mt] = btn
-		var captured_mt: String = mt
-		btn.pressed.connect(func():
-			_match_type = captured_mt
-			_refresh_right_mode_selector()
-			if _room_id != "" and has_node("/root/Net"):
-				var is_h: bool = (_host_uuid == Net.get_session_id())
-				if is_h:
-					# 同步更新服务端房间配置（MaxPlayers 随之变化）
-					Net.send_to_room("room/update_config", _room_id,
-						{"match_type": _match_type})
-			if _selected_idx == 0:
-				_refresh_left_content()
-		)
-		row.add_child(btn)
-
-	_refresh_right_mode_selector()
 
 func _refresh_right_mode_selector() -> void:
 	for mt in _right_mode_btns.keys():
@@ -1127,18 +1078,6 @@ func _on_join_room(room_id: String) -> void:
 	Net.send({"type": "room/join", "room_id": room_id, "payload": {"room_id": room_id}})
 
 
-func _on_leave_room() -> void:
-	if _room_id != "":
-		Net.send({"type": "room/leave", "room_id": _room_id})
-	_room_id = ""
-	_players = []
-	_host_uuid = ""
-	_player_ready.clear()
-	_is_local_ready = false
-	# 离开后切到「加入房间」视图，避免停留 Mode 0 显示空状态
-	_selected_idx = 1
-	_apply_selection(1)
-	_enter_mode(1)
 
 
 # 非房主玩家切换准备状态，广播给房间所有人。

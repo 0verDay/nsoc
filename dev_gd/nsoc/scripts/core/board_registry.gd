@@ -59,13 +59,6 @@ func main_player() -> BoardSlot:
 			return s
 	return null
 
-# 玩家可部署的盘（包含 MAIN_PLAYER + ALLY）
-func deployable_for_player() -> Array:
-	var out: Array = []
-	for s in slots:
-		if s.allow_player_deploy:
-			out.append(s)
-	return out
 
 # 玩家单位可作为跨盘行动目标的盘（即所有敌方盘）
 func enemy_targets() -> Array:
@@ -91,13 +84,6 @@ func clear() -> void:
 
 # ── 多队伍扩展（1v3 / 3v3）──────────────────────────────────────────
 
-# 取指定 team_id 的全部 slot
-func by_team(team_id: String) -> Array:
-	var out: Array = []
-	for s in slots:
-		if s.team_id == team_id:
-			out.append(s)
-	return out
 
 # 按玩家 uuid 取其所属 slot（1v3 每人一盘）
 func by_owner(player_id: String) -> BoardSlot:

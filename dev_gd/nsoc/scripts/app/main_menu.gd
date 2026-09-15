@@ -324,11 +324,6 @@ static func _disable_mouse_recursive(c: Control) -> void:
 		if sub is Control:
 			_disable_mouse_recursive(sub)
 
-func _profile_hover(profile: Control, entered: bool) -> void:
-	if _is_transitioning or _is_expanded:
-		return
-	var t := profile.create_tween()
-	t.tween_property(profile, "scale", Vector2(1.02, 1.02) if entered else Vector2.ONE, 0.1)
 
 func _profile_press(profile: Control, pressed: bool) -> void:
 	if _is_transitioning or _is_expanded:

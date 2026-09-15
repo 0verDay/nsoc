@@ -181,12 +181,6 @@ func damage_player_hero(amount: int, source: String = "") -> void:
 	if slot != null:
 		slot.damage_hero(amount, source)
 
-func damage_enemy_hero(amount: int, source: String = "") -> void:
-	if game.registry == null:
-		return
-	for slot in game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY):
-		slot.damage_hero(amount, source)
-		return
 
 func damage_slot_hero(slot_id: String, amount: int, source: String = "") -> void:
 	if game.registry == null:

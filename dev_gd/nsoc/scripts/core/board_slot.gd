@@ -144,11 +144,7 @@ func _flash_hero_panel() -> void:
 	tw.tween_property(hero_panel, "self_modulate", Color.WHITE,
 		CombatSystem.HERO_HIT_FADE)
 
-func is_player_side() -> bool:
-	return faction == FACTION_PLAYER
 
-func is_enemy_side() -> bool:
-	return faction == FACTION_ENEMY
 
 # 逻辑行动顺序键（重构文档.md §3.4-7）。
 # 使用 slot_index —— 它本身就是布局的空间顺序（0 敌左 / 1 敌中 / 2 敌右 /

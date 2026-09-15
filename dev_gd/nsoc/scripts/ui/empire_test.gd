@@ -114,7 +114,6 @@ var _drag_ghost: Control = null
 var _drag_adjacent: Array = []  # 当前呼吸高亮中的相邻节点
 
 const DRAG_START_THRESHOLD: float = 8.0
-const PENDING_GHOST_ALPHA: float = 0.45
 const DRAGGING_GHOST_ALPHA: float = 0.7
 # 空白点击取消部署模式：在 _gui_input 中按下记录起点，松开时若未拖动则取消
 var _deploy_blank_press: bool = false

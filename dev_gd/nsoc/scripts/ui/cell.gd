@@ -47,14 +47,6 @@ func is_friendly_to(viewer_team_id: String) -> bool:
 		return not is_enemy   # PVE 兼容路径
 	return team_id == viewer_team_id
 
-# 单位"出处"枚举：决定死亡时去向。
-#   "hand"    = 玩家手牌部署 → Game.deck.graveyard（不论部署到主盘还是 ally 盘）
-#   "spawner" = 该盘 spawner 生成 → owner slot 的 graveyard
-#   "initial" = 关卡初始铺盘（json initial_units）→ owner slot 的 graveyard
-#   ""        = 未设置（phantom / 空格）
-const ORIGIN_HAND: String = "hand"
-const ORIGIN_SPAWNER: String = "spawner"
-const ORIGIN_INITIAL: String = "initial"
 var origin: String = ""
 var card_name: String = ""
 var attack: int = 0
@@ -268,20 +260,6 @@ func play_death_effect() -> void:
 		active_tween = get_tree().create_tween()
 		active_tween.tween_property(inner_panel, "self_modulate", Color(0.5, 0.5, 0.5), 0.4)
 
-func receive_damage(dir_abs, dmg, dying: bool = false) -> bool:
-	# dir_abs: 屏幕绝对方向（top/bottom/left/right），通常由 BoardModel 邻接判定给出
-	var side := Orientation.abs_to_side(dir_abs, is_enemy)
-	health[side] -= dmg
-	_update_hp_labels()
-	if dying:
-		play_death_effect()
-	else:
-		play_damage_effect()
-	# 任意一面 <=0 即阵亡
-	for s in Orientation.SIDES:
-		if health[s] <= 0:
-			return true
-	return false
 
 func set_drag_hover(hovered: bool) -> void:
 	if is_drag_hovered == hovered:

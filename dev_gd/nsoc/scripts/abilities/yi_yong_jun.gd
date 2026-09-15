@@ -11,7 +11,6 @@ extends HeroAbility
 #   - origin = "ability"（非牌库来源；死后默认入 player_main 棋盘的墓地/除外）
 #   - effects = 原型 effects + "ash"
 
-const TARGET_BOARD_ID: String = "player_main"
 const SUMMON_CARD_NAME: String = "乡勇"
 
 func id() -> String:

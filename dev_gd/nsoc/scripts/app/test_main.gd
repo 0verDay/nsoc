@@ -1212,7 +1212,7 @@ static func _pvp_default_hero_spec() -> Dictionary:
 # ── PVP 网络消息处理 ─────────────────────────────────────────────────
 
 # 所有来自 Net 的消息（战斗中）都经此分发。
-# 仅处理与战斗逻辑相关的 action/* 类型；大厅/房间消息已在 pvp_lobby 处理。
+# 仅处理与战斗逻辑相关的 action/* 类型；大厅/房间消息已在 sparring_panel 处理。
 # ── PVP 消息隊列（保证順序处理，避免 await 並發導致格子状态错乱）───────────
 var _pvp_msg_queue: Array = []
 var _pvp_processing: bool = false
