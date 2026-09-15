@@ -211,4 +211,14 @@ finally {
 #    forever and never exits; the in-script watchdog lives in that same broken file,
 #    so the outer WaitForExit + Kill is mandatory.
 # 4. This file must stay ASCII: Windows PowerShell 5.1 reads BOM-less files as GBK.
+# 5. Adding a NEW `class_name` script and using `extends ThatClass` in another script can
+#    still fail at runtime with `Could not resolve class ...` even after --import
+#    (the global class table is not refreshed for the new entry in a plain run).
+#    For freshly added BASE scripts use `extends "res://path/to/base.gd"` instead.
+# 6. GDScript resolves `self.method()` calls at PARSE time: a base class that calls a hook
+#    only its subclasses define is a hard Parse Error. Declare an empty hook in the base
+#    (func _hook(...) -> void: pass) and override it in the subclass.
+#    Symptom is misleading: the error is reported at the SUBCLASS line 1 as
+#    `Could not resolve class "<base path>"` -- always load the base script directly to
+#    see the real parse errors.
 # ---------------------------------------------------------------------------
