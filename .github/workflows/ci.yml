@@ -185,6 +185,17 @@ jobs:
           fi
           grep -E "BOARD_RESULT" board.log
 
+      - name: Cell 视图/数据等价测试（CellData 转发属性）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/CellViewTest.tscn > cellview.log 2>&1 || true
+          if ! grep -q "CELLVIEW_RESULT PASS" cellview.log; then
+            grep -E "CELLVIEW_CASE FAIL|CELLVIEW_RESULT" cellview.log || true
+            echo "::error::Cell 视图/数据等价测试未通过"
+            exit 1
+          fi
+          grep -E "CELLVIEW_RESULT" cellview.log
+
       - name: 服务器会话层测试（反向验证反作弊边界）
         run: |
           set -euo pipefail
@@ -228,6 +239,7 @@ jobs:
             scene.log
             rules.log
             board.log
+            cellview.log
             server.log
             tb1.log
             tb2.log

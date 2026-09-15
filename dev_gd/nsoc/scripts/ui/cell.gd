@@ -13,52 +13,89 @@ signal cleared(cell)
 # 效果列表变化（浸水/冲锋等运行时追加）：只刷新已开详情面板，不触发弹出。
 signal effects_changed(payload)
 
-var row: int = 0
-var col: int = 0
-var has_card: bool = false
+## 状态全部存放在纯数据对象里（重构文档.md §3.4-6）。
+## 本类的 `row/col/has_card/health/...` 都是**转发属性**：读写语义与旧实现逐条相同，
+## 因此规则层（TurnSystem / CombatSystem / 效果 / AI）的调用点**零改动**，
+## 而状态已经与 UI 节点解耦 —— 服务器可以用同一套规则跑 `CellData` 棋盘
+## （见 tests/HeadlessBoardTest.tscn 与 scripts/core/cell_data.gd）。
+var data: CellData = CellData.new()
+
+var row: int:
+	get: return data.row
+	set(value): data.row = value
+var col: int:
+	get: return data.col
+	set(value): data.col = value
+var has_card: bool:
+	get: return data.has_card
+	set(value): data.has_card = value
 ## 阵营标识：0 = 玩家方（FACTION_PLAYER），1 = 敌方（FACTION_ENEMY）。
 ## 与 BoardSlot.FACTION_* 常量对齐，作为单位阵营的唯一可信来源。
-var faction: int = 0
+var faction: int:
+	get: return data.faction
+	set(value): data.faction = value
 ## 向后兼容别名。所有对 is_enemy 的读 / 写均自动同步到 faction，现有代码无需改动。
 var is_enemy: bool:
-	get: return faction == 1
-	set(value): faction = 1 if value else 0
+	get: return data.is_enemy
+	set(value): data.is_enemy = value
 # 该 cell 所属的 BoardSlot id。由 BoardSlotFactory / setup 注入。
 # 用于 PlayController / TurnSystem 反查 slot.faction / slot.allow_player_deploy 等。
-var slot_id: String = ""
+var slot_id: String:
+	get: return data.slot_id
+	set(value): data.slot_id = value
 # 该 cell 上当前单位的"原属盘"id（即单位最初被生成/部署的盘）。
 # 与 slot_id 区别：slot_id 是格子物理位置所属盘；owner_slot_id 是单位归属。
 # 跨盘冲锋 / 玩家跨盘移动 时，slot_id 会被更新为新盘，owner_slot_id 保持不变，
 # 保证单位死亡时入"原属盘"墓地，而非当前位置盘墓地（详见 PlayController.handle_unit_death）。
 # 空串表示尚未注入归属（如 phantom / 初始空格）。
-var owner_slot_id: String = ""
+var owner_slot_id: String:
+	get: return data.owner_slot_id
+	set(value): data.owner_slot_id = value
 # PVP 队伍标识，继承自所在 slot.team_id："defender" / "attacker"，PVE 为空串。
 # 用于 is_hostile_to / is_friendly_to，效果/目标选择以此判断敌友，不再依赖 is_enemy 二分。
-var team_id: String = ""
+var team_id: String:
+	get: return data.team_id
+	set(value): data.team_id = value
 
 # 返回本单位对 viewer_team 是否为敌方。PVE（team_id==""）降级到 is_enemy 判定。
 func is_hostile_to(viewer_team_id: String) -> bool:
-	if team_id == "" or viewer_team_id == "":
-		return is_enemy   # PVE 兼容路径
-	return team_id != viewer_team_id
+	return data.is_hostile_to(viewer_team_id)
 
 func is_friendly_to(viewer_team_id: String) -> bool:
-	if team_id == "" or viewer_team_id == "":
-		return not is_enemy   # PVE 兼容路径
-	return team_id == viewer_team_id
+	return data.is_friendly_to(viewer_team_id)
 
-var origin: String = ""
-var card_name: String = ""
-var attack: int = 0
+var origin: String:
+	get: return data.origin
+	set(value): data.origin = value
+var card_name: String:
+	get: return data.card_name
+	set(value): data.card_name = value
+var attack: int:
+	get: return data.attack
+	set(value): data.attack = value
 # 以单位视角 side 存储：{front, back, left, right}
 # 渲染时再按 faction 翻转到屏幕绝对方向标签上。
-var health: Dictionary = {"front": 0, "back": 0, "left": 0, "right": 0}
-var effects: Array = []
-var has_attacked: bool = false
-var has_charged: bool = false
-var is_phantom: bool = false
+# 注意：getter 返回的是 CellData 里的同一个 Dictionary 引用，
+# 因此 `cell.health["front"] -= dmg` 这类原地修改照旧生效。
+var health: Dictionary:
+	get: return data.health
+	set(value): data.health = value
+var effects: Array:
+	get: return data.effects
+	set(value): data.effects = value
+var has_attacked: bool:
+	get: return data.has_attacked
+	set(value): data.has_attacked = value
+var has_charged: bool:
+	get: return data.has_charged
+	set(value): data.has_charged = value
+var is_phantom: bool:
+	get: return data.is_phantom
+	set(value): data.is_phantom = value
 # 单位初始四维：set_card 时记录，受降等全恢复效果用。
-var max_health: Dictionary = {"front": 0, "back": 0, "left": 0, "right": 0}
+var max_health: Dictionary:
+	get: return data.max_health
+	set(value): data.max_health = value
 
 @onready var inner_panel = $InnerPanel
 @onready var name_lbl = $InnerPanel/NameLbl
@@ -115,12 +152,6 @@ func _on_mouse_exit() -> void:
 		var tween := create_tween()
 		tween.tween_property(inner_panel, "scale", Vector2.ONE, 0.1)
 
-func set_phantom(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> void:
-	set_card(cname, atk, hp, enemy, effects_in)
-	has_card = false
-	is_phantom = true
-	inner_panel.modulate.a = 0.4
-
 # 选中等待状态高亮：在 cell 顶层叠一个透明背景 + 蓝色描边的 Panel。
 # 四维指示器已设置绝对 z_index = 10，始终渲染在描边之上，不被遮挡。
 const _HIGHLIGHT_BORDER: float = 3.0
@@ -149,29 +180,21 @@ func set_selection_highlight(enabled: bool, color: Color = Color("#339af0")) -> 
 	add_child(frame)
 
 func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = [], owner_id: String = "", p_origin: String = "") -> void:
-	has_card = true
-	is_phantom = false
-	inner_panel.modulate.a = 1.0
-	card_name = cname
-	attack = atk
-	# hp 入参是单位视角 side dict（front/back/left/right），整盘统一 side 存储
-	health = Orientation.clone_side_health(hp)
-	# 记录初始四维，供受降等全恢复效果使用
-	max_health = Orientation.clone_side_health(hp)
-	effects = effects_in.duplicate()
-	is_enemy = enemy
-	# 归属盘：显式传入则用之（跨盘 move 透传），否则取格子当前所在盘 = 单位起源盘
-	owner_slot_id = owner_id if owner_id != "" else slot_id
-	# team_id 从「归属盘」（owner_slot_id）取，而非当前所在盘（slot_id）
-	# 这样单位跨盘后仍保持原阵营归属（攻方单位在守方棋盘上仍算攻方）
+	# ① 状态写进纯数据层
+	data.set_card(cname, atk, hp, enemy, effects_in, owner_id, p_origin)
+	# ② 归属队伍的解析留在视图侧：客户端有 Game.registry 可查，服务器侧显式注入
 	var owner_slot_ref: BoardSlot = null
 	if Game.registry != null:
-		owner_slot_ref = Game.registry.get_by_id(owner_slot_id)
-	team_id = owner_slot_ref.team_id if owner_slot_ref != null else ""
-	# 出处：显式传入用之；不传则保留旧值（兼容旧调用，避免覆盖已有 origin）
-	if p_origin != "":
-		origin = p_origin
-	name_lbl.text = cname
+		owner_slot_ref = Game.registry.get_by_id(data.owner_slot_id)
+	data.team_id = owner_slot_ref.team_id if owner_slot_ref != null else ""
+	# ③ 按数据刷视图
+	_apply_card_view()
+
+# 按 data 重建"有单位"的视图表现（原 set_card 的 UI 部分）。
+func _apply_card_view() -> void:
+	is_phantom = data.is_phantom
+	inner_panel.modulate.a = 0.4 if is_phantom else 1.0
+	name_lbl.text = card_name
 	atk_lbl.text = str(attack)
 	_update_hp_labels()
 
@@ -186,6 +209,12 @@ func set_card(cname, atk, hp, enemy: bool = false, effects_in: Array = [], owner
 
 	EffectBadgeFactory.refresh(inner_panel.get_node_or_null("EffectBadges"), effects)
 	inner_panel.visible = true
+
+func set_phantom(cname, atk, hp, enemy: bool = false, effects_in: Array = []) -> void:
+	set_card(cname, atk, hp, enemy, effects_in)
+	has_card = false        # phantom 不算"真有牌"
+	is_phantom = true
+	inner_panel.modulate.a = 0.4
 
 # 视觉上是否显示为"敌方"色。
 # PVP：按本端队伍 is_hostile_to 判断；PVE：直接用 is_enemy。
@@ -220,17 +249,12 @@ func clear_phantom() -> void:
 
 # 共用清理逻辑。不触发信号。
 func _do_clear() -> void:
+	# ① 清状态（与 CellData.clear_card 同一份语义）
+	data.clear_card()
+	# ② 复位视图
 	if active_tween:
 		active_tween.kill()
 		active_tween = null
-	has_card = false
-	card_name = ""
-	is_enemy = false
-	is_phantom = false
-	has_charged = false
-	owner_slot_id = ""
-	team_id = ""
-	origin = ""
 	inner_panel.visible = false
 	inner_panel.scale = Vector2.ONE
 	inner_panel.modulate.a = 1.0
@@ -289,105 +313,34 @@ func _process(_delta) -> void:
 		if not get_global_rect().has_point(get_global_mouse_position()):
 			set_drag_hover(false)
 
-func _can_drop_data(_pos, data) -> bool:
+func _can_drop_data(_pos, drag_data) -> bool:
 	# 业务规则由 PlayController 统一裁决，cell 仅询问并响应视觉。
+	# 形参名用 drag_data：`data` 已是本类的 CellData 成员，避免遮蔽。
 	if Game.play == null:
 		return false
-	if Game.play.can_play_at(self, data):
+	if Game.play.can_play_at(self, drag_data):
 		set_drag_hover(true)
 		return true
 	return false
 
-func _drop_data(_pos, data) -> void:
+func _drop_data(_pos, drag_data) -> void:
 	# 不在此处结算，统一发到 PlayController。
-	card_dropped.emit(self, data)
-
-# JSON 往返后整数变浮点的工具函数：把 dict 所有 value 转为 int。
-static func _int_dict(d: Dictionary) -> Dictionary:
-	var out: Dictionary = {}
-	for k in d.keys():
-		out[k] = int(d[k])
-	return out
+	card_dropped.emit(self, drag_data)
 
 # ── 序列化（PVP 联机用）────────────────────────────────────────────
-# Cell 是场景节点，序列化只导出业务数据（不含视觉/动画/UI 层）。
-# from_dict 在已存在的空 Cell 上原地还原；不创建新节点。
+# 状态全在 CellData 中，序列化直接转发（键与 CellData.to_dict 完全一致）。
 # health / max_health 以 side 视角存储，序列化保留 side 键。
-# row/col 不序列化（由 BoardModel 的 grid_cells 键决定，反序时已正确）。
+# row/col 不参与 grid_cells 键的推导（由 BoardModel 决定，反序时已正确）。
 func to_dict() -> Dictionary:
-	return {
-		"row":            row,
-		"col":            col,
-		"has_card":       has_card,
-		"is_phantom":     is_phantom,
-		"faction":        faction,
-		"team_id":        team_id,
-		"slot_id":        slot_id,
-		"owner_slot_id":  owner_slot_id,
-		"origin":         origin,
-		"card_name":      card_name,
-		"attack":         attack,
-		"health":         health.duplicate(),
-		"max_health":     max_health.duplicate(),
-		"effects":        effects.duplicate(),
-		"has_attacked":   has_attacked,
-		"has_charged":    has_charged,
-	}
+	return data.to_dict()
 
-# 在已存在的 Cell 节点上原地还原。
+# 在已存在的 Cell 节点上原地还原：先还原数据，再按数据刷视图。
 # 调用前 Cell._ready 必须已跑完（hp_labels_abs 已构建）。
 func from_dict(d: Dictionary) -> void:
 	# row/col 假定已由 BoardSlotFactory 设好，不覆盖（避免与 grid_cells 键不一致）。
-	var p_has_card:   bool   = bool(d.get("has_card", false))
-	var p_is_phantom: bool   = bool(d.get("is_phantom", false))
-	var p_faction:    int    = int(d.get("faction", 0))
-	slot_id        = String(d.get("slot_id", ""))
-	owner_slot_id  = String(d.get("owner_slot_id", ""))
-	team_id        = String(d.get("team_id", ""))
-	origin         = String(d.get("origin", ""))
-	has_attacked   = bool(d.get("has_attacked", false))
-	has_charged    = bool(d.get("has_charged", false))
-
-	if not p_has_card and not p_is_phantom:
+	data.from_dict(d)
+	if not data.has_card and not data.is_phantom:
+		# 空格：清状态 + 复位视图（与旧实现的 _do_clear 路径等价）
 		_do_clear()
 		return
-
-	var p_card_name:  String = String(d.get("card_name", ""))
-	var p_attack:     int    = int(d.get("attack", 0))
-	var raw_hp                = d.get("health", {})
-	# JSON 往返后数值变浮点，显式转 int 避免显示 "2.0"
-	var p_health:     Dictionary = _int_dict(raw_hp) if typeof(raw_hp) == TYPE_DICTIONARY \
-		else {"front": 0, "back": 0, "left": 0, "right": 0}
-	var raw_mh                = d.get("max_health", p_health)
-	var p_max_health: Dictionary = _int_dict(raw_mh) if typeof(raw_mh) == TYPE_DICTIONARY else p_health
-	var raw_eff               = d.get("effects", [])
-	var p_effects: Array      = raw_eff.duplicate() if typeof(raw_eff) == TYPE_ARRAY else []
-
-	# set_card 会按"玩家视角 abs"格式处理 hp，但我们存的是 side 视角；
-	# 直接用底层赋值再调样式，避免再走 Orientation 转换。
-	has_card     = true
-	is_phantom   = p_is_phantom
-	inner_panel.modulate.a = 0.4 if p_is_phantom else 1.0
-	card_name    = p_card_name
-	attack       = p_attack
-	health       = Orientation.clone_side_health(p_health)
-	max_health   = Orientation.clone_side_health(p_max_health)
-	effects      = p_effects
-	is_enemy     = (p_faction == 1)
-	name_lbl.text = p_card_name
-	atk_lbl.text  = str(p_attack)
-	_update_hp_labels()
-	var show_as_enemy: bool = _is_visual_enemy()
-	if show_as_enemy:
-		inner_panel.add_theme_stylebox_override("panel",
-			ThemeFactory.cell_panel(Color("#fff5f5"), Color("#ffc9c9"), 1, 20, true))
-		name_lbl.add_theme_color_override("font_color", Color("#fa5252"))
-	else:
-		inner_panel.add_theme_stylebox_override("panel",
-			ThemeFactory.cell_panel(Color.WHITE, Color("#e1e8ed"), 1, 20, true))
-		name_lbl.add_theme_color_override("font_color", Color("#495057"))
-	EffectBadgeFactory.refresh(inner_panel.get_node_or_null("EffectBadges"), effects)
-	inner_panel.visible = true
-	if p_is_phantom:
-		# phantom 不算"真有牌"
-		has_card = false
+	_apply_card_view()
