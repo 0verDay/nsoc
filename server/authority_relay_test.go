@@ -351,3 +351,139 @@ func TestIdleAuthorityBadKeyRejected(t *testing.T) {
 		t.Fatal("被拒的权威不得进入待命池")
 	}
 }
+
+// ── 权威回待命：一个权威进程必须能服务多局 ──────────────────────────────────
+//
+// 历史缺陷：派单把 c.roomID 钉在房间上，而房间销毁只清"玩家"的 roomID，
+// 于是权威永远不再是 idle —— 表现为"一个权威进程只能服务一局"，
+// 之后所有 authoritative 建房静默退回 v1。
+//
+// 另外 GDScript 侧 AuthorityMain 只认 c.roomID，房间销毁时若中继不通知它，
+// 它自己也不知道该复位。因此两条路径都要覆盖：中继主动释放 + 权威主动交还。
+
+// createAuthoritativeRoom 用新客户端建一个权威模式房间，返回房号与 authoritative 字段。
+func createAuthoritativeRoom(t *testing.T, h *Hub, uuid string) (string, bool) {
+	t.Helper()
+	host := newTestClient(h, uuid)
+	h.clients[uuid] = host
+	payload, _ := json.Marshal(map[string]any{"match_type": "1v1", "authoritative": true})
+	h.route(inboundMsg{client: host, msg: &Message{Type: "room/create",
+		From: uuid, Payload: payload}})
+	msgs := drain(host)
+	if len(msgs) == 0 || msgs[0].Type != "room/create_ok" {
+		t.Fatalf("建房应回 room/create_ok，got %+v", msgs)
+	}
+	var ok map[string]any
+	_ = json.Unmarshal(msgs[0].Payload, &ok)
+	authoritative, _ := ok["authoritative"].(bool)
+	return msgs[0].RoomID, authoritative
+}
+
+func TestAuthorityReturnsToStandbyAfterRoomDestroyed(t *testing.T) {
+	old := authorityKey
+	authorityKey = "secret"
+	defer func() { authorityKey = old }()
+
+	h := NewHub()
+	auth := readyAuthority(t, h, "uuid-auth", "secret")
+
+	roomID, authoritative := createAuthoritativeRoom(t, h, "uuid-host")
+	if !authoritative {
+		t.Fatal("第一个房间应拿到待命权威")
+	}
+	drain(auth)
+	if auth.roomID != roomID || isIdleAuthority(auth) {
+		t.Fatalf("派单后权威应占用该房间: roomID=%q", auth.roomID)
+	}
+
+	// 玩家退房 → 房间空 → 销毁。权威必须被释放回待命。
+	send(h, h.clients["uuid-host"], "room/leave", "")
+	if h.rooms[roomID] != nil {
+		t.Fatalf("玩家退房后房间应销毁，got %+v", h.rooms[roomID])
+	}
+	if auth.roomID != "" || !isIdleAuthority(auth) {
+		t.Fatalf("房间销毁后权威应回待命: roomID=%q idle=%v", auth.roomID, isIdleAuthority(auth))
+	}
+	relMsgs := drain(auth)
+	if len(relMsgs) == 0 || relMsgs[0].Type != "authority/released" {
+		t.Fatalf("权威应收到 authority/released，got %+v", relMsgs)
+	}
+
+	// 关键判定：同一个权威进程必须能直接服务第二局（这就是"一局一重启"的根治点）
+	roomID2, authoritative2 := createAuthoritativeRoom(t, h, "uuid-host2")
+	if !authoritative2 {
+		t.Fatal("第二个房间仍应拿到同一个待命权威（缺陷回归）")
+	}
+	if auth.roomID != roomID2 {
+		t.Fatalf("权威应被派到第二局: roomID=%q want=%q", auth.roomID, roomID2)
+	}
+}
+
+func TestAuthorityReleaseOnRequest(t *testing.T) {
+	old := authorityKey
+	authorityKey = "secret"
+	defer func() { authorityKey = old }()
+
+	h := NewHub()
+	auth := readyAuthority(t, h, "uuid-auth", "secret")
+	roomID, _ := createAuthoritativeRoom(t, h, "uuid-host")
+	drain(auth)
+
+	// 权威自己判定对局已结束，主动交还房间（此时玩家还没退房、房间还在）
+	send(h, auth, "room/authority_release", `{"room_id":"`+roomID+`"}`)
+
+	relMsgs := drain(auth)
+	if len(relMsgs) == 0 || relMsgs[0].Type != "authority/released" {
+		t.Fatalf("主动交还应回 authority/released，got %+v", relMsgs)
+	}
+	if room := h.rooms[roomID]; room != nil && room.AuthorityUUID != "" {
+		t.Fatalf("房间不应再记录权威: %q", room.AuthorityUUID)
+	}
+	if auth.roomID != "" || !isIdleAuthority(auth) {
+		t.Fatalf("交还后应回待命: roomID=%q idle=%v", auth.roomID, isIdleAuthority(auth))
+	}
+
+	// 交还后立刻能接下一局
+	roomID2, authoritative2 := createAuthoritativeRoom(t, h, "uuid-host2")
+	if !authoritative2 || auth.roomID != roomID2 {
+		t.Fatalf("交还后应能直接服务下一局: authoritative=%v roomID=%q", authoritative2, auth.roomID)
+	}
+
+	// 幂等：已是待命时重复交还不报错，并再确认一次 ready
+	drain(auth)
+	send(h, auth, "room/authority_release", `{}`)   // 交还第二局
+	first := drain(auth)
+	if len(first) == 0 || first[0].Type != "authority/released" {
+		t.Fatalf("交还第二局应回 authority/released，got %+v", first)
+	}
+	send(h, auth, "room/authority_release", `{}`)   // 此时已是待命，重复调用
+	again := drain(auth)
+	if len(again) == 0 || again[0].Type != "authority/ready" {
+		t.Fatalf("重复交还应幂等回 authority/ready，got %+v", again)
+	}
+}
+
+func TestPlayerCannotReleaseAuthority(t *testing.T) {
+	old := authorityKey
+	authorityKey = "secret"
+	defer func() { authorityKey = old }()
+
+	h := NewHub()
+	auth := readyAuthority(t, h, "uuid-auth", "secret")
+	roomID, _ := createAuthoritativeRoom(t, h, "uuid-host")
+	drain(auth)
+
+	player := h.clients["uuid-host"]
+	send(h, player, "room/authority_release", `{"room_id":"`+roomID+`"}`)
+
+	if player.forgedMessages == 0 {
+		t.Fatal("玩家伪造 authority_release 应被记为伪造消息")
+	}
+	if room := h.rooms[roomID]; room == nil || room.AuthorityUUID != auth.uuid {
+		t.Fatalf("玩家的 authority_release 不得摘掉权威: %+v", h.rooms[roomID])
+	}
+	if !isAuthority(auth) || auth.roomID != roomID {
+		t.Fatalf("权威应仍在房间上: roomID=%q", auth.roomID)
+	}
+}
+

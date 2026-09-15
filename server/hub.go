@@ -110,6 +110,8 @@ func (h *Hub) handleDisconnect(c *Client) {
 	}
 	h.broadcast(room, notify, "")
 	if len(room.Players) == 0 {
+		// 房间要销毁：把权威放回待命，否则它再也接不到下一局
+		h.releaseAuthority(room, "room_empty")
 		delete(h.rooms, room.ID)
 		log.Printf("room %s destroyed (empty)", room.ID)
 	}
@@ -148,6 +150,8 @@ func (h *Hub) route(in inboundMsg) {
 		h.handleUpdateConfig(c, msg)
 	case "room/authority_join":
 		h.handleAuthorityJoin(c, msg)
+	case "room/authority_release":
+		h.handleAuthorityRelease(c, msg)
 	default:
 		h.forward(c, msg)
 	}
@@ -250,6 +254,54 @@ func (h *Hub) authorityOf(room *Room) *Client {
 		return nil
 	}
 	return c
+}
+
+// releaseAuthority 把房间的权威连接放回**待命**（房间即将销毁，或权威主动交还）。
+//
+// 为什么必须做：派单时会把权威连接的 c.roomID 钉在该房间上，而 isIdleAuthority
+// 要求 roomID == ""。房间销毁时若不释放，这个权威进程就**永远**不再是待命状态，
+// 之后所有 authoritative 建房都会静默退回 v1 —— 表现为"一个权威进程只能服务一局"。
+//
+// 房间已无权威、或权威连接已消失时是空操作。
+func (h *Hub) releaseAuthority(room *Room, reason string) {
+	if room == nil || room.AuthorityUUID == "" {
+		return
+	}
+	uuid := room.AuthorityUUID
+	room.AuthorityUUID = ""
+	c, ok := h.clients[uuid]
+	if !ok {
+		return
+	}
+	c.roomID = ""
+	log.Printf("authority released room=%s uuid=%s reason=%s", room.ID, uuid, reason)
+	c.push(&Message{Type: "authority/released",
+		Payload: jsonRaw(map[string]any{"room_id": room.ID, "reason": reason})})
+}
+
+// handleAuthorityRelease 权威**主动**交还房间（它自己判定对局已结束）。
+//
+// 典型场景：一局打完，客户端还没退房，但权威已经可以接下一局了。
+// 只允许已通过密钥校验的权威连接调用；重复调用是幂等的。
+func (h *Hub) handleAuthorityRelease(c *Client, _ *Message) {
+	if !isAuthority(c) {
+		c.forgedMessages++
+		log.Printf("SECURITY authority release rejected (role=%q) uuid=%s", c.role, c.uuid)
+		return
+	}
+	roomID := c.roomID
+	if roomID == "" {
+		// 已经是待命状态：再确认一次，方便客户端重连后自愈
+		c.push(&Message{Type: "authority/ready", Payload: jsonRaw(map[string]any{})})
+		return
+	}
+	if room, ok := h.rooms[roomID]; ok && room.AuthorityUUID == c.uuid {
+		room.AuthorityUUID = ""
+	}
+	c.roomID = ""
+	log.Printf("authority released room=%s uuid=%s reason=match_finished", roomID, c.uuid)
+	c.push(&Message{Type: "authority/released",
+		Payload: jsonRaw(map[string]any{"room_id": roomID, "reason": "match_finished"})})
 }
 
 func (h *Hub) handleCreate(c *Client, msg *Message) {
@@ -410,6 +462,8 @@ func (h *Hub) handleLeave(c *Client, _ *Message) {
 		}),
 	}, "")
 	if len(room.Players) == 0 {
+		// 房间要销毁：把权威放回待命，否则它再也接不到下一局
+		h.releaseAuthority(room, "room_empty_after_leave")
 		delete(h.rooms, old)
 		log.Printf("room %s destroyed (empty after leave)", old)
 	}
@@ -594,6 +648,8 @@ func (h *Hub) cleanupExpired() {
 				p.push(&Message{Type: "room/expired", RoomID: id})
 				p.roomID = ""
 			}
+			// 权威不在 room.Players 里，必须单独释放（否则它永远是"占用中"）
+			h.releaseAuthority(r, "room_expired")
 			delete(h.rooms, id)
 			log.Printf("room %s destroyed (expired)", id)
 		}

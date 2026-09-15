@@ -15,7 +15,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 25
+const EXPECTED_CASES: int = 32
 
 var _passed: int = 0
 var _failed: int = 0
@@ -134,6 +134,95 @@ func _run() -> void:
 		and (cfg["board"] as Dictionary).has("players"), str(cfg.keys()))
 
 	await _test_assignment_and_start_match()
+	await _test_release_rejoin_and_standby()
+
+
+## 回待命与重连：一个权威进程必须能连续服务多局。
+##
+## 历史缺陷：中继只在"房间销毁"时清权威的占用（而 v2 下房间会留到玩家退房或 60 分钟过期），
+## 权威自己也没有交还逻辑 —— 表现为"一个权威进程只能服务一局"，第二局静默退回 v1。
+func _test_release_rejoin_and_standby() -> void:
+	Game.registry.clear()
+	var main := AuthorityMain.new()
+	add_child(main)
+	var out: Array = []
+	main.send_override = func(msg): out.append((msg as Dictionary).duplicate(true))
+
+	main.register_authority()
+	out.clear()
+	_assign_and_start(main, "88888", "m1")
+
+	_check("回待命: 开局后记录当前服务房间号", main._session_room_id == "88888",
+		main._session_room_id)
+
+	# 断线重连回**同一**房间：session 还在，绝不能重建对局（否则盘面/手牌被清空）
+	var sess_before = main.session
+	out.clear()
+	main.handle_relay_message({"type": "authority/joined",
+		"payload": {"room_id": "88888", "players": ["p1", "p2"], "match_type": "1v1",
+			"host_uuid": "p1"}})
+	_check("回待命: 重连回同一房间保留对局（不重建、无出站）",
+		main.session == sess_before and out.is_empty(), str(out.size()))
+
+	# 对局结束（投降）→ 权威主动交还房间
+	main.handle_relay_message({"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": ""}, "from": "p1"})
+	out.clear()
+	main.handle_relay_message({"type": NetProtocol.INTENT_SURRENDER,
+		"payload": {"seq": 0}, "from": "p1"})
+	await main.tick_once()
+	_check("回待命: 对局结束主动交还房间（否则下一局静默退回 v1）",
+		not _first_of_type(out, "room/authority_release").is_empty(), str(out))
+
+	# 中继释放回执 → 丢会话、以无房号重新注册
+	out.clear()
+	main.handle_relay_message({"type": "authority/released",
+		"payload": {"room_id": "88888", "reason": "match_finished"}})
+	var rejoin: Dictionary = _first_of_type(out, "room/authority_join")
+	_check("回待命: authority/released 后丢会话并以无房号重新注册",
+		main.session == null and main.room_id == "" and not rejoin.is_empty()
+		and String((rejoin.get("payload", {}) as Dictionary).get("room_id", "")) == "",
+		str(out))
+
+	# 连续第二局：同一个进程必须重新建得起对局
+	out.clear()
+	_assign_and_start(main, "88889", "m2")
+	_check("回待命: 同一进程能接着服务第二局",
+		main.session != null and main._session_room_id == "88889", main._session_room_id)
+
+	# 原房间已不存在（重连场景）：注册被拒也要回退待命，不能永远卡在占用态
+	out.clear()
+	main.handle_relay_message({"type": "authority/rejected",
+		"payload": {"reason": "no_such_room"}})
+	var fallback: Dictionary = _first_of_type(out, "room/authority_join")
+	_check("回待命: 房间已失效时回退待命（不死循环）",
+		main.room_id == "" and main.session == null
+		and String((fallback.get("payload", {}) as Dictionary).get("room_id", "")) == "",
+		str(out))
+
+	# 名单快照不完整（房主刚注册、对手还没进）时不得开出一个"单人局"：
+	# 那种退化对局会被 _check_finished 立刻判负，进而让权威误判"已打完"而提前交还房间。
+	out.clear()
+	main.handle_relay_message({"type": "authority/joined",
+		"payload": {"room_id": "88890", "players": ["p1"], "match_type": "1v1",
+			"host_uuid": "p1"}})
+	_check("回待命: 名单不足两人时不开局（等 authority/start_match）",
+		main.session == null and out.is_empty(), str(out.size()))
+
+
+## 走一遍「派单 → 大厅交配置 → 开局」。
+func _assign_and_start(main: AuthorityMain, room_id: String, match_id: String) -> void:
+	main.handle_relay_message({"type": "authority/host_room",
+		"payload": {"room_id": room_id, "match_type": "1v1",
+			"players": ["p1", "p2"], "host_uuid": "p1"}})
+	main.handle_relay_message({"type": "authority/start_match", "payload": {
+		"match_id": match_id, "seed": 7, "players": ["p1", "p2"],
+		"teams": {"p1": "defender", "p2": "attacker"},
+		"hero_hp": {"p1": 30, "p2": 30},
+		"decks": {"p1": [], "p2": []},
+		"board": {"players": ["p1", "p2"], "teams": {"p1": "defender", "p2": "attacker"}},
+		"rate_limit_per_sec": -1,
+	}})
 
 
 ## 派单流程：待命注册 → 收到 authority/host_room → 带房号注册 → 大厅配置开局。
