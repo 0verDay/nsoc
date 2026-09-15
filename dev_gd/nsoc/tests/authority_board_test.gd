@@ -19,7 +19,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 85
+const EXPECTED_CASES: int = 86
 
 var _passed: int = 0
 var _failed: int = 0
@@ -143,6 +143,9 @@ func _test_equipment() -> void:
 	await s.tick()
 	_check("装备: 激活后耐久 2 → 1",
 		int(((s.authority().view_for("p1")["you"] as Dictionary)["equipments"][0] as Dictionary)["durability_left"]) == 1)
+	_check("装备: 效果真的作用在权威费用上（圣杯 gain_mana_1：0 → 1）",
+		int(((s.authority().view_for("p1")["you"] as Dictionary)["mana"] as Dictionary)["current"]) == 1,
+		str((s.authority().view_for("p1")["you"] as Dictionary)["mana"]))
 	var r3: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_EQUIP,
 		"payload": {"equip_name": equip_name, "seq": 3}})
 	_check("装备: 同回合第二次 → not_allowed（once_per_turn）",

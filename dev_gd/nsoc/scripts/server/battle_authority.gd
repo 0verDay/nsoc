@@ -123,7 +123,12 @@ func run_pending_work() -> void:
 		var entry: Dictionary = _pending_spells.pop_front()
 		var spell_pid := String(entry.get("pid", ""))
 		var spell_card := String(entry.get("card", ""))
-		var res: Dictionary = await board.cast_spell(spell_pid, spell_card, entry.get("payload", {}))
+		var spell_mana: Dictionary = _mana.get(spell_pid, {})
+		var res: Dictionary = await board.cast_spell(spell_pid, spell_card, entry.get("payload", {}),
+			int(spell_mana.get("current", 0)), int(spell_mana.get("maximum", 0)))
+		# 效果可能改费用（如"获得 1 点费用"）：把镜像结果写回权威费用
+		if res.has("mana_current"):
+			spell_mana["current"] = int(res["mana_current"])
 		# 已打出的法术按效果声明的去向入墓 / 除外（与客户端 PlayController._play_spell 一致）
 		var spell_info: Dictionary = res.get("spell", {})
 		if String(spell_info.get("destination", "graveyard")) == "banish":
@@ -154,7 +159,12 @@ func run_pending_work() -> void:
 		var eq: Dictionary = _pending_equips.pop_front()
 		var eq_pid := String(eq.get("pid", ""))
 		var inst = eq.get("inst")
-		var eq_res: Dictionary = await board.run_equip_activation(inst, eq.get("payload", {}))
+		var eq_res: Dictionary = await board.run_equip_activation(inst, eq.get("payload", {}),
+			int((_mana.get(eq_pid, {}) as Dictionary).get("current", 0)),
+			int((_mana.get(eq_pid, {}) as Dictionary).get("maximum", 0)))
+		# 装备效果同样可能改费用（如"圣杯：获得 1 点费用"）
+		if eq_res.has("mana_current"):
+			(_mana.get(eq_pid, {}) as Dictionary)["current"] = int(eq_res["mana_current"])
 		var eq_name: String = _equip_name(inst)
 		_emit("", {
 			"event": "equip_activated", "pid": eq_pid, "equip": eq_name,

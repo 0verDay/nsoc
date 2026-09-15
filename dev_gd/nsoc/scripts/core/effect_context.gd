@@ -130,6 +130,30 @@ func trigger_vigilance(entered_cell) -> void:
 		if game.combat == null or game.combat.aborted:
 			return
 
+# ---- 费用 ----
+# 效果**不要**直接读 `Game.mana`：那是客户端本地玩家的费用单例，服务器侧为 null
+# （权威端因此把"改费用"的效果变成空操作）。统一走这里：客户端回退到 Game.mana
+# （行为与以前逐字一致），权威端用 `mana_system` 注入该玩家的费用镜像。
+func mana():
+	if mana_system != null:
+		return mana_system
+	if game != null:
+		return game.mana
+	return null
+
+# 获得 n 点当前费用（不超过上限）。费用不足/无费用系统时静默忽略。
+func gain_mana(n: int) -> void:
+	var m = mana()
+	if m != null:
+		m.gain(n)
+
+# 是否负担得起 n 点费用。
+func can_spend_mana(n: int) -> bool:
+	var m = mana()
+	if m == null:
+		return false
+	return bool(m.can_spend(n))
+
 # ---- 卡牌去向 ----
 # 按 target_cell.origin 路由：
 #   "hand"    → game.deck（玩家个人牌堆，不论阵营）

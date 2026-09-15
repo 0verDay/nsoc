@@ -177,7 +177,10 @@ func _validate_spell(pid: String, cdata, payload: Dictionary) -> Dictionary:
 
 ## 执行法术效果（**协程**，由服务器 tick 调用；此前必须已通过 _validate_spell）。
 ## 与客户端 PlayController._play_spell 同一套：Effects.resolve_destination + trigger_play。
-func cast_spell(pid: String, card_name: String, payload: Dictionary) -> Dictionary:
+## mana_current/maximum 是**服务器**该玩家的费用（效果里的 ctx.gain_mana 作用在镜像上，
+## 调用方再把结果写回权威费用 —— 见 BattleAuthority.run_pending_work）。
+func cast_spell(pid: String, card_name: String, payload: Dictionary,
+		mana_current: int = 0, mana_maximum: int = 0) -> Dictionary:
 	var cdata = Game.get_card(card_name)
 	if cdata == null or not (cdata is CardSpell):
 		return {"ok": false, "reason": NetProtocol.REJECT_BAD_PAYLOAD}
@@ -193,6 +196,7 @@ func cast_spell(pid: String, card_name: String, payload: Dictionary) -> Dictiona
 
 	var ctx := Game.make_effect_context()
 	ctx.target_cell = target
+	ctx.mana_system = _mana_mirror(mana_current, mana_maximum)
 	var destination := "graveyard"
 	for eff in cdata.effects:
 		var dest := Effects.resolve_destination(eff, cdata, ctx)
@@ -201,7 +205,8 @@ func cast_spell(pid: String, card_name: String, payload: Dictionary) -> Dictiona
 		await Effects.trigger_play(eff, cdata, ctx)
 	var spell: Dictionary = check.get("spell", {})
 	spell["destination"] = destination
-	return {"ok": true, "reason": "", "kind": "spell", "spell": spell}
+	return {"ok": true, "reason": "", "kind": "spell", "spell": spell,
+		"mana_current": int(ctx.mana_system.current)}
 
 
 ## 英雄技能：同步校验。技能必须在显式注册表里、必须属于该玩家盘上的英雄、
@@ -273,8 +278,9 @@ func card_info(card_name: String):
 
 ## 激活装备效果（**协程**）。`inst` 由权威核心持有（每个玩家一套），本方法只负责用
 ## 同一套效果机制执行：`EquipmentInstance.activate(ctx, turn_running=false)`。
-## 返回 {"ok", "durability", "broken"}。
-func run_equip_activation(inst, payload: Dictionary) -> Dictionary:
+## 返回 {"ok", "durability", "broken", "mana_current"}。
+func run_equip_activation(inst, payload: Dictionary,
+		mana_current: int = 0, mana_maximum: int = 0) -> Dictionary:
 	if inst == null:
 		return {"ok": false, "reason": NetProtocol.REJECT_NOT_ALLOWED}
 	var ctx := Game.make_effect_context()
@@ -283,13 +289,24 @@ func run_equip_activation(inst, payload: Dictionary) -> Dictionary:
 	var slot: BoardSlot = _by_slot_id.get(String(payload.get("target_slot_id", "")))
 	if slot != null and row >= 0 and col >= 0:
 		ctx.target_cell = slot.board.get_cell(Vector2(row, col))
+	ctx.mana_system = _mana_mirror(mana_current, mana_maximum)
+	ctx.turn_running = false
 	var ok: bool = await inst.activate(ctx, false)
 	return {
 		"ok": ok,
 		"reason": "" if ok else NetProtocol.REJECT_NOT_ALLOWED,
 		"durability": int(inst.durability_left),
 		"broken": bool(inst.is_broken()),
+		"mana_current": int(ctx.mana_system.current),
 	}
+
+
+## 构造该玩家的费用镜像（效果通过 ctx.gain_mana/can_spend_mana 读它）。
+func _mana_mirror(current: int, maximum: int) -> ManaSystem:
+	var mirror := ManaSystem.new()
+	mirror.current = current
+	mirror.maximum = maximum
+	return mirror
 
 
 ## 盘面公开状态（战棋里单位位置本就公开；隐藏信息只有手牌，由 view_for 处理）。

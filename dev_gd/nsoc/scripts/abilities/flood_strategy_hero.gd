@@ -25,8 +25,8 @@ func on_activate(ctx) -> void:
 	# 弹出目标选择器，筛选所有棋盘上的敌方单位格
 	var target_cell = await ctx.pick_target_async("enemy_unit")
 	if target_cell == null or not target_cell.has_card:
-		# 玩家取消 → 退费
-		Game.mana.gain(cost())
+		# 玩家取消 → 退费（走 ctx：权威端退到服务器的费用，客户端退到本地费用）
+		ctx.gain_mana(cost())
 		return
 	if not target_cell.effects.has("soaked"):
 		target_cell.effects.append("soaked")
