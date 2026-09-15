@@ -18,6 +18,14 @@ var caster_is_enemy: bool = false
 var hand_view = null                 # HandView 引用（restart 等技能用）
 var hero: HeroState = null           # 本次激活的 HeroState
 
+# ── 权威端注入缝（默认 null = 客户端行为不变）──────────────────────────────
+# `HeroAbility.can_activate` 基类默认读 `Game.turn` / `Game.mana` / `HeroAbilities`
+# 这三个**客户端全局**。服务器上没有这些（或指向本地玩家），因此权威端通过 ctx 注入
+# 自己的回合/费用/已用状态，从而复用同一份前置校验（重构文档.md §3.4-6 的同款做法）。
+var mana_system = null               # ManaSystem：权威端为该玩家构造的费用镜像
+var turn_running = null              # bool：权威端是否正在跑行动阶段（默认 false）
+var ability_used_this_turn = null    # bool：该技能本回合是否已用过（权威端的表）
+
 func _init(p_game: Node) -> void:
 	game = p_game
 

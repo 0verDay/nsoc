@@ -48,6 +48,12 @@ func _register_explicit() -> void:
 func has(ability_id: String) -> bool:
 	return _instances.has(ability_id)
 
+
+## 取技能实例。权威端需要单独读 cost()/once_per_turn() 并自行管理费用与回合限制，
+## 因此除了 activate()（客户端路径）之外再暴露一个只读取值口。
+func get_instance(ability_id: String):
+	return _instances.get(ability_id)
+
 ## 已注册的全部 id（字典序，确定性输出）。
 func ids() -> Array:
 	var out: Array = []

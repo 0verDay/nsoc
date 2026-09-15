@@ -65,10 +65,17 @@ func has_board() -> bool:
 # ── 待结算的服务器动作（服务器主循环驱动）──────────────────────────────────
 var _pending_phase_pid: String = ""
 var _pending_spells: Array = []      # [{pid, card, payload}]：已接受、待执行效果的法术
+var _pending_abilities: Array = []   # [{pid, ability_id, payload}]：已接受、待激活的英雄技能
+var _used_abilities: Dictionary = {} # "pid|ability" -> true（每回合一次限制）
 
-## 是否有"已接受但尚未在盘面上结算"的动作（法术效果 / 结束回合的行动阶段）。
+func _ability_key(pid: String, ability_id: String) -> String:
+	return "%s|%s" % [pid, ability_id]
+
+
+## 是否有"已接受但尚未在盘面上结算"的动作（法术效果 / 英雄技能 / 结束回合的行动阶段）。
 func has_pending_work() -> bool:
-	return _pending_phase_pid != "" or not _pending_spells.is_empty()
+	return _pending_phase_pid != "" or not _pending_spells.is_empty() \
+		or not _pending_abilities.is_empty()
 
 
 ## 结算待处理动作，然后完成回合推进并下发事件。
@@ -94,6 +101,19 @@ func run_pending_work() -> void:
 			"target": spell_info.duplicate(),
 		}
 		_emit("", payload)
+	# ①b 排队中的英雄技能：同样按接受顺序串行执行
+	while not _pending_abilities.is_empty():
+		var ab: Dictionary = _pending_abilities.pop_front()
+		var ab_pid := String(ab.get("pid", ""))
+		var ability_id := String(ab.get("ability_id", ""))
+		var mana_now: Dictionary = _mana.get(ab_pid, {})
+		var ab_res: Dictionary = await board.run_hero_ability(ab_pid, ability_id,
+			int(mana_now.get("current", 0)), int(mana_now.get("maximum", 0)),
+			_used_abilities.has(_ability_key(ab_pid, ability_id)), ab.get("payload", {}))
+		_emit("", {
+			"event": "hero_ability_used", "pid": ab_pid, "ability_id": ability_id,
+			"ok": bool(ab_res.get("ok", false)),
+		})
 	# ② 待结算的行动阶段
 	if _pending_phase_pid == "":
 		return
@@ -219,6 +239,8 @@ func submit_intent(pid: String, type: String, payload: Dictionary) -> Dictionary
 				result = _accept(pid, seq, type, _on_end_turn(pid))
 		NetProtocol.INTENT_PLAY_CARD:
 			result = _on_play_card(pid, seq, payload)
+		NetProtocol.INTENT_ACTIVATE_HERO:
+			result = _on_activate_hero(pid, seq, payload)
 		NetProtocol.INTENT_SURRENDER:
 			result = _accept(pid, seq, type, _on_surrender(pid))
 		_:
@@ -362,6 +384,35 @@ func _on_play_card(pid: String, seq: int, payload: Dictionary) -> Dictionary:
 	return _accept(pid, seq, NetProtocol.INTENT_PLAY_CARD, events)
 
 
+## 英雄技能：同步受理（校验 + 扣费 + 登记每回合一次），效果排队到 run_pending_work()。
+func _on_activate_hero(pid: String, seq: int, payload: Dictionary) -> Dictionary:
+	var type := NetProtocol.INTENT_ACTIVATE_HERO
+	if board == null:
+		# 未接棋盘：没有权威盘面可校验技能归属，明确拒绝（骨架模式语义不变）
+		return _reject(pid, NetProtocol.REJECT_NOT_ALLOWED, type, seq)
+	var ability_id := String(payload.get("ability_id", ""))
+	var used: bool = _used_abilities.has(_ability_key(pid, ability_id))
+	var mana: Dictionary = _mana.get(pid, {})
+	var check: Dictionary = board.validate_hero_ability(pid, ability_id,
+		int(mana.get("current", 0)), int(mana.get("maximum", 0)), used, payload)
+	if not bool(check.get("ok", false)):
+		return _reject(pid, String(check.get("reason", NetProtocol.REJECT_NOT_ALLOWED)), type, seq)
+
+	var cost: int = int(check.get("cost", 0))
+	if int(mana.get("current", 0)) < cost:
+		return _reject(pid, NetProtocol.REJECT_NOT_ENOUGH_MANA, type, seq)
+	if bool(check.get("once_per_turn", false)):
+		_used_abilities[_ability_key(pid, ability_id)] = true
+	mana["current"] = int(mana["current"]) - cost
+
+	_pending_abilities.append({"pid": pid, "ability_id": ability_id, "payload": payload.duplicate()})
+	return _accept(pid, seq, type, {
+		"event": "hero_ability_queued", "pid": pid, "ability_id": ability_id,
+		"mana_left": int(mana["current"]), "cost": cost,
+		"authoritative": true,
+	})
+
+
 ## 结束回合：返回事件数组（_accept 同时接受单条事件与事件数组）。
 func _on_end_turn(pid: String) -> Array:
 	var events: Array = [{"event": "turn_ended", "pid": pid}]
@@ -385,6 +436,8 @@ func _begin_turn(with_effects: bool = true) -> void:
 	var pid := active_player()
 	if pid == "":
 		return
+	# 新回合：清空"每回合一次"的英雄技能限制
+	_used_abilities.clear()
 	var mana: Dictionary = _mana.get(pid, {})
 	if with_effects:
 		var maximum: int = mini(int(mana.get("maximum", 1)) + 1, mana_cap)

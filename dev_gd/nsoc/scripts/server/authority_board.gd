@@ -37,6 +37,7 @@ func has_sim() -> bool:
 ##   players: Array[pid]                 按行动顺序
 ##   teams:   {pid: team_id}             "defender" / "attacker" / "team_a" …（可选）
 ##   hero_hp: {pid: int}                 英雄血量（可选，默认 30）
+##   abilities: {pid: [ability_id]}      该玩家英雄携带的技能（权威端据此校验归属，可选）
 ##   slot_ids:{pid: slot_id}             自定义盘 id（可选，默认 "main_<pid>"）
 ##   level:   {slot_id: {initial_units: [...]}}  初始铺盘（可选）
 ## 返回 {"ok": bool, "reason": String}。
@@ -51,6 +52,7 @@ func start(config: Dictionary) -> Dictionary:
 	var hero_hp: Dictionary = config.get("hero_hp", {})
 	var slot_ids: Dictionary = config.get("slot_ids", {})
 	var level: Dictionary = config.get("level", {})
+	var abilities: Dictionary = config.get("abilities", {})
 
 	for i in range(players.size()):
 		var pid := String(players[i])
@@ -61,7 +63,8 @@ func start(config: Dictionary) -> Dictionary:
 		var role: int = BoardSlot.ROLE_MAIN_PLAYER if faction == BoardSlot.FACTION_PLAYER \
 			else BoardSlot.ROLE_MAIN_ENEMY
 		var section: Dictionary = level.get(slot_id, {})
-		var hero_spec := {"hp": int(hero_hp.get(pid, 30)), "name_short": pid, "name_full": pid}
+		var hero_spec := {"hp": int(hero_hp.get(pid, 30)), "name_short": pid, "name_full": pid,
+			"abilities": (abilities.get(pid, []) as Array).duplicate()}
 		var team := String(teams.get(pid, ""))
 
 		var slot: BoardSlot = BoardSlotFactory.create_headless(
@@ -199,6 +202,68 @@ func cast_spell(pid: String, card_name: String, payload: Dictionary) -> Dictiona
 	var spell: Dictionary = check.get("spell", {})
 	spell["destination"] = destination
 	return {"ok": true, "reason": "", "kind": "spell", "spell": spell}
+
+
+## 英雄技能：同步校验。技能必须在显式注册表里、必须属于该玩家盘上的英雄、
+## 且 `can_activate(ctx)` 通过（ctx 注入权威端自己的费用/回合/已用状态）。
+## 返回 {"ok", "reason", "cost", "once_per_turn", "spell"/"ability"}。
+func validate_hero_ability(pid: String, ability_id: String,
+		mana_current: int, mana_maximum: int, used_this_turn: bool,
+		payload: Dictionary) -> Dictionary:
+	var slot: BoardSlot = _resolve_slot(pid, String(payload.get("target_slot_id", "")))
+	if slot == null:
+		return {"ok": false, "reason": NetProtocol.REJECT_ILLEGAL_TARGET}
+	if not HeroAbilities.has(ability_id):
+		return {"ok": false, "reason": NetProtocol.REJECT_BAD_PAYLOAD}
+	# 归属校验：只有英雄自己带的技能可激活（客户端无法凭空用一个别人的技能）
+	if slot.hero == null or not (slot.hero.abilities as Array).has(ability_id):
+		return {"ok": false, "reason": NetProtocol.REJECT_NOT_ALLOWED}
+
+	var ctx := _make_ctx(slot, payload, mana_current, mana_maximum, used_this_turn)
+	var inst = HeroAbilities.get_instance(ability_id)
+	if inst == null:
+		return {"ok": false, "reason": NetProtocol.REJECT_BAD_PAYLOAD}
+	if not bool(inst.can_activate(ctx)):
+		return {"ok": false, "reason": NetProtocol.REJECT_NOT_ALLOWED}
+	return {"ok": true, "reason": "",
+		"ability": {"ability_id": ability_id, "slot_id": String(slot.id)},
+		"cost": int(inst.cost()),
+		"once_per_turn": bool(inst.once_per_turn())}
+
+
+## 执行英雄技能（**协程**，由服务器 tick 调用；此前必须已通过 validate_hero_ability）。
+func run_hero_ability(pid: String, ability_id: String,
+		mana_current: int, mana_maximum: int, used_this_turn: bool,
+		payload: Dictionary) -> Dictionary:
+	var slot: BoardSlot = _resolve_slot(pid, String(payload.get("target_slot_id", "")))
+	if slot == null:
+		return {"ok": false, "reason": NetProtocol.REJECT_ILLEGAL_TARGET}
+	var inst = HeroAbilities.get_instance(ability_id)
+	if inst == null:
+		return {"ok": false, "reason": NetProtocol.REJECT_BAD_PAYLOAD}
+	await inst.on_activate(_make_ctx(slot, payload, mana_current, mana_maximum, used_this_turn))
+	return {"ok": true, "reason": "",
+		"ability": {"ability_id": ability_id, "slot_id": String(slot.id)}}
+
+
+## 构造效果上下文：把**权威端的**费用 / 回合 / 已用状态与目标注入，让技能复用客户端同一份
+## 逻辑。注意这些值来自服务器参数，**绝不从客户端 payload 读取**（否则可伪造费用）。
+func _make_ctx(slot: BoardSlot, payload: Dictionary,
+		mana_current: int, mana_maximum: int, used_this_turn: bool) -> EffectContext:
+	var ctx := Game.make_effect_context()
+	ctx.hero = slot.hero
+	var row := int(payload.get("row", -1))
+	var col := int(payload.get("col", -1))
+	var target_slot: BoardSlot = _by_slot_id.get(String(payload.get("target_slot_id", slot.id)))
+	if target_slot != null and row >= 0 and col >= 0:
+		ctx.target_cell = target_slot.board.get_cell(Vector2(row, col))
+	var mirror := ManaSystem.new()
+	mirror.current = mana_current
+	mirror.maximum = mana_maximum
+	ctx.mana_system = mirror
+	ctx.turn_running = false
+	ctx.ability_used_this_turn = used_this_turn
+	return ctx
 
 
 ## 盘面公开状态（战棋里单位位置本就公开；隐藏信息只有手牌，由 view_for 处理）。

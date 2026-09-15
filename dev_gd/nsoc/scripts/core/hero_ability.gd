@@ -25,12 +25,25 @@ func once_per_turn() -> bool:
 	return false
 
 # 是否可激活：默认禁止回合运行中、检查费用与每回合次数限制。
+# 客户端：ctx 不注入 → 读 Game.turn / Game.mana / HeroAbilities（行为与以前一致）。
+# 权威端：ctx 注入 mana_system / turn_running / ability_used_this_turn → 用服务器状态校验，
+#         同一份前置逻辑因此可被无头侧复用（不需要第二份实现）。
 func can_activate(ctx) -> bool:
-	if Game.turn != null and Game.turn.is_running:
+	var running: bool = Game.turn != null and Game.turn.is_running
+	var mana = Game.mana
+	var used: bool = HeroAbilities.is_used_this_turn(id())
+	if ctx != null:
+		if ctx.turn_running != null:
+			running = bool(ctx.turn_running)
+		if ctx.mana_system != null:
+			mana = ctx.mana_system
+		if ctx.ability_used_this_turn != null:
+			used = bool(ctx.ability_used_this_turn)
+	if running:
 		return false
-	if not Game.mana.can_spend(cost()):
+	if mana != null and not mana.can_spend(cost()):
 		return false
-	if once_per_turn() and HeroAbilities.is_used_this_turn(id()):
+	if once_per_turn() and used:
 		return false
 	return true
 

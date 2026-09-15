@@ -19,7 +19,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 57
+const EXPECTED_CASES: int = 68
 
 var _passed: int = 0
 var _failed: int = 0
@@ -64,6 +64,103 @@ func _ready() -> void:
 	await _test_turn_phase()
 	await _test_board_hero_sync()
 	await _test_spell_play()
+	await _test_hero_ability()
+
+
+## 桩技能：只为验证权威端的技能执行链路（不进入正式内容，测试内注入注册表）。
+class StubAbility extends HeroAbility:
+	func id() -> String:
+		return "test_authority_stub"
+	func display_name() -> String:
+		return "stub"
+	func cost() -> int:
+		return 1
+	func once_per_turn() -> bool:
+		return true
+	func on_activate(ctx) -> void:
+		var cell = ctx.target_cell
+		if cell != null and cell.has_card and not (cell.effects as Array).has("charge"):
+			cell.effects.append("charge")
+
+
+## 英雄技能接入权威端：归属校验（英雄必须真的带这个技能）/ 每回合一次 / 费用，效果排队到 tick。
+## 注：正式内容里当前**没有"可主动激活且无头安全"的技能**（restart / yi_yong_jun 需要 hand_view
+## 等 UI），因此执行链路用测试内注入的桩技能验证；真实技能待其去掉 UI 依赖后即可直接复用。
+func _test_hero_ability() -> void:
+	HeroAbilities._instances["test_authority_stub"] = StubAbility.new()
+	Game.registry.clear()
+	var host := BattleSimHost.new()
+	add_child(host)
+	var s := BattleServerSession.new()
+	s.configure(NetProtocol.VERSION, "abc")
+	s.create_match({
+		"match_id": "m_ability", "seed": 19, "players": ["p1", "p2"],
+		"decks": {"p1": [_unit], "p2": [_unit]}, "card_costs": {_unit: 1},
+		"hero_hp": {"p1": 30, "p2": 30}, "rate_limit_per_sec": -1,
+		"board": {"players": ["p1", "p2"], "teams": {"p1": "defender", "p2": "attacker"},
+			"abilities": {"p1": ["test_authority_stub", "weishan_ability"], "p2": []}},
+		"sim_host": host,
+	})
+	var hello := {"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": "abc"}}
+	s.handle_client_message("p1", hello)
+	s.handle_client_message("p2", hello)
+	s.drain_outbound("p1")
+	s.drain_outbound("p2")
+
+	var b = s.board()
+	var ally: CellData = b.cell_at("main_p1", 2, 1)
+	ally.set_card(_unit, 2, {"front": 4, "back": 4, "left": 4, "right": 4}, false,
+		[], "main_p1", "initial", "defender")
+
+	# ① 未注册的技能
+	var r1: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_HERO,
+		"payload": {"ability_id": "no_such_ability", "seq": 0}})
+	_check("技能: 未注册技能 → bad_payload",
+		String(r1.get("reason", "")) == NetProtocol.REJECT_BAD_PAYLOAD, str(r1))
+
+	# ② 已注册但不属于该英雄 → not_allowed（防"用一个别人的技能"）
+	var r2: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_HERO,
+		"payload": {"ability_id": "first_arrow_ability", "seq": 1}})
+	_check("技能: 不属于本英雄 → not_allowed",
+		String(r2.get("reason", "")) == NetProtocol.REJECT_NOT_ALLOWED, str(r2))
+
+	# ③ 纯被动（can_activate=false）不可激活
+	var r3: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_HERO,
+		"payload": {"ability_id": "weishan_ability", "seq": 2}})
+	_check("技能: 纯被动 → not_allowed",
+		String(r3.get("reason", "")) == NetProtocol.REJECT_NOT_ALLOWED, str(r3))
+	_check("技能: 三次拒绝后费用未变",
+		int(((s.authority().view_for("p1")["you"] as Dictionary)["mana"] as Dictionary)["current"]) == 1)
+
+	# ④ 合法激活：受理 + 扣费 + 效果排队
+	var r4: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_HERO,
+		"payload": {"ability_id": "test_authority_stub", "seq": 3,
+			"target_slot_id": "main_p1", "row": 2, "col": 1}})
+	_check("技能: 合法激活被受理", bool(r4.get("accepted", false)), str(r4))
+	_check("技能: 费用已扣（1 → 0）",
+		int(((s.authority().view_for("p1")["you"] as Dictionary)["mana"] as Dictionary)["current"]) == 0)
+	_check("技能: 效果排在待结算队列（尚未执行）",
+		s.authority().has_pending_work() and not (ally.effects as Array).has("charge"),
+		"%s / %s" % [str(s.authority().has_pending_work()), str(ally.effects)])
+
+	# ⑤ 每回合一次：同回合再次激活被拒
+	var r5: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_HERO,
+		"payload": {"ability_id": "test_authority_stub", "seq": 4}})
+	_check("技能: 同回合第二次 → not_allowed（once_per_turn）",
+		String(r5.get("reason", "")) == NetProtocol.REJECT_NOT_ALLOWED, str(r5))
+
+	# ⑥ tick 执行
+	await s.tick()
+	_check("技能: tick 后效果生效（目标获得 charge）", (ally.effects as Array).has("charge"),
+		str(ally.effects))
+	_check("技能: 待结算队列已清空", not s.authority().has_pending_work())
+
+	var events: Array = []
+	for m in s.drain_outbound("p2"):
+		events.append(String(((m as Dictionary).get("payload", {}) as Dictionary).get("event", "")))
+	_check("技能: 下发 hero_ability_queued / hero_ability_used",
+		events.has("hero_ability_queued") and events.has("hero_ability_used"), str(events))
 
 	var total: int = _passed + _failed
 	if total != EXPECTED_CASES:
