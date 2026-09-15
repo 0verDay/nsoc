@@ -6,9 +6,6 @@ extends Node
 # 旧 main.gd 中散落的 player_health / current_mana / draw_pile / autophagy_counter
 # 全部迁移到此处或对应子系统。
 
-signal cards_loaded(cards: Array)
-signal level_loaded(level: Dictionary)
-
 var deck: DeckManager
 var mana: ManaSystem
 var turn: TurnSystem
@@ -299,6 +296,46 @@ func _install_default_font() -> void:
 				return
 	push_warning("Game: 未找到中文字体，安卓端中文将显示为方块。请放置 NotoSansSC 到 res://assets/fonts/")
 
+# ── 三段装配共用的私有步骤（重构文档.md §3.4-4：先消除重复，再抽 BattleSession）──
+# 背景：bootstrap（PVE）/ _bootstrap_empire / bootstrap_pvp 原本各自复制了同一批
+# "清旧状态"、"装载 card_db"、"清一次性输入"代码。这里先收敛为单一实现，
+# 行为保持不变（冒烟 STATE_HASH 逐位一致可证）。
+
+## 清旧子系统状态。必须在装配 deck / mana 之前调用。
+func _reset_battle_subsystems() -> void:
+	counters.clear()
+	# 重置英雄技能回合用量（防止上局退出时 reset_turn_usage 未执行导致残留）
+	if has_node("/root/HeroAbilities"):
+		HeroAbilities.reset_turn_usage()
+	# 清空玩家装备（防止上局残留）
+	if has_node("/root/Equipments"):
+		Equipments.clear_all()
+	# 重置回合系统运行状态（防止上局退出时 is_running 残留为 true）
+	if turn != null:
+		turn.is_running = false
+		turn.turn_number = 0
+
+
+## 装载卡牌原型库到 card_db。
+## cards 为空 → 从 all_cards.json 读（PVE / 帝国）；非空 → 用调用方给的实例（PVP 由服务器下发）。
+func _load_card_db(cards: Array = []) -> void:
+	var source: Array = cards
+	if source.is_empty():
+		source = DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
+	card_db.clear()
+	for c in source:
+		card_db[c.name] = c
+
+
+## 清空一次性输入：pending 关卡字段与场景注入的选择器引用。
+## 避免战斗结束返回主菜单后，再次进入战斗时误用上一局的配置 / 悬空引用。
+func _clear_pending_inputs() -> void:
+	pending_chapter_config = ""
+	pending_level_path = ""
+	_target_selector_node = null
+	_hand_picker_node     = null
+
+
 func bootstrap() -> void:
 	# 帝国模式出征：在所有标准 PVE 装载之前走专属分支
 	if not pending_empire_battle.is_empty():
@@ -360,14 +397,7 @@ func bootstrap() -> void:
 	var deck_cards := DataLoader.load_cards(DataLoader.BATTLE_CARDS_JSON)
 	# card_db 装载所有卡片原型（all_cards.json），供关卡 initial_units / spawners
 	# 按名字反查（test_level.json 仅存卡名索引）。deck 只装玩家牌组。
-	var all_cards := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
-	card_db.clear()
-	for c in all_cards:
-		card_db[c.name] = c
-	cards_loaded.emit(deck_cards)
-
-	# ③ level 装载完成，发信号（顺序保留：listener 期望 cards_loaded 在前）
-	level_loaded.emit(level)
+	_load_card_db()
 
 	deck.setup(deck_cards)
 	# 战役章节起始费（仅覆盖首回合 max=current=N，第二回合按正常 +1 走）
@@ -380,17 +410,8 @@ func bootstrap() -> void:
 	if max_cap <= 0:
 		max_cap = ManaSystem.MAX_MANA_CAP
 	mana.setup(start_mana, max_cap)
-	counters.clear()
-	# 重置英雄技能回合用量（防止上局退出时 HeroAbilities.reset_turn_usage 未执行导致残留）
-	if has_node("/root/HeroAbilities"):
-		HeroAbilities.reset_turn_usage()
-	# 清空玩家装备（防止上局残留）
-	if has_node("/root/Equipments"):
-		Equipments.clear_all()
-	# 重置回合系统运行状态（防止上局退出时 is_running 残留为 true）
-	if turn != null:
-		turn.is_running = false
-		turn.turn_number = 0
+	# 清旧子系统状态（counters / 技能回合用量 / 装备 / 回合运行态）
+	_reset_battle_subsystems()
 
 	# 装载战役章节胜利目标（无 objective 字段时清空，按默认胜负规则走）
 	if has_node("/root/Objectives"):
@@ -400,14 +421,8 @@ func bootstrap() -> void:
 	if has_node("/root/Events"):
 		Events.setup_for_battle(level_data)
 
-	# 一次性消费：清空 pending 字段，避免战斗结束返回主菜单后
-	# 再次进入战斗（玩家牌组）误用上一局的配置。
-	pending_chapter_config = ""
-	pending_level_path = ""
-	# 清空上一局场景注入的选择器引用，防止场景 free 后引用悬空。
-	# 新场景在 _install_controllers 末尾会重新调 register_selectors 注入。
-	_target_selector_node = null
-	_hand_picker_node     = null
+	# 一次性消费：清空 pending 字段与选择器引用（防止误用上一局配置 / 引用悬空）
+	_clear_pending_inputs()
 
 	# PVE 模式：清掉上局 PVP 残留的额外 deck/mana 实例；本地玩家保留为别名。
 	is_pvp = false
@@ -527,28 +542,16 @@ func _bootstrap_empire(ctx: Dictionary) -> void:
 	}
 
 	# card_db：原型库走 all_cards.json（spawner 与卡片回退同源）
-	var all_cards := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
-	card_db.clear()
-	for c in all_cards:
-		card_db[c.name] = c
+	_load_card_db()
 
 	# 玩家牌组：从 EmpireDeckStorage 拿主将的卡组配置，反查 empire_cards.json 原型，
 	# 写入 user://battle_cards.json。仅主将卡组生效（其余攻方仅 spawner）。
 	DataLoader.generate_battle_cards_from_empire(main_hero_key)
 	var deck_cards := DataLoader.load_cards(DataLoader.BATTLE_CARDS_JSON)
-	cards_loaded.emit(deck_cards)
-	level_loaded.emit(level_data)
 
 	deck.setup(deck_cards)
 	mana.setup(1, ManaSystem.MAX_MANA_CAP)
-	counters.clear()
-	if has_node("/root/HeroAbilities"):
-		HeroAbilities.reset_turn_usage()
-	if has_node("/root/Equipments"):
-		Equipments.clear_all()
-	if turn != null:
-		turn.is_running = false
-		turn.turn_number = 0
+	_reset_battle_subsystems()
 
 	# 帝国模式不走章节胜利目标 / 脚本化事件
 	if has_node("/root/Objectives"):
@@ -556,10 +559,7 @@ func _bootstrap_empire(ctx: Dictionary) -> void:
 	if has_node("/root/Events"):
 		Events.setup_for_battle(level_data)
 
-	pending_chapter_config = ""
-	pending_level_path = ""
-	_target_selector_node = null
-	_hand_picker_node     = null
+	_clear_pending_inputs()
 
 
 # ── PVP 战斗装配（联机入口）──────────────────────────────────────────
@@ -590,15 +590,10 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 
 	# card_db 装载：PVP 模式服务器只下发牌组，客户端仍需 all_cards.json 解卡牌静态属性。
 	if all_cards_db.size() > 0:
-		card_db.clear()
-		for c in all_cards_db:
-			card_db[c.name] = c
+		_load_card_db(all_cards_db)
 	elif card_db.size() == 0:
 		# 客户端本地仍有 all_cards.json，自行加载兜底
-		var loaded := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
-		card_db.clear()
-		for c in loaded:
-			card_db[c.name] = c
+		_load_card_db()
 
 	# 兼容旧调用：第三参数为 Array 时视为所有玩家共用同一套牌组
 	var deck_map: Dictionary = {}
@@ -610,20 +605,9 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 		for pid_raw in all_player_ids:
 			deck_map[String(pid_raw)] = shared
 
-	# cards_loaded 信号：发本地玩家的牌组（HandView / 旧订阅方只关心本地牌）
-	var local_cards: Array = deck_map.get(p_local_pid, [])
-	cards_loaded.emit(local_cards)
-
-	# 清旧
+	# 清旧：额外 deck/mana 实例 + 子系统状态
 	clear_extra_decks_and_manas()
-	counters.clear()
-	if has_node("/root/HeroAbilities"):
-		HeroAbilities.reset_turn_usage()
-	if has_node("/root/Equipments"):
-		Equipments.clear_all()
-	if turn != null:
-		turn.is_running = false
-		turn.turn_number = 0
+	_reset_battle_subsystems()
 
 	# 逐玩家建 deck + mana，每人使用自己的牌组。
 	# PVP 模式下每位玩家用 (rng_seed + slot_index) 作为确定性种子，
@@ -665,10 +649,7 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 
 	# level_data：PVP 不走章节关卡，留空让装配方按 is_pvp 走 PVP 专属布局。
 	level_data = {}
-	pending_chapter_config = ""
-	pending_level_path = ""
-	_target_selector_node = null
-	_hand_picker_node     = null
+	_clear_pending_inputs()
 	# PVP 回合状态初始化
 	pvp_action_order = []
 	for pid_raw in all_player_ids:
