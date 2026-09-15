@@ -28,9 +28,10 @@
 | 文件 | 原因 |
 |---|---|
 | `step8_content.txt` | 文件自述内容已**完全并入** `multiplay_dev_list_skills.md` §11.6（7 个标题与 31 行表格一一对应，无独有小节），无留存价值 |
+| `dev1/`（7 个条目） | 旧 JS 原型（`game.js` / `index.html` / `player_config.js` / `skills.md` / `style.css` / `test_card.js` / `test_level_config.js`）。功能已全部由 `dev_gd/nsoc/` 的 Godot 版本取代，属"冗余代码与无用脚本"，2026-09-15 经确认删除。旧仓库 `soc` 的对照物保留在 git 历史里，需要时 `git show <commit>:dev1/...` 即可取回 |
 
 ## 约定
 
 - **新增规范**一律写进 `docs/`，不要新增根目录散装文档。
 - 归档文件**不再更新**；若其中内容重新变得重要，应改写进对应现行文档而不是翻新旧文。
-- `dev1/`（旧 JS 原型）**保留原位**，属历史对照物，不参与归档。
+- 需要人工执行的部署与验收事项写在 `docs/OPERATOR-TODO.md`。

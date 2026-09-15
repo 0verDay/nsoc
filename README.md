@@ -25,20 +25,9 @@ https://github.com/qfwj-lyy/soc
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | **部署与联调清单**：中继 + 权威进程 + 客户端的启动命令、验收步骤、故障排查 |
 | [`docs/NEXT.md`](docs/NEXT.md) | **下一步工作清单**：哪些需要你出手（部署/跨机验收/仓库收尾）、哪些我可以直接做、每步的验收门槛 |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | 重构路线与**实时进度**、剩余工作、验收清单 |
+| [`docs/OPERATOR-TODO.md`](docs/OPERATOR-TODO.md) | **需要人工执行的待办**：权威进程上云、两台电脑真机验收、仓库收尾、运维命令 |
 | [`重构文档.md`](重构文档.md) | 完整重构方案（评审稿）：目标架构、反作弊设计、清理清单、实施计划 |
-| [`docs/ARCHIVE-INDEX.md`](docs/ARCHIVE-INDEX.md) | 历史设计稿归档索引（`docs/archive/`） |
-
-## dev1
-
-（命名dev为develop版本）
-
-### 2026.5.15更新
-
-1. 新建文件夹
-2. 硬编码了3x6地图，2个阵营，2张卡牌，2个白板英雄
-3. 添加了基础的卡牌使用逻辑，棋子自走逻辑
-4. 游戏中棋子按从前往后，从左往右的顺序依次遍历执行移动或攻击指令（对侧则相反）
-5. 测试版玩家可用费用为10费，每回合补满
+| [`docs/ARCHIVE-INDEX.md`](docs/ARCHIVE-INDEX.md) | 历史设计稿归档索引（`docs/archive/`）与已删除文件记录 |
 
 ## dev_gd
 
@@ -210,3 +199,10 @@ https://github.com/qfwj-lyy/soc
 3. 用ai改了下文档，并正式将ds设为本项目御用ai
 4. 更改了调试分辨率
 5. 修复了帝国模式中地点详情界面展开与收回逻辑错误的bug
+
+### 2026.9.15仓库整理与联机收尾
+1. 删除 `dev1/`（旧 JS 原型，功能已全部由 `dev_gd/nsoc/` 取代；对照物保留在 git 历史里）
+2. 中继上线腾讯云真机（Windows Server + NSSM 服务 `nsoc-server`），并修掉"一个权威进程只能服务一局"
+3. 新增 `docs/OPERATOR-TODO.md`：需要人工执行的部署与验收清单
+4. 新增 `server/deploy/`：中继与权威进程的启动脚本、服务安装脚本
+5. 新增 `tools/ci/run_e2e_cloud.ps1`：跨公网端到端验收脚本

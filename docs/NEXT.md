@@ -51,9 +51,9 @@
 
 | 事项 | 现状 | 需要你 |
 |---|---|---|
-| `dev1/` 目录 | 还在（7 个条目），历史遗留 | 一句话确认：**标注废弃**还是**直接删** |
+| `dev1/` 目录 | ✅ 已删除（2026-09-15），记录见 `docs/ARCHIVE-INDEX.md` | — |
 | 4 个已合并的远端旧分支 | `origin/branch_3v3`、`origin/multi-chessboard-branch`、`origin/multiplayer_1v3_branch`、`origin/multiplayer_branch` | 一句话确认是否删除（你之前说"先不用管"，这里只是挂着） |
-| 中继重新部署 | 线上跑的是**止血版**（无权威派单） | 用 `server/deploy/nsoc-server.exe` 覆盖并重启 NSSM 服务（见 `docs/DEPLOY.md` §3） |
+| 权威进程上云 | 现在跑在某台本机，窗口必须常开 | 按 `docs/OPERATOR-TODO.md` 待办 1 操作（`server/deploy/authority/`） |
 
 ---
 
