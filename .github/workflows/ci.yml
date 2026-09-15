@@ -174,6 +174,17 @@ jobs:
           fi
           grep -E "RULES_RESULT" rules.log
 
+      - name: 权威进程入口测试（注册/开局/意图/tick，无需真实网络）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/AuthorityMainTest.tscn > amain.log 2>&1 || true
+          if ! grep -q "AMAIN_RESULT PASS" amain.log; then
+            grep -E "AMAIN_CASE FAIL|AMAIN_RESULT" amain.log || true
+            echo "::error::权威进程入口测试未通过"
+            exit 1
+          fi
+          grep -E "AMAIN_RESULT" amain.log
+
       - name: 客户端 v2 传输层测试（意图/权威分发，无需网络）
         run: |
           set -euo pipefail
@@ -282,6 +293,7 @@ jobs:
             authority.log
             scene.log
             rules.log
+            amain.log
             netv2.log
             board.log
             cellview.log
