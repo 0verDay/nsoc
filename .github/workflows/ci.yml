@@ -174,6 +174,17 @@ jobs:
           fi
           grep -E "RULES_RESULT" rules.log
 
+      - name: 权威手牌渲染测试（按 card_names 重建手牌区）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HandRenderTest.tscn > hr.log 2>&1 || true
+          if ! grep -q "HR_RESULT PASS" hr.log; then
+            grep -E "HR_CASE FAIL|HR_RESULT" hr.log || true
+            echo "::error::权威手牌渲染测试未通过"
+            exit 1
+          fi
+          grep -E "HR_RESULT" hr.log
+
       - name: v2 接线测试（auth/* → 镜像 + 本地盘面重绘）
         run: |
           set -euo pipefail
@@ -326,6 +337,7 @@ jobs:
             authority.log
             scene.log
             rules.log
+            hr.log
             v2w.log
             abr.log
             v2bc.log

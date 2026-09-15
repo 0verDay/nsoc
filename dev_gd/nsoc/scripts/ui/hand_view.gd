@@ -101,6 +101,24 @@ func _spawn_card_at(slot_index: int) -> void:
 	var data = Game.deck.draw_card()
 	if data == null:
 		data = CardSpell.new("虚空", 1, ["autophagy"])
+	_append_card(data, slot_index)
+
+
+## 按**权威手牌**重建手牌区（v2 权威模式：手牌由服务器说了算，客户端只照着画）。
+## 逐张用卡库原型建卡；先清空再按顺序补上，保证与 auth/state 一致。
+func replace_hand_with(card_names: Array) -> void:
+	for child in _container.get_children().duplicate():
+		_container.remove_child(child)
+		child.queue_free()
+	for name_raw in card_names:
+		var data = Game.get_card(String(name_raw))
+		if data == null:
+			continue
+		_append_card(data, -1)
+
+
+## 建一张手牌节点并接好信号（无动画）。
+func _append_card(data, slot_index: int) -> void:
 	var c = _hand_card_scene.instantiate()
 	_container.add_child(c)
 	c.setup(data, _card_counter)

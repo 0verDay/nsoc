@@ -415,6 +415,12 @@ func _wire_signals() -> void:
 	hand_view.hand_card_long_press_canceled.connect(detail_panel.cancel_long_press)
 	play_controller.hand_consumed.connect(hand_view.draw_into_slot)
 
+	# v2 权威模式：手牌 / 费用 / 回合按钮都按 auth/state 渲染（服务器说了算）。
+	# 注意 Game 已在 enable_v2_authority() 里连过 auth_state（先更新镜像），
+	# 这里的处理器后跑，因此读到的是刚更新的镜像。
+	if Game.v2_authority and not Net.auth_state.is_connected(_on_auth_state_render):
+		Net.auth_state.connect(_on_auth_state_render)
+
 	# HeroActionBar 自连 turn / mana / abilities / equipments；不再重复连。
 
 	# 装备拖拽高亮
@@ -633,6 +639,26 @@ func _on_cell_long_press_requested(payload) -> void:
 
 func _on_cell_card_dropped(cell, data) -> void:
 	play_controller.handle_drop(cell, data)
+
+
+# v2 权威模式：把 auth/state 渲染到本端 UI。
+#   - 手牌：按 you.hand 重建（不再依赖 Game.deck 的本地抽牌）
+#   - 费用：按 you.mana 覆盖本地 ManaSystem 并刷新 UI
+#   - 回合按钮：只有轮到我且未终局时可点
+# 盘面由 Game._on_auth_state → AuthBoardRenderer 负责，这里不重复。
+func _on_auth_state_render(_payload: Dictionary) -> void:
+	var v2 = Game.v2
+	if v2 == null:
+		return
+	hand_view.replace_hand_with(v2.hand)
+	if Game.mana != null:
+		Game.mana.current = int(v2.mana.get("current", Game.mana.current))
+		Game.mana.maximum = int(v2.mana.get("maximum", Game.mana.maximum))
+		_on_mana_changed(Game.mana.current, Game.mana.maximum)
+	if is_instance_valid(end_turn_btn):
+		end_turn_btn.disabled = not v2.is_my_turn(Game.local_player_id)
+		if not end_turn_btn.disabled:
+			end_turn_btn.text = "结束回合"
 
 # cell 被清空时刷新所属盘的 phantom 预告（避免残留）
 func _on_cell_cleared(cell) -> void:
