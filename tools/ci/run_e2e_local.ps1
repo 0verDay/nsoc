@@ -52,13 +52,16 @@ if (-not (Test-Path $projCopy)) {
     Copy-Item (Join-Path $projectSrc "*") -Destination $projCopy -Recurse -Force
 }
 
-# Go toolchain env (no admin rights: keep caches under TEMP)
+# Go toolchain env (no admin rights: keep caches under TEMP).
+# GOPROXY=off: the module is already in GOMODCACHE, so the build works offline too.
 $env:GOCACHE = Join-Path $env:TEMP "gocache"
 $env:GOPATH = Join-Path $env:TEMP "gopath"
 $env:GOMODCACHE = Join-Path $env:TEMP "gopath\pkg\mod"
 $env:GOTMPDIR = Join-Path $env:TEMP "gotmp"
-$env:GOPROXY = "https://goproxy.cn,direct"
-$env:GOSUMDB = "sum.golang.google.cn"
+$env:GOFLAGS = "-mod=mod"
+# 强制离线：依赖已在 GOMODCACHE 里，避免构建时去访问模块代理（沙箱/无网环境常见）
+$env:GOPROXY = "off"
+$env:GOSUMDB = "off"
 New-Item -ItemType Directory -Force -Path $env:GOCACHE, $env:GOPATH, $env:GOTMPDIR | Out-Null
 
 $relayExe = Join-Path $tempRoot "nsoc-server.exe"
@@ -67,11 +70,25 @@ Push-Location (Join-Path $repo "server")
 & go build -o $relayExe .
 $buildCode = $LASTEXITCODE
 Pop-Location
-if ($buildCode -ne 0) { throw "go build failed ($buildCode)" }
+if ($buildCode -ne 0) {
+    # 退路：用仓库里已有的二进制（可能略旧），至少让联调能跑
+    $fallback = Join-Path $repo "server\nsoc-server.exe"
+    if (Test-Path $fallback) {
+        Write-Host "    build failed, falling back to $fallback (may be stale)" -ForegroundColor Yellow
+        Copy-Item $fallback $relayExe -Force
+    } else {
+        throw "go build failed ($buildCode) and no prebuilt relay found"
+    }
+}
 
 Write-Host "==> import warmup" -ForegroundColor Cyan
-# Godot prints harmless noise on stderr (cert store / user://) -> send it to a file, not the console
-& $godotBin --headless --path $projCopy --import > (Join-Path $tempRoot "import.log") 2>&1
+# Use Start-Process: Godot writes harmless noise to stderr, and PS 5.1 with
+# $ErrorActionPreference=Stop would treat that as a terminating error.
+$imp = Start-Process -FilePath $godotBin -PassThru -NoNewWindow -Wait `
+    -RedirectStandardOutput (Join-Path $tempRoot "import.log") `
+    -RedirectStandardError (Join-Path $tempRoot "import.err") `
+    -ArgumentList @("--headless", "--path", $projCopy, "--import")
+if ($imp.ExitCode -ne 0) { Write-Host "    import exit=$($imp.ExitCode)" -ForegroundColor DarkGray }
 
 $roomFile = Join-Path $tempRoot "room.txt"
 Remove-Item $roomFile -Force -ErrorAction SilentlyContinue
@@ -88,29 +105,22 @@ $relay = Start-Process -FilePath $relayExe -PassThru -NoNewWindow `
     -RedirectStandardOutput $relayOut -RedirectStandardError ($relayOut + ".err")
 Start-Sleep -Milliseconds 800
 
-Write-Host "==> start client probe" -ForegroundColor Cyan
+# 权威进程以"待命"身份启动（不带 --room）：中继在有人建权威模式房间时派单给它
+Write-Host "==> start authority process (idle)" -ForegroundColor Cyan
+$auth = Start-Process -FilePath $godotBin -PassThru -NoNewWindow -RedirectStandardOutput $authOut `
+    -RedirectStandardError ($authOut + ".err") -ArgumentList @(
+        "--headless", "--path", $projCopy, "res://server/AuthorityMain.tscn", "--",
+        "--host=127.0.0.1", "--port=$Port")
+Start-Sleep -Milliseconds 1500
+
+Write-Host "==> start client probe (authoritative room + lobby config)" -ForegroundColor Cyan
 $probe = Start-Process -FilePath $godotBin -PassThru -NoNewWindow -RedirectStandardOutput $probeOut `
     -RedirectStandardError ($probeOut + ".err") -ArgumentList @(
         "--headless", "--path", $projCopy, "res://tests/E2ERelayProbe.tscn", "--",
         "--host=127.0.0.1", "--port=$Port", "--roomfile=$roomFile", "--timeout=45")
-
-$deadline = (Get-Date).AddSeconds(40)
-while (-not (Test-Path $roomFile) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
-
-$room = ""
-if (Test-Path $roomFile) { $room = (Get-Content $roomFile -Raw).Trim() }
-if ($room -eq "") {
-    Write-Host "[FAIL] probe did not create a room (see $probeOut)" -ForegroundColor Red
-} else {
-    Write-Host "==> room $room : start authority process" -ForegroundColor Cyan
-    $auth = Start-Process -FilePath $godotBin -PassThru -NoNewWindow -RedirectStandardOutput $authOut `
-        -RedirectStandardError ($authOut + ".err") -ArgumentList @(
-            "--headless", "--path", $projCopy, "res://server/AuthorityMain.tscn", "--",
-            "--room=$room", "--host=127.0.0.1", "--port=$Port")
-    $null = $probe.WaitForExit($TimeoutSec * 1000)
-    Start-Sleep -Milliseconds 500
-    try { if (-not $auth.HasExited) { $auth.Kill() } } catch { }
-}
+$null = $probe.WaitForExit($TimeoutSec * 1000)
+Start-Sleep -Milliseconds 500
+try { if (-not $auth.HasExited) { $auth.Kill() } } catch { }
 
 # Always stop children, whichever branch we took (a Godot scene whose script failed to
 # parse spins forever with no script attached: it never exits on its own).

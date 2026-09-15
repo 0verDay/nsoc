@@ -129,11 +129,10 @@ func _poll_relay() -> void:
 			_registered = false
 
 
-## 用密钥向中继注册为房间的权威（未配置 room_id 时只告警，等外部指定）。
+## 注册。分两种情形（中继侧对应两种用法）：
+##   无 room_id → **待命**：只校验密钥，等中继在有人建"权威模式房间"时派单；
+##   有 room_id → 直接接管该房间（NSOC_ROOM_ID / --room，便于手工联调）。
 func register_authority() -> void:
-	if room_id == "":
-		push_warning("AuthorityMain: room_id 未提供（NSOC_ROOM_ID / --room），暂不注册")
-		return
 	_send_to_relay({
 		"type": "room/authority_join",
 		"payload": {"room_id": room_id, "key": authority_key},
@@ -163,6 +162,20 @@ func handle_relay_text(text: String) -> void:
 func handle_relay_message(d: Dictionary) -> void:
 	relay_message.emit(d)
 	var type := String(d.get("type", ""))
+	if type == "authority/ready":
+		print("[authority] ready, waiting for room assignment")
+		return
+	if type == "authority/host_room":
+		# 中继把房间派给我们：带房号再注册一次（密钥已校验过）
+		var assign: Dictionary = d.get("payload", {})
+		room_id = String(assign.get("room_id", ""))
+		print("[authority] assigned room=%s" % room_id)
+		register_authority()
+		return
+	if type == "authority/start_match":
+		# 大厅给出的开局配置（牌组 / 英雄 / 关卡）：以它为准重建对局
+		create_match_from_config(d.get("payload", {}))
+		return
 	if type == "authority/joined":
 		create_match_for(d.get("payload", {}))
 		return
@@ -186,6 +199,35 @@ func create_match_for(joined: Dictionary) -> void:
 	var config := _load_match_config()
 	if config.is_empty():
 		config = build_default_config(joined.get("players", []))
+	_start_session(config)
+
+
+## 用**大厅给出的配置**开局（权威模式下由房主通过 authority/start_match 交过来）。
+## 缺失字段（card_costs / match_id / seed）在这里补齐，避免大厅漏发导致开局失败。
+func create_match_from_config(cfg: Dictionary) -> void:
+	if cfg.is_empty():
+		push_warning("AuthorityMain: authority/start_match 载荷为空，忽略")
+		return
+	var config: Dictionary = cfg.duplicate(true)
+	if not config.has("card_costs"):
+		var costs: Dictionary = {}
+		for key in Game.card_db.keys():
+			var card = Game.card_db[key]
+			if card != null:
+				costs[String(key)] = int(card.cost)
+		config["card_costs"] = costs
+	if not config.has("match_id"):
+		config["match_id"] = "auth_%d" % Time.get_ticks_msec()
+	if not config.has("seed"):
+		config["seed"] = 20260101
+	if not config.has("hand_size"):
+		config["hand_size"] = 3
+	print("[authority] start_match players=%s" % str(config.get("players", [])))
+	_start_session(config)
+
+
+## 共用尾段：挂模拟宿主 → 建会话 → 下发 hello/state → 通知外部。
+func _start_session(config: Dictionary) -> void:
 	sim_host.setup_once()
 	config["sim_host"] = sim_host
 	session = BattleServerSession.new()

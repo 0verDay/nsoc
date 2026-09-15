@@ -15,7 +15,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 17
+const EXPECTED_CASES: int = 25
 
 var _passed: int = 0
 var _failed: int = 0
@@ -132,6 +132,67 @@ func _run() -> void:
 		and (cfg["decks"]["a"] as Array).size() >= 10
 		and (cfg["card_costs"] as Dictionary).size() > 0
 		and (cfg["board"] as Dictionary).has("players"), str(cfg.keys()))
+
+	await _test_assignment_and_start_match()
+
+
+## 派单流程：待命注册 → 收到 authority/host_room → 带房号注册 → 大厅配置开局。
+func _test_assignment_and_start_match() -> void:
+	Game.registry.clear()
+	var main := AuthorityMain.new()
+	add_child(main)
+	var out: Array = []
+	main.send_override = func(msg): out.append((msg as Dictionary).duplicate(true))
+
+	# 入口在无房号时应以"待命"身份注册（等中继派单）
+	main.register_authority()
+	var join_msg: Dictionary = _first_of_type(out, "room/authority_join")
+	_check("派单: 无房号时以待命身份注册（payload 不带 room_id）",
+		not join_msg.is_empty()
+		and String((join_msg.get("payload", {}) as Dictionary).get("room_id", "")) == "",
+		str(join_msg))
+
+	out.clear()
+	main.handle_relay_message({"type": "authority/ready", "payload": {}})
+	_check("派单: authority/ready 不建对局", main.session == null and out.is_empty())
+
+	main.handle_relay_message({"type": "authority/host_room",
+		"payload": {"room_id": "77777", "match_type": "1v1",
+			"players": ["p1", "p2"], "host_uuid": "p1"}})
+	_check("派单: 收到 authority/host_room 后带回房号再注册",
+		main.room_id == "77777"
+		and String((_first_of_type(out, "room/authority_join").get("payload", {}) as Dictionary)
+			.get("room_id", "")) == "77777", str(out))
+
+	# 大厅把真正的开局配置交过来（牌组/血量以大厅为准）
+	out.clear()
+	main.handle_relay_message({"type": "authority/start_match", "payload": {
+		"match_id": "lobby_1", "seed": 4242, "players": ["p1", "p2"],
+		"teams": {"p1": "defender", "p2": "attacker"},
+		"hero_hp": {"p1": 12, "p2": 34},
+		"decks": {"p1": ["u1", "u2"], "p2": ["u3", "u4"]},
+		"board": {"players": ["p1", "p2"], "teams": {"p1": "defender", "p2": "attacker"}},
+		"rate_limit_per_sec": -1,
+	}})
+	_check("派单: 大厅配置建出对局（名单取自大厅）",
+		main.session != null and main.session.players() == ["p1", "p2"],
+		str(main.session.players()) if main.session != null else "no session")
+	_check("派单: 房间的权威状态采用大厅种子/血量",
+		main.session.authority() != null
+		and int((main.session.authority().view_for("p1")["you"] as Dictionary)["hero"]["hp"]) == 12,
+		str(main.session.authority().view_for("p1")["you"]["hero"]))
+	_check("派单: 开局下发 auth/hello 给两名玩家",
+		_count_type(out, NetProtocol.AUTH_HELLO) == 2, str(out.size()))
+	_check("派单: 缺 card_costs 时由卡库补齐",
+		not main.session.authority().card_costs.is_empty())
+	# 开局后意图照常可用（复用同一套会话层）
+	out.clear()
+	main.handle_relay_message({"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": ""}, "from": "p1"})
+	main.handle_relay_message({"type": NetProtocol.INTENT_END_TURN,
+		"payload": {"seq": 0}, "from": "p1"})
+	_check("派单: 大厅配置的对局可正常受理意图",
+		_has_event(out, "phase_pending"), str(out.size()))
 
 
 func _count_type(msgs: Array, type: String) -> int:

@@ -215,3 +215,139 @@ func TestAuthorityNotRateLimited(t *testing.T) {
 		t.Fatalf("权威广播应全部送达，got %d", n)
 	}
 }
+
+// ── 派单：待命权威 + 房主请求权威模式 + 开局配置交给权威 ─────────────────────
+
+func readyAuthority(t *testing.T, h *Hub, uuid, key string) *Client {
+	t.Helper()
+	c := newAuthorityClient(h, uuid)
+	payload, _ := json.Marshal(map[string]any{"key": key})   // 不带 room_id = 待命
+	h.route(inboundMsg{client: c, msg: &Message{Type: "room/authority_join",
+		From: c.uuid, Payload: payload}})
+	msgs := drain(c)
+	if len(msgs) == 0 || msgs[len(msgs)-1].Type != "authority/ready" {
+		t.Fatalf("待命注册应回 authority/ready，got %+v", msgs)
+	}
+	return c
+}
+
+func TestIdleAuthorityGetsAssignedOnCreate(t *testing.T) {
+	old := authorityKey
+	authorityKey = "secret"
+	defer func() { authorityKey = old }()
+
+	h := NewHub()
+	auth := readyAuthority(t, h, "uuid-auth", "secret")
+	if !isIdleAuthority(auth) {
+		t.Fatal("待命权威应处于 idle 状态")
+	}
+
+	// 房主请求权威模式建房
+	host := newTestClient(h, "uuid-host")
+	h.clients[host.uuid] = host
+	payload, _ := json.Marshal(map[string]any{"match_type": "1v1", "authoritative": true})
+	h.route(inboundMsg{client: host, msg: &Message{Type: "room/create",
+		From: host.uuid, Payload: payload}})
+
+	hostMsgs := drain(host)
+	if len(hostMsgs) == 0 || hostMsgs[0].Type != "room/create_ok" {
+		t.Fatalf("房主应收到 room/create_ok，got %+v", hostMsgs)
+	}
+	var ok map[string]any
+	_ = json.Unmarshal(hostMsgs[0].Payload, &ok)
+	if ok["authoritative"] != true {
+		t.Fatalf("有待命权威时应回 authoritative=true，got %v", ok)
+	}
+	roomID := hostMsgs[0].RoomID
+
+	// 权威应收到派单
+	authMsgs := drain(auth)
+	if len(authMsgs) != 1 || authMsgs[0].Type != "authority/host_room" {
+		t.Fatalf("权威应收到 authority/host_room，got %+v", authMsgs)
+	}
+	var hostRoom map[string]any
+	_ = json.Unmarshal(authMsgs[0].Payload, &hostRoom)
+	if hostRoom["room_id"] != roomID || hostRoom["host_uuid"] != "uuid-host" {
+		t.Fatalf("派单载荷不正确: %v", hostRoom)
+	}
+	if room := h.rooms[roomID]; room == nil || room.AuthorityUUID != auth.uuid {
+		t.Fatalf("房间未记录权威: %+v", h.rooms[roomID])
+	}
+	if !isAuthority(auth) || auth.roomID != roomID {
+		t.Fatalf("权威应已挂到房间: roomID=%q", auth.roomID)
+	}
+}
+
+func TestCreateFallsBackWhenNoAuthority(t *testing.T) {
+	old := authorityKey
+	authorityKey = "secret"
+	defer func() { authorityKey = old }()
+
+	h := NewHub()
+	host := newTestClient(h, "uuid-host")
+	h.clients[host.uuid] = host
+	payload, _ := json.Marshal(map[string]any{"match_type": "1v1", "authoritative": true})
+	h.route(inboundMsg{client: host, msg: &Message{Type: "room/create",
+		From: host.uuid, Payload: payload}})
+
+	msgs := drain(host)
+	var ok map[string]any
+	_ = json.Unmarshal(msgs[0].Payload, &ok)
+	if ok["authoritative"] != false {
+		t.Fatalf("没有待命权威时应回 authoritative=false（客户端退回 v1），got %v", ok)
+	}
+	if room := h.rooms[msgs[0].RoomID]; room == nil || room.AuthorityUUID != "" {
+		t.Fatalf("不应记录权威: %+v", h.rooms[msgs[0].RoomID])
+	}
+}
+
+func TestStartMatchGoesOnlyToAuthority(t *testing.T) {
+	old := authorityKey
+	authorityKey = "secret"
+	defer func() { authorityKey = old }()
+
+	h, host, guest, room := newTestRoom(t)
+	auth := newAuthorityClient(h, "uuid-auth")
+	joinAuthority(t, h, auth, room.ID, "secret")
+	drain(host)
+	drain(guest)
+	drain(auth)
+
+	// 房主把开局配置交给权威：只到权威，不进 P2P 广播
+	send(h, host, "authority/start_match", `{"players":["uuid-host","uuid-guest"],"decks":{}}`)
+	authMsgs := drain(auth)
+	if len(authMsgs) != 1 || authMsgs[0].Type != "authority/start_match" {
+		t.Fatalf("开局配置应只到权威，got %+v", authMsgs)
+	}
+	if n := len(drain(guest)); n != 0 {
+		t.Fatalf("开局配置不应广播给其他玩家，got %d", n)
+	}
+
+	// 无权威时 authority/* 退回原转发（至少不崩、房主拿不到权威回执）
+	h.handleDisconnect(auth)
+	drain(host)
+	send(h, host, "authority/start_match", `{}`)
+	if n := len(drain(host)); n > 1 {
+		t.Fatalf("无权威时不应异常放大投递，got %d", n)
+	}
+	_ = room
+}
+
+func TestIdleAuthorityBadKeyRejected(t *testing.T) {
+	old := authorityKey
+	authorityKey = "secret"
+	defer func() { authorityKey = old }()
+
+	h := NewHub()
+	c := newAuthorityClient(h, "uuid-auth")
+	payload, _ := json.Marshal(map[string]any{"key": "wrong"})
+	h.route(inboundMsg{client: c, msg: &Message{Type: "room/authority_join",
+		From: c.uuid, Payload: payload}})
+	msgs := drain(c)
+	if len(msgs) == 0 || msgs[0].Type != "authority/rejected" {
+		t.Fatalf("错误密钥应拒绝，got %+v", msgs)
+	}
+	if c.authorityOK || isIdleAuthority(c) {
+		t.Fatal("被拒的权威不得进入待命池")
+	}
+}

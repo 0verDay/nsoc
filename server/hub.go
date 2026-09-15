@@ -153,9 +153,13 @@ func (h *Hub) route(in inboundMsg) {
 	}
 }
 
-// handleAuthorityJoin 权威进程加入某个房间（可信服务器侧注册）。
+// handleAuthorityJoin 权威进程注册。
+//
+// 两种用法：
+//  1. **待命**（room_id 为空）：只校验密钥，标记 authorityOK —— 之后可被派单；
+//  2. **挂到指定房间**（room_id 非空）：校验密钥（已校验过则跳过）后接管该房间。
+//
 // 门槛：连接 role=authority **且** payload.key == NSOC_AUTHORITY_KEY（未配置 key 则一律拒绝）。
-// 成功后：room.AuthorityUUID = c.uuid，并把当前玩家名单回给权威进程。
 func (h *Hub) handleAuthorityJoin(c *Client, msg *Message) {
 	var payload struct {
 		RoomID string `json:"room_id"`
@@ -173,11 +177,20 @@ func (h *Hub) handleAuthorityJoin(c *Client, msg *Message) {
 			Payload: jsonRaw(map[string]any{"reason": "not_authority_role"})})
 		return
 	}
-	if authorityKey == "" || payload.Key != authorityKey {
-		c.forgedMessages++
-		log.Printf("SECURITY authority join rejected (bad key) uuid=%s room=%s", c.uuid, roomID)
-		c.push(&Message{Type: "authority/rejected",
-			Payload: jsonRaw(map[string]any{"reason": "bad_key"})})
+	if !c.authorityOK {
+		if authorityKey == "" || payload.Key != authorityKey {
+			c.forgedMessages++
+			log.Printf("SECURITY authority join rejected (bad key) uuid=%s room=%s", c.uuid, roomID)
+			c.push(&Message{Type: "authority/rejected",
+				Payload: jsonRaw(map[string]any{"reason": "bad_key"})})
+			return
+		}
+		c.authorityOK = true
+	}
+	// 待命：不挂房间，等 room/create{authoritative:true} 派单
+	if roomID == "" {
+		log.Printf("authority ready uuid=%s (waiting for assignment)", c.uuid)
+		c.push(&Message{Type: "authority/ready", Payload: jsonRaw(map[string]any{})})
 		return
 	}
 	room, ok := h.rooms[roomID]
@@ -201,6 +214,32 @@ func (h *Hub) handleAuthorityJoin(c *Client, msg *Message) {
 		})})
 }
 
+// assignAuthority 给房间派一个待命权威（没有空闲权威时返回 false，调用方退回 P2P/v1）。
+func (h *Hub) assignAuthority(room *Room) bool {
+	if room == nil || room.AuthorityUUID != "" {
+		return room != nil && room.AuthorityUUID != ""
+	}
+	roster := make([]string, 0, len(room.Players))
+	for _, p := range room.Players {
+		roster = append(roster, p.uuid)
+	}
+	for uuid, c := range h.clients {
+		if !isIdleAuthority(c) {
+			continue
+		}
+		room.AuthorityUUID = uuid
+		c.roomID = room.ID
+		log.Printf("authority assigned room=%s uuid=%s", room.ID, uuid)
+		c.push(&Message{Type: "authority/host_room",
+			Payload: jsonRaw(map[string]any{
+				"room_id": room.ID, "match_type": room.MatchType,
+				"players": roster, "host_uuid": room.HostUUID,
+			})})
+		return true
+	}
+	return false
+}
+
 // authorityOf 取房间当前的权威连接（未注册则 nil）。
 func (h *Hub) authorityOf(room *Room) *Client {
 	if room == nil || room.AuthorityUUID == "" {
@@ -216,6 +255,10 @@ func (h *Hub) authorityOf(room *Room) *Client {
 func (h *Hub) handleCreate(c *Client, msg *Message) {
 	var payload struct {
 		MatchType string `json:"match_type"`
+		// authoritative=true：房主想要"服务器权威"这一局。
+		// 有**待命权威**时中继把房间派给它（房主随后用 authority/start_match 交配置）；
+		// 没有待命权威时**静默退回 P2P/v1**（不让房主开不了局）。
+		Authoritative bool `json:"authoritative"`
 	}
 	_ = json.Unmarshal(msg.Payload, &payload)
 	matchType := payload.MatchType
@@ -241,17 +284,27 @@ func (h *Hub) handleCreate(c *Client, msg *Message) {
 	}
 	h.rooms[id] = room
 	c.roomID = id
+	// 房主想要权威模式 → 试着派一个待命权威（没有就如实告诉房主，客户端退回 v1）
+	authoritative := false
+	if payload.Authoritative {
+		authoritative = h.assignAuthority(room)
+		if !authoritative {
+			log.Printf("room %s requested authoritative but no idle authority", id)
+		}
+	}
 	c.push(&Message{
 		Type:   "room/create_ok",
 		RoomID: id,
 		Payload: jsonRaw(map[string]any{
-			"host_uuid":   c.uuid,
-			"players":     room.PlayerList(),
-			"match_type":  matchType,
-			"max_players": room.MaxPlayers,
+			"host_uuid":     c.uuid,
+			"players":       room.PlayerList(),
+			"match_type":    matchType,
+			"max_players":   room.MaxPlayers,
+			"authoritative": authoritative,
 		}),
 	})
-	log.Printf("room %s created by %s match_type=%s", id, c.uuid, matchType)
+	log.Printf("room %s created by %s match_type=%s authoritative=%v",
+		id, c.uuid, matchType, authoritative)
 }
 
 func (h *Hub) handleJoin(c *Client, msg *Message) {
@@ -458,7 +511,8 @@ func (h *Hub) forward(c *Client, msg *Message) {
 
 	// v2 意图与控制消息：房间有权威进程时**只发给权威**（不进 P2P 广播，
 	// 避免对手提前看到意图 / 客户端自行结算）。未注册权威时保持原转发行为。
-	if authorityMsgType(msg.Type) {
+	// `authority/*`（如开局配置 authority/start_match）同样只交给权威。
+	if authorityMsgType(msg.Type) || strings.HasPrefix(msg.Type, "authority/") {
 		if auth := h.authorityOf(room); auth != nil {
 			data, _ := json.Marshal(msg)
 			h.deliver(auth, data)

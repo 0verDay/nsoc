@@ -32,7 +32,9 @@ type Client struct {
 	nickname string
 	roomID   string
 	role     string // "player"（默认）或 "authority"（可信权威进程；见 security.go）
-	send     chan []byte
+	// authorityOK：权威连接已用正确密钥校验过（之后可被派单/重复注册）
+	authorityOK bool
+	send        chan []byte
 
 	// 安全策略状态（只在 Hub 单 goroutine 内读写，无需加锁）。
 	// 详见 security.go。

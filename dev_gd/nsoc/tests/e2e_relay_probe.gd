@@ -28,6 +28,8 @@ var _seq: int = 0
 var _sent_intent: bool = false
 var _rehello_done: bool = false
 var _result_at: float = -1.0
+var _authoritative: bool = false
+var _create_ok_payload: Dictionary = {}
 var _p1_auth: Array = []
 var _p2_auth: Array = []
 var _p1_events: Array = []
@@ -78,9 +80,11 @@ func _process(_delta: float) -> void:
 		"connect":
 			if _p1.get_ready_state() == WebSocketPeer.STATE_OPEN \
 					and _p2.get_ready_state() == WebSocketPeer.STATE_OPEN:
-				_send(_p1, {"type": "room/create", "payload": {"match_type": "1v1"}})
+				# 权威模式建房：中继会把房间派给一个"待命权威"（没有则回 authoritative=false）
+				_send(_p1, {"type": "room/create",
+					"payload": {"match_type": "1v1", "authoritative": true}})
 				_phase = "creating"
-				_trace.append("room/create sent")
+				_trace.append("room/create sent (authoritative)")
 		"joining":
 			pass   # 等 room/joined 回执（在 _on_msg 里推进）
 		"waiting_auth":
@@ -112,6 +116,7 @@ func _on_msg(d: Dictionary, is_p1: bool) -> void:
 	match type:
 		"room/create_ok":
 			if is_p1:
+				_create_ok_payload = payload
 				# 房号在**信封层**（msg.room_id），不在 payload 里
 				_room_id = String(d.get("room_id", ""))
 				if _room_id == "":
@@ -126,13 +131,26 @@ func _on_msg(d: Dictionary, is_p1: bool) -> void:
 				_trace.append("room_id=%s, p2 joining" % _room_id)
 		"room/joined":
 			if not is_p1:
-				# 双方先握手（可能发生在权威注册之前，因此下面收到 auth/hello 后会再握一次）
+				_authoritative = bool(_create_ok_payload.get("authoritative", false))
+				_trace.append("authoritative=%s" % str(_authoritative))
+				# 双方先握手（可能发生在权威开局之前，因此收到 auth/hello 后会再握一次）
 				_send(_p1, {"type": "client/hello",
 					"payload": {"protocol": 2, "content_hash": ""}})
 				_send(_p2, {"type": "client/hello",
 					"payload": {"protocol": 2, "content_hash": ""}})
+				# 房主把开局配置交给权威（真实大厅走同一条消息）
+				_send(_p1, {"type": "authority/start_match", "payload": {
+					"match_id": "e2e", "seed": 20260101,
+					"players": [_p1_id, _p2_id],
+					"teams": {_p1_id: "defender", _p2_id: "attacker"},
+					"hero_hp": {_p1_id: 30, _p2_id: 30},
+					"decks": {_p1_id: [], _p2_id: []},
+					"board": {"players": [_p1_id, _p2_id],
+						"teams": {_p1_id: "defender", _p2_id: "attacker"}},
+					"rate_limit_per_sec": -1,
+				}})
 				_phase = "waiting_auth"
-				_trace.append("both hello sent")
+				_trace.append("hello + authority/start_match sent")
 		"auth/hello":
 			if is_p1 and not _rehello_done:
 				# 权威进程已开局：**重新握手**（早先那次握手发生在权威注册之前，会话层没收到）
@@ -168,12 +186,12 @@ func _on_msg(d: Dictionary, is_p1: bool) -> void:
 
 
 func _check_result() -> void:
-	var ok := _p1_auth.has("auth/hello") and _p1_auth.has("auth/state") \
+	var ok := _authoritative and _p1_auth.has("auth/hello") and _p1_auth.has("auth/state") \
 		and _p1_auth.has("auth/event") \
 		and _p1_events.has("phase_resolved") and _p1_events.has("turn_started") \
 		and _p2_events.has("phase_resolved")
-	_finish(ok, "p1_auth=%s p1_events=%s p2_events=%s" % [
-		str(_p1_auth), str(_p1_events), str(_p2_events)])
+	_finish(ok, "authoritative=%s p1_auth=%s p1_events=%s p2_events=%s" % [
+		str(_authoritative), str(_p1_auth), str(_p1_events), str(_p2_events)])
 
 
 func _write_room_file(rid: String) -> void:

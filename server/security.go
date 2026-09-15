@@ -46,6 +46,11 @@ func isAuthority(c *Client) bool {
 	return c != nil && c.role == authorityRole
 }
 
+// isIdleAuthority：已通过密钥校验、但还没挂到任何房间的权威连接（可被派单）。
+func isIdleAuthority(c *Client) bool {
+	return isAuthority(c) && c.authorityOK && c.roomID == ""
+}
+
 // serverOnlyMessageTypes 只允许服务器产生的消息类型。
 // 客户端发来这些类型时一律丢弃 —— 它们要么是服务器的推送，要么会直接改动权威状态。
 var serverOnlyMessageTypes = map[string]bool{
