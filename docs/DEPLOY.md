@@ -14,6 +14,9 @@
              Godot 权威进程（headless，跑同一套规则）
 ```
 
+> 权威进程可以和中继同机（推荐，见 §3.1），也可以跑在任意一台常开的机器上 ——
+> 它是**主动外连**中继的 WS 客户端，不需要任何入站端口。
+
 - 中继只做传输 + 安全策略（服务器专属消息丢弃、房主校验、身份重写、限速、权威派单）。
 - 权威进程跑 `BattleServerSession` + `AuthorityBoard` + `BattleSimHost`：**只有它算规则**。
 - 客户端默认走 v1（P2P 锁步）；只有**请求权威模式**且**有权威进程待命**时才走 v2。
@@ -58,6 +61,46 @@ $env:NSOC_AUTHORITATIVE = "1"
 ```
 
 Linux 等价：把 `$env:X` 换成 `export X=`，可执行文件换成对应平台的二进制；`--headless` 参数相同。
+
+### 3.1 把权威进程也放在中继机器上（推荐）
+
+上面的 ③ 是把权威进程跑在某个人的电脑上 —— 那台机器必须一直开着，而且窗口一关，
+进行中的对局就没人裁决了。**既然中继跑在 Windows Server 上，权威进程可以直接和中继同机**，
+两个都做成服务：谁都不用开电脑，反作弊永远在线，而且权威↔中继走 `127.0.0.1` 更快。
+
+需要的文件（约 223 MB，一次性）：
+
+| 上传 | 到服务器 | 说明 |
+|---|---|---|
+| `Godot_v4.7.2-stable_win64_console.exe` | `C:\nsoc\authority\Godot\` | 0.2 MB。**必须用 console 版**：非 console 版把输出重定向到文件时什么都不写，服务就没有日志 |
+| `Godot_v4.7.2-stable_win64.exe` | `C:\nsoc\authority\Godot\` | 172.5 MB。console 版会去同目录找它，两个必须一起放 |
+| 整个 `dev_gd\nsoc\` 目录 | `C:\nsoc\authority\nsoc\` | 50 MB。**必须带上 `.godot\`**（导入缓存）。缺了它所有 `class_name` 都解析不了 |
+| `server\deploy\authority\*.cmd` / `*.ps1` | `C:\nsoc\authority\` | 启动脚本与服务安装脚本 |
+
+装成服务（管理员 PowerShell，在 `C:\nsoc\authority\` 下）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-authority-service.ps1
+```
+
+脚本会找到你已有的 `nssm.exe`，注册名为 `nsoc-authority` 的服务（开机自启、退出自动重启、
+日志轮转到 `authority.log`、`DependOnService=nsoc-server`）。
+
+**验证**（日志里必须出现这一行）：
+
+```powershell
+Get-Service nsoc-authority
+Get-Content C:\nsoc\authority\authority.log -Tail 10
+# 期望: [authority] ready, waiting for room assignment
+```
+
+> **这是代码快照。** 改了规则/数据（`dev_gd/nsoc/scripts`、`data/`）之后要重新上传项目目录
+> 并 `Restart-Service nsoc-authority` 才生效；中继二进制同理。自动化打包与内容热更见
+> `docs/ROADMAP.md` 「剩余工作」里的打包一项。
+>
+> 若项目目录里没有 `.godot`，先手工跑一次导入：
+> `& "C:\nsoc\authority\Godot\Godot_v4.7.2-stable_win64_console.exe" --headless --path "C:\nsoc\authority\nsoc" --import`
+
 
 ## 4. 一局怎么跑（验收步骤）
 

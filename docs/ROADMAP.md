@@ -30,7 +30,7 @@
 
 ## 剩余工作（按建议顺序）
 
-1. **中继重新部署到腾讯云**：`server/deploy/nsoc-server.exe` 已用新代码重建（权威释放 + `room/authority_release`），线上跑的还是旧的止血版 —— 需按 `docs/DEPLOY.md` §3 重新上传并重启 NSSM 服务
+1. **权威进程上云**：中继已重新部署完成（`room/authority_release` 已生效，外网探测 + 连续两局验收通过）；**权威进程目前跑在本机**，需要窗口常开 —— 用 `server/deploy/authority/`（Godot + 项目快照 + NSSM 服务脚本）把它搬到中继同机，见 `docs/DEPLOY.md` §3.1
 2. **真实 GUI 对局首次跑通**（两台电脑，房主设 `NSOC_AUTHORITATIVE=1`）：传输链路已验，但真实出牌/法术/装备走 v2 从未跑过；判据见 `docs/NEXT.md` A1
 3. **仓库收尾**：`dev1/` 标注废弃、删除 4 个已合并的远端旧分支（需你确认）
 4. **分层深化收尾**：反射调用收敛（`has_method` 34 + `.call` 13）、表现依赖下沉（`Control`/`Tween`/`get_tree` 约 12 处）、`board_slot_factory` 的 `grid_cells` 类型收敛 —— 逐项做法与验收门槛见 `docs/NEXT.md` B 组
