@@ -266,6 +266,32 @@ func _make_ctx(slot: BoardSlot, payload: Dictionary,
 	return ctx
 
 
+## 取卡牌原型（权威核心不直接依赖 Game；卡库查询统一走这里）。
+func card_info(card_name: String):
+	return Game.get_card(card_name)
+
+
+## 激活装备效果（**协程**）。`inst` 由权威核心持有（每个玩家一套），本方法只负责用
+## 同一套效果机制执行：`EquipmentInstance.activate(ctx, turn_running=false)`。
+## 返回 {"ok", "durability", "broken"}。
+func run_equip_activation(inst, payload: Dictionary) -> Dictionary:
+	if inst == null:
+		return {"ok": false, "reason": NetProtocol.REJECT_NOT_ALLOWED}
+	var ctx := Game.make_effect_context()
+	var row := int(payload.get("row", -1))
+	var col := int(payload.get("col", -1))
+	var slot: BoardSlot = _by_slot_id.get(String(payload.get("target_slot_id", "")))
+	if slot != null and row >= 0 and col >= 0:
+		ctx.target_cell = slot.board.get_cell(Vector2(row, col))
+	var ok: bool = await inst.activate(ctx, false)
+	return {
+		"ok": ok,
+		"reason": "" if ok else NetProtocol.REJECT_NOT_ALLOWED,
+		"durability": int(inst.durability_left),
+		"broken": bool(inst.is_broken()),
+	}
+
+
 ## 盘面公开状态（战棋里单位位置本就公开；隐藏信息只有手牌，由 view_for 处理）。
 func state() -> Dictionary:
 	var out: Dictionary = {}

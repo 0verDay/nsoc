@@ -66,16 +66,51 @@ func has_board() -> bool:
 var _pending_phase_pid: String = ""
 var _pending_spells: Array = []      # [{pid, card, payload}]：已接受、待执行效果的法术
 var _pending_abilities: Array = []   # [{pid, ability_id, payload}]：已接受、待激活的英雄技能
+var _pending_equips: Array = []      # [{pid, inst, payload}]：已接受、待激活的装备
 var _used_abilities: Dictionary = {} # "pid|ability" -> true（每回合一次限制）
+var _equipments: Dictionary = {}     # pid -> Array[EquipmentInstance]（权威端每玩家一套）
 
 func _ability_key(pid: String, ability_id: String) -> String:
 	return "%s|%s" % [pid, ability_id]
 
 
-## 是否有"已接受但尚未在盘面上结算"的动作（法术效果 / 英雄技能 / 结束回合的行动阶段）。
+# ── 装备（每玩家一套，权威端持有）────────────────────────────────────────
+func _equip_name(inst) -> String:
+	if inst == null or inst.card_data == null:
+		return ""
+	return String(inst.card_data.name)
+
+
+func _find_equip(pid: String, equip_name: String):
+	if equip_name == "":
+		return null
+	for inst in _equipments.get(pid, []):
+		if _equip_name(inst) == equip_name and not inst.is_broken():
+			return inst
+	return null
+
+
+func _remove_equip(pid: String, inst) -> void:
+	var list: Array = _equipments.get(pid, [])
+	var idx: int = list.find(inst)
+	if idx >= 0:
+		list.remove_at(idx)
+	_equipments[pid] = list
+
+
+## 该玩家的装备列表（序列化；装备是公开信息，双方都能看到）。
+func _equip_list(pid: String) -> Array:
+	var out: Array = []
+	for inst in _equipments.get(pid, []):
+		if inst != null:
+			out.append(inst.to_dict())
+	return out
+
+
+## 是否有"已接受但尚未在盘面上结算"的动作（法术效果 / 英雄技能 / 装备激活 / 行动阶段）。
 func has_pending_work() -> bool:
 	return _pending_phase_pid != "" or not _pending_spells.is_empty() \
-		or not _pending_abilities.is_empty()
+		or not _pending_abilities.is_empty() or not _pending_equips.is_empty()
 
 
 ## 结算待处理动作，然后完成回合推进并下发事件。
@@ -114,6 +149,23 @@ func run_pending_work() -> void:
 			"event": "hero_ability_used", "pid": ab_pid, "ability_id": ability_id,
 			"ok": bool(ab_res.get("ok", false)),
 		})
+	# ①c 排队中的装备激活：耐久 -1，归零则破损入墓
+	while not _pending_equips.is_empty():
+		var eq: Dictionary = _pending_equips.pop_front()
+		var eq_pid := String(eq.get("pid", ""))
+		var inst = eq.get("inst")
+		var eq_res: Dictionary = await board.run_equip_activation(inst, eq.get("payload", {}))
+		var eq_name: String = _equip_name(inst)
+		_emit("", {
+			"event": "equip_activated", "pid": eq_pid, "equip": eq_name,
+			"ok": bool(eq_res.get("ok", false)),
+			"durability": int(eq_res.get("durability", 0)),
+		})
+		if bool(eq_res.get("broken", false)):
+			_remove_equip(eq_pid, inst)
+			if eq_name != "":
+				_grave[eq_pid].append(eq_name)
+			_emit("", {"event": "equip_broken", "pid": eq_pid, "equip": eq_name})
 	# ② 待结算的行动阶段
 	if _pending_phase_pid == "":
 		return
@@ -170,6 +222,12 @@ func start(config: Dictionary) -> void:
 	_last_seq.clear()
 	_intent_stamps.clear()
 	_events.clear()
+	_equipments.clear()
+	_pending_spells.clear()
+	_pending_abilities.clear()
+	_pending_equips.clear()
+	_used_abilities.clear()
+	_pending_phase_pid = ""
 	_stats = {"accepted": 0, "rejected": 0}
 	_finished = false
 	_winner = ""
@@ -241,6 +299,10 @@ func submit_intent(pid: String, type: String, payload: Dictionary) -> Dictionary
 			result = _on_play_card(pid, seq, payload)
 		NetProtocol.INTENT_ACTIVATE_HERO:
 			result = _on_activate_hero(pid, seq, payload)
+		NetProtocol.INTENT_PLAY_EQUIP:
+			result = _on_play_equip(pid, seq, payload)
+		NetProtocol.INTENT_ACTIVATE_EQUIP:
+			result = _on_activate_equip(pid, seq, payload)
 		NetProtocol.INTENT_SURRENDER:
 			result = _accept(pid, seq, type, _on_surrender(pid))
 		_:
@@ -266,6 +328,7 @@ func view_for(pid: String) -> Dictionary:
 			"banished": (_banish.get(other, []) as Array).duplicate(),
 			"mana": (_mana.get(other, {}) as Dictionary).duplicate(),
 			"hero": {"hp": int(_hero_hp.get(other, 0)), "max_hp": int(_hero_max_hp.get(other, 0))},
+			"equipments": _equip_list(other),
 		})
 	return {
 		"type": NetProtocol.AUTH_STATE,
@@ -280,6 +343,7 @@ func view_for(pid: String) -> Dictionary:
 			"banished": (_banish.get(pid, []) as Array).duplicate(),
 			"mana": (_mana.get(pid, {}) as Dictionary).duplicate(),
 			"hero": {"hp": int(_hero_hp.get(pid, 0)), "max_hp": int(_hero_max_hp.get(pid, 0))},
+			"equipments": _equip_list(pid),
 			"seq_ack": int(_last_seq.get(pid, -1)),
 		},
 		"others": others,
@@ -413,6 +477,54 @@ func _on_activate_hero(pid: String, seq: int, payload: Dictionary) -> Dictionary
 	})
 
 
+## 打出装备：手牌 → 权威端每玩家一套的装备实例（**不入墓**；破损时才入墓）。
+func _on_play_equip(pid: String, seq: int, payload: Dictionary) -> Dictionary:
+	var type := NetProtocol.INTENT_PLAY_EQUIP
+	if board == null:
+		return _reject(pid, NetProtocol.REJECT_NOT_ALLOWED, type, seq)
+	var card := String(payload.get("card_name", ""))
+	var hand: Array = _hand.get(pid, [])
+	if not hand.has(card):
+		return _reject(pid, NetProtocol.REJECT_CARD_NOT_IN_HAND, type, seq)
+	var cdata = board.card_info(card)
+	if not (cdata is CardEquipment):
+		return _reject(pid, NetProtocol.REJECT_BAD_PAYLOAD, type, seq)
+	var cost: int = int(card_costs.get(card, int(cdata.cost)))
+	var mana: Dictionary = _mana.get(pid, {})
+	if int(mana.get("current", 0)) < cost:
+		return _reject(pid, NetProtocol.REJECT_NOT_ENOUGH_MANA, type, seq)
+
+	hand.erase(card)
+	mana["current"] = int(mana["current"]) - cost
+	var inst := EquipmentInstance.new(cdata)
+	var list: Array = _equipments.get(pid, [])
+	list.append(inst)
+	_equipments[pid] = list
+	return _accept(pid, seq, type, [
+		{"event": "card_played", "pid": pid, "card": card,
+			"mana_left": int(mana["current"]), "authoritative": true},
+		{"event": "equip_played", "pid": pid, "card": card, "durability": inst.durability_left},
+	])
+
+
+## 激活装备：校验归属 / 耐久 / 每回合一次，效果排队到 run_pending_work()。
+func _on_activate_equip(pid: String, seq: int, payload: Dictionary) -> Dictionary:
+	var type := NetProtocol.INTENT_ACTIVATE_EQUIP
+	if board == null:
+		return _reject(pid, NetProtocol.REJECT_NOT_ALLOWED, type, seq)
+	var equip_name := String(payload.get("equip_name", ""))
+	var inst = _find_equip(pid, equip_name)
+	if inst == null:
+		return _reject(pid, NetProtocol.REJECT_NOT_ALLOWED, type, seq)
+	if not bool(inst.can_activate(false)):
+		return _reject(pid, NetProtocol.REJECT_NOT_ALLOWED, type, seq)
+	_pending_equips.append({"pid": pid, "inst": inst, "payload": payload.duplicate()})
+	return _accept(pid, seq, type, {
+		"event": "equip_activate_queued", "pid": pid, "equip": equip_name,
+		"durability": int(inst.durability_left),
+	})
+
+
 ## 结束回合：返回事件数组（_accept 同时接受单条事件与事件数组）。
 func _on_end_turn(pid: String) -> Array:
 	var events: Array = [{"event": "turn_ended", "pid": pid}]
@@ -436,8 +548,12 @@ func _begin_turn(with_effects: bool = true) -> void:
 	var pid := active_player()
 	if pid == "":
 		return
-	# 新回合：清空"每回合一次"的英雄技能限制
+	# 新回合：清空"每回合一次"的英雄技能限制与装备使用标记
 	_used_abilities.clear()
+	for pid_any in _equipments.keys():
+		for inst in _equipments[pid_any]:
+			if inst != null:
+				inst.reset_turn()
 	var mana: Dictionary = _mana.get(pid, {})
 	if with_effects:
 		var maximum: int = mini(int(mana.get("maximum", 1)) + 1, mana_cap)

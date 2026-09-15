@@ -27,10 +27,13 @@ func is_broken() -> bool:
 
 # 是否可激活：非回合运行中 + once_per_turn 未触发 + 耐久未归零。
 # 注意：激活效果不扣费，无需检查 mana。
-func can_activate() -> bool:
-	if Game == null:
-		return false
-	if Game.turn != null and Game.turn.is_running:
+# turn_running 为 null 时读客户端全局（Game.turn）；权威端显式传 false，
+# 因为服务器侧没有客户端回合对象（与 HeroAbility.can_activate 同一套注入约定）。
+func can_activate(turn_running = null) -> bool:
+	var running: bool = Game != null and Game.turn != null and Game.turn.is_running
+	if turn_running != null:
+		running = bool(turn_running)
+	if running:
 		return false
 	if card_data == null:
 		return false
@@ -53,8 +56,8 @@ func required_target() -> String:
 # 激活：触发每个 effect 的 on_play → durability -= 1 → 标记本回合已用。
 # 不扣费（装备卡打出时已扣）。
 # 返回 true = 成功激活并扣耐久；false = 玩家主动取消，耐久不扣。
-func activate(ctx) -> bool:
-	if not can_activate():
+func activate(ctx, turn_running = null) -> bool:
+	if not can_activate(turn_running):
 		return false
 	for eff in card_data.effects:
 		var success: bool = await Effects.trigger_play(String(eff), card_data, ctx)

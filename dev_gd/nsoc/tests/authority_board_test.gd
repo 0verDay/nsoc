@@ -19,7 +19,7 @@ extends Node
 ## 注意：GDScript 运行时错误不会终止 _ready()，出错函数会静默提前返回，
 ## 因此末尾必须校验用例总数（EXPECTED_CASES），否则会"假通过"。
 
-const EXPECTED_CASES: int = 68
+const EXPECTED_CASES: int = 85
 
 var _passed: int = 0
 var _failed: int = 0
@@ -65,6 +65,120 @@ func _ready() -> void:
 	await _test_board_hero_sync()
 	await _test_spell_play()
 	await _test_hero_ability()
+	await _test_equipment()
+
+	var total: int = _passed + _failed
+	if total != EXPECTED_CASES:
+		_failed += 1
+		print("ABOARD_CASE FAIL 用例数量异常：期望 %d，实际 %d（有测试函数被运行时错误静默中断）"
+			% [EXPECTED_CASES, total])
+
+	print("ABOARD_RESULT %s passed=%d failed=%d" % [
+		"PASS" if _failed == 0 else "FAIL", _passed, _failed,
+	])
+	get_tree().quit(0 if _failed == 0 else 1)
+
+
+## 装备接入权威端：打出（手牌→实例、扣费）/ 激活（耐久 -1、每回合一次）/ 破损入墓 / 回合重置。
+func _test_equipment() -> void:
+	var equip_name := ""
+	for key in Game.card_db.keys():
+		var card = Game.card_db[key]
+		if card is CardEquipment and (card.effects as Array).has("gain_mana_1"):
+			equip_name = String(key)
+			break
+	_check("装备: 找到 gain_mana_1 装备卡", equip_name != "", equip_name)
+	if equip_name == "":
+		for _i in range(14):
+			_check("装备: 跳过（卡库缺该装备）", false, "no equipment")
+		return
+
+	Game.registry.clear()
+	var host := BattleSimHost.new()
+	add_child(host)
+	var s := BattleServerSession.new()
+	s.configure(NetProtocol.VERSION, "abc")
+	s.create_match({
+		"match_id": "m_equip", "seed": 23, "players": ["p1", "p2"],
+		"decks": {"p1": [equip_name, equip_name, equip_name],
+			"p2": [equip_name, equip_name, equip_name]},
+		"card_costs": {equip_name: 1}, "hero_hp": {"p1": 30, "p2": 30},
+		"rate_limit_per_sec": -1,
+		"board": {"players": ["p1", "p2"], "teams": {"p1": "defender", "p2": "attacker"}},
+		"sim_host": host,
+	})
+	var hello := {"type": NetProtocol.CLIENT_HELLO,
+		"payload": {"protocol": NetProtocol.VERSION, "content_hash": "abc"}}
+	s.handle_client_message("p1", hello)
+	s.handle_client_message("p2", hello)
+	s.drain_outbound("p1")
+	s.drain_outbound("p2")
+
+	# ① 无效装备名（手牌里没有）
+	var r0: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_PLAY_EQUIP,
+		"payload": {"card_name": "no_such_equip", "seq": 0}})
+	_check("装备: 手牌里没有 → card_not_in_hand",
+		String(r0.get("reason", "")) == NetProtocol.REJECT_CARD_NOT_IN_HAND, str(r0))
+
+	# ② 打出装备
+	var r1: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_PLAY_EQUIP,
+		"payload": {"card_name": equip_name, "seq": 1}})
+	_check("装备: 打出被受理", bool(r1.get("accepted", false)), str(r1))
+	var you: Dictionary = s.authority().view_for("p1")["you"]
+	_check("装备: 手牌 -1、费用 1 → 0",
+		(you["hand"] as Array).size() == 2 and int((you["mana"] as Dictionary)["current"]) == 0,
+		"%d / %d" % [(you["hand"] as Array).size(), int((you["mana"] as Dictionary)["current"])])
+	_check("装备: 权威视图出现该装备实例（耐久 = 卡面）",
+		(you["equipments"] as Array).size() == 1
+		and int((you["equipments"][0] as Dictionary)["durability_left"]) == 2,
+		str(you["equipments"]))
+	_check("装备: 对手也能看到（装备是公开信息）",
+		((s.authority().view_for("p2")["others"][0] as Dictionary)["equipments"] as Array).size() == 1)
+
+	# ③ 激活（once_per_turn）
+	var r2: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_EQUIP,
+		"payload": {"equip_name": equip_name, "seq": 2}})
+	_check("装备: 激活被受理并排队", bool(r2.get("accepted", false)) and s.authority().has_pending_work(),
+		str(r2))
+	await s.tick()
+	_check("装备: 激活后耐久 2 → 1",
+		int(((s.authority().view_for("p1")["you"] as Dictionary)["equipments"][0] as Dictionary)["durability_left"]) == 1)
+	var r3: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_EQUIP,
+		"payload": {"equip_name": equip_name, "seq": 3}})
+	_check("装备: 同回合第二次 → not_allowed（once_per_turn）",
+		String(r3.get("reason", "")) == NetProtocol.REJECT_NOT_ALLOWED, str(r3))
+	var r4: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_EQUIP,
+		"payload": {"equip_name": "no_such_equip", "seq": 4}})
+	_check("装备: 激活未持有的装备 → not_allowed",
+		String(r4.get("reason", "")) == NetProtocol.REJECT_NOT_ALLOWED, str(r4))
+
+	# ④ 走完 p2 的回合再回到 p1：每回合一次的限制应被重置
+	s.handle_client_message("p1", {"type": NetProtocol.INTENT_END_TURN, "payload": {"seq": 5}})
+	await s.tick()
+	_check("装备: 回合推进到 p2", s.authority().active_player() == "p2", s.authority().active_player())
+	s.handle_client_message("p2", {"type": NetProtocol.INTENT_END_TURN, "payload": {"seq": 0}})
+	await s.tick()
+	_check("装备: 再次回到 p1", s.authority().active_player() == "p1", s.authority().active_player())
+
+	# ⑤ 新回合再激活一次 → 耐久归零 → 破损入墓
+	var r5: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_EQUIP,
+		"payload": {"equip_name": equip_name, "seq": 6}})
+	_check("装备: 新回合可再次激活（限制已重置）", bool(r5.get("accepted", false)), str(r5))
+	await s.tick()
+	you = s.authority().view_for("p1")["you"]
+	_check("装备: 耐久归零后从装备列表移除", (you["equipments"] as Array).is_empty(), str(you["equipments"]))
+	_check("装备: 破损后计入墓地", (you["graveyard"] as Array).has(equip_name), str(you["graveyard"]))
+	var r6: Dictionary = s.handle_client_message("p1", {"type": NetProtocol.INTENT_ACTIVATE_EQUIP,
+		"payload": {"equip_name": equip_name, "seq": 7}})
+	_check("装备: 破损后再激活 → not_allowed",
+		String(r6.get("reason", "")) == NetProtocol.REJECT_NOT_ALLOWED, str(r6))
+
+	var events: Array = []
+	for m in s.drain_outbound("p2"):
+		events.append(String(((m as Dictionary).get("payload", {}) as Dictionary).get("event", "")))
+	_check("装备: 事件齐全（equip_played / equip_activated / equip_broken）",
+		events.has("equip_played") and events.has("equip_activated") and events.has("equip_broken"),
+		str(events))
 
 
 ## 桩技能：只为验证权威端的技能执行链路（不进入正式内容，测试内注入注册表）。
@@ -161,17 +275,6 @@ func _test_hero_ability() -> void:
 		events.append(String(((m as Dictionary).get("payload", {}) as Dictionary).get("event", "")))
 	_check("技能: 下发 hero_ability_queued / hero_ability_used",
 		events.has("hero_ability_queued") and events.has("hero_ability_used"), str(events))
-
-	var total: int = _passed + _failed
-	if total != EXPECTED_CASES:
-		_failed += 1
-		print("ABOARD_CASE FAIL 用例数量异常：期望 %d，实际 %d（有测试函数被运行时错误静默中断）"
-			% [EXPECTED_CASES, total])
-
-	print("ABOARD_RESULT %s passed=%d failed=%d" % [
-		"PASS" if _failed == 0 else "FAIL", _passed, _failed,
-	])
-	get_tree().quit(0 if _failed == 0 else 1)
 
 
 func _check(name: String, ok: bool, detail: String = "") -> void:
