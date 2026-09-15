@@ -133,6 +133,17 @@ jobs:
           fi
           grep -E "AUTHORITY_RESULT" authority.log
 
+      - name: 场景装配冒烟（全部 .tscn 可 load + instantiate）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/SceneLoadTest.tscn > scene.log 2>&1 || true
+          if ! grep -q "SCENE_RESULT PASS" scene.log; then
+            grep -E "SCENE_CASE FAIL|SCENE_RESULT" scene.log || true
+            echo "::error::场景装配冒烟未通过"
+            exit 1
+          fi
+          grep -E "SCENE_RESULT" scene.log
+
       - name: 上传冒烟日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -143,4 +154,5 @@ jobs:
             run1.log
             run2.log
             authority.log
+            scene.log
           if-no-files-found: ignore

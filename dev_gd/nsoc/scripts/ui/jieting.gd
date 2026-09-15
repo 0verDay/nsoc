@@ -44,6 +44,13 @@ const REVIEW_TITLE_HEIGHT: float = 60.0
 const REVIEW_PADDING: int = 20
 const REVIEW_ROW_WIDTH: float = 390.0
 const REVIEW_BADGE_SIZE: int = 30
+
+
+# ── 章节参数接口（与 ChapterPanelBase 的约定一致）─────────────────────────
+# 注：jieting 有真实差异（上"马谡"/下"王平"双检阅面板 + 互斥单选），尚未并入
+# ChapterPanelBase；此处先提供同名接口，便于统一调用与测试。见重构文档 §7 阶段 2。
+func chapter_name() -> String:
+	return CHAPTER_NAME
 const REVIEW_BADGE_FONT: int = 14
 const REVIEW_ITEM_GAP: int = 10
 
