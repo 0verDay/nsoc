@@ -226,15 +226,21 @@ func tick() -> void:
 # ══ 内部 ══════════════════════════════════════════════════════════════════
 
 ## 把权威核心产生的事件按 to 路由："" = 广播给所有人，否则只发给该玩家。
+## 权威核心有些事件自带 `type`（如 `auth/reject`，见 BattleAuthority._reject）——
+## 这类必须**原样作为独立消息类型**下发，而不是被包进 `auth/event`，
+## 否则客户端的 `auth_reject` 信号永远收不到（端到端联调发现的）。
 func _route_authority_events() -> void:
 	for entry in _authority.drain_all_events():
 		var to := String((entry as Dictionary).get("to", ""))
 		var payload = (entry as Dictionary).get("payload", {})
+		var msg_type := NetProtocol.AUTH_EVENT
+		if typeof(payload) == TYPE_DICTIONARY and (payload as Dictionary).has("type"):
+			msg_type = String((payload as Dictionary).get("type", NetProtocol.AUTH_EVENT))
 		if to == "":
 			for pid_raw in _players:
-				_queue(String(pid_raw), {"type": NetProtocol.AUTH_EVENT, "payload": payload})
+				_queue(String(pid_raw), {"type": msg_type, "payload": payload})
 		else:
-			_queue(to, {"type": NetProtocol.AUTH_EVENT, "payload": payload})
+			_queue(to, {"type": msg_type, "payload": payload})
 
 	if _authority.is_finished() and not _verdict_sent:
 		_verdict_sent = true

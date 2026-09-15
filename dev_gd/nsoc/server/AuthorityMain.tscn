@@ -4,3 +4,4 @@
 
 [node name="AuthorityMain" type="Node"]
 script = ExtResource("1_authmain")
+auto_connect = true

@@ -97,6 +97,10 @@ static func is_client_control(type: String) -> bool:
 
 ## 校验意图结构（只看"字段是否存在且类型正确"，不看规则合法性）。
 ## 返回 "" 表示通过，否则返回 NetProtocol.REJECT_* 原因。
+##
+## 注意：**JSON 没有整数类型** —— 走网络的意图里 `seq`/`row`/`col` 回来都是浮点。
+## 因此整数字段接受"整数值的浮点"（3.0 可以，3.5 不行）；否则真实客户端的意图
+## 会被一律判 `bad_payload`（离线单测用原生 int，发现不了这一点 —— 端到端联调才发现）。
 static func validate_intent(type: String, payload: Dictionary) -> String:
 	if not is_intent(type):
 		return REJECT_UNKNOWN_TYPE
@@ -105,11 +109,20 @@ static func validate_intent(type: String, payload: Dictionary) -> String:
 		var want: int = int(required[field])
 		if not payload.has(field):
 			return REJECT_BAD_PAYLOAD
-		if typeof(payload[field]) != want:
+		if not _field_matches(payload[field], want):
 			return REJECT_BAD_PAYLOAD
 	if payload.has("seq") and int(payload["seq"]) < 0:
 		return REJECT_BAD_PAYLOAD
 	return ""
+
+
+## 单字段类型匹配：严格类型相等；整数字段额外接受整数值的浮点（JSON 往返）。
+static func _field_matches(value, want: int) -> bool:
+	if typeof(value) == want:
+		return true
+	if want == TYPE_INT and typeof(value) == TYPE_FLOAT:
+		return is_equal_approx(float(value), roundf(float(value)))
+	return false
 
 
 ## 客户端在发送前自检：避免把服务器专属 type 发出去。

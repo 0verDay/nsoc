@@ -35,6 +35,10 @@ var match_config_path: String = ""
 var session: BattleServerSession = null
 var sim_host: BattleSimHost = null
 
+## 是否在 `_ready` 里自动连中继。场景 AuthorityMain.tscn 打开它；
+## 单元测试直接 `AuthorityMain.new()`（默认 false）→ 不会去连真实网络。
+@export var auto_connect: bool = false
+
 var _peer: WebSocketPeer = null
 var _registered: bool = false
 var _ticking: bool = false
@@ -49,6 +53,8 @@ func _ready() -> void:
 	sim_host = BattleSimHost.new()
 	sim_host.name = "AuthoritySimHost"
 	add_child(sim_host)
+	if auto_connect:
+		connect_to_relay()
 
 
 func _read_env() -> void:
@@ -166,7 +172,10 @@ func handle_relay_message(d: Dictionary) -> void:
 	var from := String(d.get("from", ""))
 	if from == "" or session == null:
 		return
-	session.handle_client_message(from, d)
+	var res: Dictionary = session.handle_client_message(from, d)
+	print("[authority] %s from=%s accepted=%s reason=%s pending=%s" % [
+		type, from, str(res.get("accepted", false)), String(res.get("reason", "")),
+		str(session.authority().has_pending_work())])
 	flush_outbound()
 
 
@@ -204,7 +213,10 @@ func _load_match_config() -> Dictionary:
 func tick_once() -> void:
 	if session == null:
 		return
+	var pending: bool = session.authority().has_pending_work()
 	await session.tick()
+	if pending:
+		print("[authority] tick 结算完成 pending_was=%s" % str(pending))
 	flush_outbound()
 
 
