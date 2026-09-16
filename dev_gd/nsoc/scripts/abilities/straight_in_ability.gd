@@ -40,9 +40,7 @@ static func trigger_start(game_node: Node) -> void:
 static func _refresh_cell_display(cell) -> void:
 	if not is_instance_valid(cell):
 		return
-	if cell.has_node("InnerPanel"):
-		var inner = cell.get_node("InnerPanel")
-		EffectBadgeFactory.refresh(inner.get_node_or_null("EffectBadges"), cell.effects)
+	# 徽章刷新由客户端订阅 effects_changed 完成（规则层不碰 UI）
 	# effects_changed：只刷新已开面板，不触发弹出
 	cell.effects_changed.emit({
 		"name": cell.card_name, "attack": cell.attack,

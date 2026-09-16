@@ -24,7 +24,7 @@ func on_play(_card_data, ctx) -> bool:
 	cell.play_damage_effect()
 
 	# 等待与 CombatSystem.DEATH_DELAY 一致的延迟，再走死亡流程
-	await ctx.game.get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+	await Game.wait_delay(CombatSystem.DEATH_DELAY)
 
 	# 退出到菜单时 combat.aborted = true，安全退出
 	if ctx.game.combat != null and ctx.game.combat.aborted:
@@ -34,7 +34,7 @@ func on_play(_card_data, ctx) -> bool:
 
 	# 播死亡特效
 	cell.play_death_effect()
-	await ctx.game.get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+	await Game.wait_delay(CombatSystem.DEATH_DELAY)
 	if ctx.game.combat != null and ctx.game.combat.aborted:
 		return true
 	if not is_instance_valid(cell) or not cell.has_card:

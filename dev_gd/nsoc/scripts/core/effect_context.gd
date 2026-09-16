@@ -18,6 +18,20 @@ var caster_is_enemy: bool = false
 var hand_view = null                 # HandView 引用（restart 等技能用）
 var hero: HeroState = null           # 本次激活的 HeroState
 
+# ── 权威端注入缝（默认 null = 客户端行为不变）──────────────────────────────
+# `HeroAbility.can_activate` 基类默认读 `Game.turn` / `Game.mana` / `HeroAbilities`
+# 这三个**客户端全局**。服务器上没有这些（或指向本地玩家），因此权威端通过 ctx 注入
+# 自己的回合/费用/已用状态，从而复用同一份前置校验（重构文档.md §3.4-6 的同款做法）。
+var mana_system = null               # ManaSystem：权威端为该玩家构造的费用镜像
+var turn_running = null              # bool：权威端是否正在跑行动阶段（默认 false）
+var ability_used_this_turn = null    # bool：该技能本回合是否已用过（权威端的表）
+## Callable：权威端的**手牌动作**通道（默认 null = 客户端行为不变）。
+## 客户端有 `hand_view` 节点可以直接改手牌；服务器没有，手牌是权威私有状态，
+## 因此"再起"这类会动到手牌的技能，在权威端必须走这条回调而不是 `hand_view`。
+## 签名：func(action: String, payload: Dictionary) -> Dictionary
+## 目前支持 action = "restart_hand"（弃掉全部手牌 → 补满 hand_cap 张）。
+var hand_action: Callable = Callable()
+
 func _init(p_game: Node) -> void:
 	game = p_game
 
@@ -122,6 +136,30 @@ func trigger_vigilance(entered_cell) -> void:
 		if game.combat == null or game.combat.aborted:
 			return
 
+# ---- 费用 ----
+# 效果**不要**直接读 `Game.mana`：那是客户端本地玩家的费用单例，服务器侧为 null
+# （权威端因此把"改费用"的效果变成空操作）。统一走这里：客户端回退到 Game.mana
+# （行为与以前逐字一致），权威端用 `mana_system` 注入该玩家的费用镜像。
+func mana():
+	if mana_system != null:
+		return mana_system
+	if game != null:
+		return game.mana
+	return null
+
+# 获得 n 点当前费用（不超过上限）。费用不足/无费用系统时静默忽略。
+func gain_mana(n: int) -> void:
+	var m = mana()
+	if m != null:
+		m.gain(n)
+
+# 是否负担得起 n 点费用。
+func can_spend_mana(n: int) -> bool:
+	var m = mana()
+	if m == null:
+		return false
+	return bool(m.can_spend(n))
+
 # ---- 卡牌去向 ----
 # 按 target_cell.origin 路由：
 #   "hand"    → game.deck（玩家个人牌堆，不论阵营）
@@ -181,12 +219,6 @@ func damage_player_hero(amount: int, source: String = "") -> void:
 	if slot != null:
 		slot.damage_hero(amount, source)
 
-func damage_enemy_hero(amount: int, source: String = "") -> void:
-	if game.registry == null:
-		return
-	for slot in game.registry.by_role(BoardSlot.ROLE_MAIN_ENEMY):
-		slot.damage_hero(amount, source)
-		return
 
 func damage_slot_hero(slot_id: String, amount: int, source: String = "") -> void:
 	if game.registry == null:

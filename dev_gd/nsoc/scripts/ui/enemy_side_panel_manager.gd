@@ -20,7 +20,6 @@ const PILE_TO_PANEL: Dictionary = {
 
 # clip 区域 = 敌方半场（基于 Main.tscn 中 TopGridBg 范围扩边）
 const CLIP_TOP: float = 60.0
-const CLIP_BOTTOM_FROM_CENTER: float = 0.0   # 至画面垂直中线（viewport_height / 2）
 const PANEL_WIDTH: float = 480.0
 const PANEL_HEIGHT: float = 470.0
 const SLIDE_DURATION: float = 0.3

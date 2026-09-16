@@ -12,7 +12,6 @@ extends RefCounted
 #   res://data/test_level.json    - 关卡配置（保留）
 
 const ALL_CARDS_JSON := "res://data/all_cards.json"
-const REVIEW_CARDS_JSON := "res://data/review_cards.json"
 const HERO_JSON := "res://data/hero.json"
 const CAMPAIGNS_JSON := "res://data/campaigns.json"
 const BATTLE_CARDS_JSON := "user://battle_cards.json"
@@ -35,13 +34,6 @@ static func _read_json(path: String):
 		push_error("DataLoader: malformed JSON: " + path)
 	return parsed
 
-static func _parse_string_array(raw) -> Array:
-	if typeof(raw) != TYPE_ARRAY:
-		return []
-	var out: Array = []
-	for item in raw:
-		out.append(String(item))
-	return out
 
 static func _parse_int_array(raw) -> Array:
 	if typeof(raw) != TYPE_ARRAY:

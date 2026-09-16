@@ -36,9 +36,7 @@ func run(params: Dictionary, _ctx: Dictionary) -> void:
 				continue
 			if not cell.effects.has("soaked"):
 				cell.effects.append("soaked")
-			if cell.has_node("InnerPanel"):
-				var inner = cell.get_node("InnerPanel")
-				EffectBadgeFactory.refresh(inner.get_node_or_null("EffectBadges"), cell.effects)
+			# 徽章刷新由客户端订阅 effects_changed 完成（规则层不碰 UI）
 			cell.effects_changed.emit({
 				"name": cell.card_name, "attack": cell.attack,
 				"health": cell.health, "effects": cell.effects,

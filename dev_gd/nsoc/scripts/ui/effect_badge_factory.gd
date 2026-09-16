@@ -32,6 +32,18 @@ static func refresh(container: Node, effects: Array) -> void:
 	for eff in effects:
 		container.add_child(create(eff))
 
+
+## 供 cell.effects_changed 信号直连（重构文档.md §3.2：规则层不再直接调用 UI）。
+## 连接方式：cell.effects_changed.connect(EffectBadgeFactory.refresh_from_cell.bind(cell))
+## bind 追加参数，故实际签名为 (payload, cell)；payload 不使用，徽章内容以 cell.effects 为准。
+static func refresh_from_cell(_payload, cell: Node) -> void:
+	if cell == null or not is_instance_valid(cell):
+		return
+	var inner := cell.get_node_or_null("InnerPanel")
+	if inner == null:
+		return
+	refresh(inner.get_node_or_null("EffectBadges"), cell.effects)
+
 static func _resolve_name(eff_id: String) -> String:
 	# autoload "Effects" 在 GDScript 中作为全局标识符可直接访问。
 	# 为防止单元测试场景未配置 autoload，做一次空守卫。

@@ -25,14 +25,12 @@ func on_activate(ctx) -> void:
 	# 弹出目标选择器，筛选所有棋盘上的敌方单位格
 	var target_cell = await ctx.pick_target_async("enemy_unit")
 	if target_cell == null or not target_cell.has_card:
-		# 玩家取消 → 退费
-		Game.mana.gain(cost())
+		# 玩家取消 → 退费（走 ctx：权威端退到服务器的费用，客户端退到本地费用）
+		ctx.gain_mana(cost())
 		return
 	if not target_cell.effects.has("soaked"):
 		target_cell.effects.append("soaked")
-		if is_instance_valid(target_cell) and target_cell.has_node("InnerPanel"):
-			var inner = target_cell.get_node("InnerPanel")
-			EffectBadgeFactory.refresh(inner.get_node_or_null("EffectBadges"), target_cell.effects)
+		# 徽章刷新由客户端订阅 effects_changed 完成（规则层不碰 UI）
 		# effects_changed：只刷新已开面板，不弹出
 		target_cell.effects_changed.emit({
 			"name": target_cell.card_name, "attack": target_cell.attack,

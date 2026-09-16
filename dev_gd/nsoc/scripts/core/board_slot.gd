@@ -99,15 +99,10 @@ func _on_hero_died() -> void:
 		if Engine.get_main_loop() != null else null
 	if g != null and g.is_pvp and g.is_multi_team_pvp() and team_id != "":
 		g.mark_player_dead(owner_player_id)
-		# 任一方死亡即判定对方获胜（测试期简化规则）。
-		# 兼容 1v3（defender/attacker）与 3v3（team_a/team_b）：取 pvp_teams 中非己队的第一个。
-		var loser_team: String = team_id
-		var winner_team: String = ""
-		for tid in g.pvp_teams.keys():
-			if tid != loser_team:
-				winner_team = tid
-				break
-		g.pvp_end_game(winner_team, owner_player_id)
+		# 任一方死亡即判定对方获胜（测试期简化规则，见 Game.winning_team_for）。
+		# pvp_end_game 会先在本端 emit match_result_decided 完成结算，再广播 game/end；
+		# 因为每端都跑同一份锁步状态，本端结算结果与对端必然一致。
+		g.pvp_end_game(g.winning_team_for(team_id), owner_player_id)
 		return
 	# 主玩家英雄死亡不走 trigger（由 test_main 的 _on_player_hero_died 处理 PVE/1v1 胜负）
 	if role == ROLE_MAIN_PLAYER:
@@ -144,22 +139,15 @@ func _flash_hero_panel() -> void:
 	tw.tween_property(hero_panel, "self_modulate", Color.WHITE,
 		CombatSystem.HERO_HIT_FADE)
 
-func is_player_side() -> bool:
-	return faction == FACTION_PLAYER
 
-func is_enemy_side() -> bool:
-	return faction == FACTION_ENEMY
 
-# 视觉水平位置：以 bg_panel 为准，回退到任一 cell 的 global_position.x
-func visual_x() -> float:
-	if is_instance_valid(bg_panel):
-		return bg_panel.global_position.x
-	if board != null:
-		for key in board.grid_cells.keys():
-			var cell = board.grid_cells[key]
-			if is_instance_valid(cell):
-				return cell.global_position.x
-	return INF
+# 逻辑行动顺序键（重构文档.md §3.4-7）。
+# 使用 slot_index —— 它本身就是布局的空间顺序（0 敌左 / 1 敌中 / 2 敌右 /
+# 3 友左 / 4 主盘 / 5 友右），BoardLayoutResolver 也用它来决定左/中/右，
+# 因此与"从左往右"的既有语义一致，且不依赖窗口尺寸与布局时序。
+# 取代原先按 bg_panel.global_position.x（屏幕像素）排序的做法。
+func order_key() -> int:
+	return slot_index
 
 # ── 序列化（PVP 联机用）────────────────────────────────────────────
 # 把 board / hero / 本盘墓地除外打包；视觉节点（bg_panel / grid_node / hero_panel）

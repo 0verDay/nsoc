@@ -11,7 +11,6 @@ extends HeroAbility
 #   - origin = "ability"（非牌库来源；死后默认入 player_main 棋盘的墓地/除外）
 #   - effects = 原型 effects + "ash"
 
-const TARGET_BOARD_ID: String = "player_main"
 const SUMMON_CARD_NAME: String = "乡勇"
 
 func id() -> String:
@@ -51,7 +50,7 @@ func on_activate(ctx) -> void:
 		for c in enemies:
 			if is_instance_valid(c):
 				c.play_damage_effect()
-		await ctx.game.get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+		await Game.wait_delay(CombatSystem.DEATH_DELAY)
 		if Game.combat != null and Game.combat.aborted:
 			return
 
@@ -59,7 +58,7 @@ func on_activate(ctx) -> void:
 			if not is_instance_valid(c) or not c.has_card:
 				continue
 			c.play_death_effect()
-		await ctx.game.get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+		await Game.wait_delay(CombatSystem.DEATH_DELAY)
 		if Game.combat != null and Game.combat.aborted:
 			return
 

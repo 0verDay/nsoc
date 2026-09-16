@@ -26,7 +26,6 @@ const SLOT_1: String      = "slot_1"
 const SLOT_2: String      = "slot_2"
 const SLOT_3: String      = "slot_3"
 
-const MANUAL_SLOTS: Array = ["slot_1", "slot_2", "slot_3"]
 const ALL_SLOTS: Array    = ["auto", "slot_1", "slot_2", "slot_3"]
 
 
@@ -77,11 +76,6 @@ static func load_slot(slot_id: String) -> Dictionary:
 	return entry
 
 
-# 删除指定槽位。
-static func delete_slot(slot_id: String) -> void:
-	var data := load_all()
-	data["slots"].erase(slot_id)
-	_save_all(data)
 
 
 # 返回所有已存在槽位的摘要，格式：

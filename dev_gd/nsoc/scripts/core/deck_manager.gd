@@ -39,6 +39,15 @@ func setup(cards: Array) -> void:
 func reshuffle(initial: bool = false) -> void:
 	draw_pile.clear()
 	if initial:
+		# 新对局初始化：重建抽牌堆的同时**必须清空墓地 / 除外**。
+		# 本地玩家的 deck 是跨对局复用的长寿命实例（game_context.clear_extra_decks_and_manas
+		# 特意保留 Game.deck 而不重建），只清 draw_pile 会把上一局的墓地 / 除外带进新对局：
+		#   ① 墓地/除外面板显示上一局的牌；
+		#   ② 同配置的对局状态哈希与新进程不一致（PVP headless 冒烟就是这么抓到的）。
+		graveyard.clear()
+		banished.clear()
+		pile_changed.emit("graveyard")
+		pile_changed.emit("banish")
 		for card in _all_cards:
 			for i in range(card.count):
 				draw_pile.append(card)
@@ -53,7 +62,7 @@ func reshuffle(initial: bool = false) -> void:
 
 # 按 _rng 是否存在决定洗牌方式。
 # PVP：用 _rng_base_seed + _reshuffle_count 推导本次 seed，保证确定性。
-# PVE：走 Array.shuffle()。
+# PVE：走全局规则随机源 Game.battle_rng（不再是 Array.shuffle()）。
 func _shuffle_draw_pile() -> void:
 	if _rng != null:
 		_rng.seed = _rng_base_seed + _reshuffle_count
@@ -64,8 +73,17 @@ func _shuffle_draw_pile() -> void:
 			var tmp = draw_pile[i]
 			draw_pile[i] = draw_pile[j]
 			draw_pile[j] = tmp
+	elif _has_game():
+		# 服务器权威下"随机由谁掌握"必须显式：统一走 Game.battle_rng（§3.4-7）
+		Game.shuffle_in_place(draw_pile)
 	else:
-		draw_pile.shuffle()
+		draw_pile.shuffle()   # 无 Game 环境（纯单元测试）兜底
+
+
+static func _has_game() -> bool:
+	var loop := Engine.get_main_loop()
+	return loop is SceneTree and (loop as SceneTree).root != null \
+		and (loop as SceneTree).root.has_node("/root/Game")
 
 # 抽牌，空堆自动回收墓地，仍空则返回 null（由调用方决定补什么）。
 func draw_card():

@@ -56,9 +56,11 @@ func on_activate(ctx) -> void:
 	if Game.turn != null:
 		Game.turn.is_running = false
 	if chosen == null:
-		# 玩家取消：退还费用
+		# 玩家取消：退还费用（走 ctx.gain_mana：权威端退服务器费用，客户端退本地费用）
 		# HeroAbilityRegistry.activate 已在调用 on_activate 前扣费，此处退还
-		if Game.mana != null:
+		if ctx != null:
+			ctx.gain_mana(cost())
+		elif Game.mana != null:
 			Game.mana.gain(cost())
 		# 同时清除"本回合已用"标记，让玩家可重试
 		var root: Node = Engine.get_main_loop().root if Engine.get_main_loop() != null else null

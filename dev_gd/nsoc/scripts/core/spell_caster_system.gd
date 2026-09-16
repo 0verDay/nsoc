@@ -63,7 +63,7 @@ func _cast(caster: Dictionary) -> void:
 
 	# 视觉反馈：目标格闪红
 	target_cell.play_damage_effect()
-	await get_tree().create_timer(0.3).timeout
+	await Game.wait_delay(0.3)
 
 	if not _can_continue():
 		return

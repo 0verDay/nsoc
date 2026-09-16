@@ -10,7 +10,9 @@ signal hand_consumed(slot_index: int, source_card)            # 通知 HandView 
 var _root: Control                          # 用于挂载飞入动画 visual
 var _cell_scene: PackedScene
 # 供 discard_hand_card effect 访问，弃置动画由 HandView 执行。
-var hand_view: HandView = null
+# 故意声明为 Node 而非 HandView：纯规则层不得依赖客户端类（重构文档.md §3.2）。
+# 调用点只在运行时按鸭子类型调用 discard_card() 等；服务器侧留空即可。
+var hand_view: Node = null
 
 func setup(root: Control, cell_scene: PackedScene) -> void:
 	_root = root
@@ -128,13 +130,7 @@ func handle_drop(cell, data) -> void:
 	var drop_global_pos: Vector2 = cell.global_position + cell.size / 2.0
 	# 拖拽源：先记录位置 + 隐藏（保留 Container 占位），由 HandView 在新卡到位后 free
 	var src = data.get("source_card")
-	var slot_index: int = -1
-	if src and is_instance_valid(src):
-		slot_index = src.get_index()
-		src.modulate.a = 0.0
-		src.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		# 标记为已消耗，避免 HandCard._notification(DRAG_END) 把 modulate.a 改回 1
-		src.set_meta("consumed", true)
+	var slot_index: int = _consume_src_card(src)
 
 	var full_data = data.get("full_data")
 
@@ -157,6 +153,18 @@ func handle_drop(cell, data) -> void:
 	# PVP：广播出牌给对手（本端已执行，对手收到后镜像到 enemy_main）
 	if Game.is_pvp:
 		_pvp_broadcast_play_card(cell, data)
+
+## 把拖拽源手牌标记为"已消耗"（隐藏 + 不再响应鼠标），返回其索引（无效 = -1）。
+func _consume_src_card(src) -> int:
+	if src == null or not is_instance_valid(src):
+		return -1
+	var slot_index: int = src.get_index()
+	src.modulate.a = 0.0
+	src.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 标记为已消耗，避免 HandCard._notification(DRAG_END) 把 modulate.a 改回 1
+	src.set_meta("consumed", true)
+	return slot_index
+
 
 func _animate_drop(cell, data, drop_global_pos: Vector2, effs: Array) -> void:
 	var visual = _cell_scene.instantiate()

@@ -54,46 +54,8 @@ func setup(combat: CombatSystem, card_resolver: Callable) -> void:
 	_combat = combat
 	_card_resolver = card_resolver
 
-# 兼容旧 API：返回 ENEMY 盘的 (board, hero_resolver) 数组视图。
-# front_row_selector / 旧测试代码仍按此读取。
-func get_extra_board_configs() -> Array:
-	var out: Array = []
-	var reg := _registry()
-	if reg == null:
-		return out
-	var main_player_slot: BoardSlot = reg.main_player()
-	for slot in reg.slots:
-		if slot == main_player_slot:
-			continue
-		out.append({"board": slot.board, "hero_resolver": slot.hero_resolver})
-	return out
 
-# 兼容旧 API：把外部 BoardModel 包装为一个敌方 BoardSlot 加入 registry。
-func register_extra_board(board: BoardModel, hero_resolver: Callable) -> void:
-	var reg := _registry()
-	if reg == null or reg.get_by_board(board) != null:
-		return
-	var slot := BoardSlot.new()
-	slot.name = "ExtraSlot_%d" % reg.slots.size()
-	add_child(slot)
-	slot.setup(
-		"extra_%d" % reg.slots.size(),
-		BoardSlot.FACTION_ENEMY,
-		BoardSlot.ROLE_ENEMY,
-		board, null, null, hero_resolver,
-	)
-	reg.add(slot)
 
-func unregister_extra_board(board: BoardModel) -> void:
-	var reg := _registry()
-	if reg == null:
-		return
-	var slot: BoardSlot = reg.get_by_board(board)
-	if slot == null:
-		return
-	reg.remove(slot.id)
-	if is_instance_valid(slot):
-		slot.queue_free()
 
 # 外部（test_main）调用：玩家完成棋盘选择后，传入棋盘标识（"" = 本棋盘）。
 func resolve_front_row_selection(target_id: String) -> void:
@@ -123,8 +85,6 @@ func consume_cross_choice(source_slot_id: String, row: int, col: int) -> String:
 			return String(c.target_slot_id)
 	return ""
 
-func clear_cross_choices() -> void:
-	_pending_cross_choices.clear()
 
 # 多队伍 PVP 跨盘选择广播（1v3 守方拥有者 / 3v3 任意拥有者）。
 # 远端 test_main 收到后调 enqueue_cross_choice 入队。
@@ -335,7 +295,7 @@ func _iter_phase_cells(faction: int) -> Array:
 	var out: Array = []
 
 	if faction == PLAYER:
-		var slots: Array = reg.sorted_by_x()
+		var slots: Array = reg.sorted_by_order()
 		for r in range(BoardModel.ROWS):
 			for slot in slots:
 				if not is_instance_valid(slot.board):
@@ -346,8 +306,8 @@ func _iter_phase_cells(faction: int) -> Array:
 						out.append({"cell": slot.board.grid_cells[key], "slot": slot})
 	else:
 		# 将棋盘分成两组：玩家侧（faction=PLAYER）和敌方侧（faction=ENEMY），
-		# 均按 x 降序（敌方自身视角左→右）。
-		var slots_desc: Array = reg.sorted_by_x().duplicate()
+		# 均按 slot_index 降序（敌方自身视角左→右）。
+		var slots_desc: Array = reg.sorted_by_order().duplicate()
 		slots_desc.reverse()
 		var player_slots: Array = []
 		var enemy_slots: Array = []
@@ -502,7 +462,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 			and _can_cross_board(cell, slot):
 		# AI 友军盘：自动随机选目标，不弹 UI
 		if has_node("/root/AiManager") and AiManager.is_ai_slot(slot.id):
-			var ai_idx: int = randi() % enemy_slots.size()
+			var ai_idx: int = Game.rand_index(enemy_slots.size())
 			front_row_target_id = String(enemy_slots[ai_idx].id)
 		else:
 			# PVE / 1v1 旧 UI 路径（玩家自己的盘）
@@ -587,7 +547,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 								return
 						elif probe_hit_hero and target_hero.is_valid():
 							target_hero.call(probe_dest.attack, "unit_direct")
-							await get_tree().create_timer(STEP_INTERVAL).timeout
+							await Game.wait_delay(STEP_INTERVAL)
 						if is_instance_valid(probe_dest) and probe_dest.has_card:
 							probe_dest.has_attacked = true
 							probe_dest.has_charged = true
@@ -685,7 +645,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		if not on_home_board and hero_resolver.is_valid():
 			hero_resolver.call(cell.attack, "unit_direct")
 		cell.has_attacked = true
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 		return
 
 	# 向 goal_row 推进一格
@@ -703,7 +663,7 @@ func _process_cell(faction: int, cell, slot: BoardSlot) -> void:
 		if not is_instance_valid(board) or not is_instance_valid(target):
 			return
 		target.has_attacked = true
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 		if _combat == null or _combat.aborted or not is_instance_valid(board) or not is_instance_valid(target):
 			return
 		await _trigger_vigilance_on_board(target, for_enemy, board)
@@ -765,9 +725,9 @@ func _enemy_auto_cross(cell, slot: BoardSlot, target_slots: Array) -> bool:
 			if tgt_is_hostile:
 				attack_candidates.append({"slot": tgt_slot, "cell": tgt})
 	if attack_candidates.size() > 0:
-		var pick: Dictionary = attack_candidates[randi() % attack_candidates.size()]
+		var pick: Dictionary = attack_candidates[Game.rand_index(attack_candidates.size())]
 		var tgt = pick["cell"]
-		await get_tree().create_timer(CombatSystem.ATTACK_HIT_DELAY).timeout
+		await Game.wait_delay(CombatSystem.ATTACK_HIT_DELAY)
 		if _combat == null or _combat.aborted or not is_instance_valid(cell) or not cell.has_card:
 			cell.has_attacked = true
 			return true
@@ -790,7 +750,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, target_slots: Array) -> bool:
 		if tgt2 != null and not tgt2.has_card:
 			move_candidates.append({"slot": tgt_slot, "cell": tgt2})
 	if move_candidates.size() > 0:
-		var pick2: Dictionary = move_candidates[randi() % move_candidates.size()]
+		var pick2: Dictionary = move_candidates[Game.rand_index(move_candidates.size())]
 		var ply_slot2: BoardSlot = pick2["slot"]
 		var tgt2 = pick2["cell"]
 		var pb2: BoardModel = ply_slot2.board
@@ -842,7 +802,7 @@ func _enemy_auto_cross(cell, slot: BoardSlot, target_slots: Array) -> bool:
 					return true
 			elif probe_hit_hero and ply_slot2.hero_resolver.is_valid():
 				ply_slot2.hero_resolver.call(probe_dest.attack, "unit_direct")
-				await get_tree().create_timer(STEP_INTERVAL).timeout
+				await Game.wait_delay(STEP_INTERVAL)
 			if is_instance_valid(probe_dest) and probe_dest.has_card:
 				probe_dest.has_attacked = true
 				probe_dest.has_charged = true
@@ -941,7 +901,7 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 	if cell.row == goal_row:
 		if hero_resolver.is_valid():
 			hero_resolver.call(cell.attack, "unit_direct")
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 		if _combat == null or _combat.aborted:
 			return null
 		return cell
@@ -996,7 +956,7 @@ func _run_charge_on_board(cell, step: int, for_enemy: bool, goal_row: int,
 	elif hit_hero and hero_resolver.is_valid():
 		# PVP 锁步：见 _process_cell 同处注释，hero_resolver 天然对称，无需广播。
 		hero_resolver.call(dest.attack, "unit_direct")
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 		if _combat == null or _combat.aborted:
 			return null
 
@@ -1014,7 +974,7 @@ func _run_spawn_phase() -> void:
 		if slot.spawners.advance(slot.board, _card_resolver):
 			any_spawned = true
 	if any_spawned:
-		await get_tree().create_timer(STEP_INTERVAL).timeout
+		await Game.wait_delay(STEP_INTERVAL)
 # ── 警戒触发 ────────────────────────────────────────────────────────
 func _trigger_vigilance_on_board(entered_cell, mover_for_enemy: bool,
 		board: BoardModel) -> void:
@@ -1056,7 +1016,7 @@ func _self_destruct_yi_bing(cell) -> void:
 	if cell == null or not cell.has_card:
 		return
 	cell.play_death_effect()
-	await get_tree().create_timer(CombatSystem.DEATH_DELAY).timeout
+	await Game.wait_delay(CombatSystem.DEATH_DELAY)
 	if _combat == null or _combat.aborted or not is_instance_valid(cell):
 		return
 	if Game != null and Game.play != null:

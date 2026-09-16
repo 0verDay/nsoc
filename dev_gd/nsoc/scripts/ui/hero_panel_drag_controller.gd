@@ -20,7 +20,6 @@ extends Node
 #   $LeftSidePnl.gui_input.connect(ctrl.on_gui_input)
 
 const DRAG_THRESHOLD: float = 6.0
-const SNAP_DURATION: float = 0.25
 const BOUNCE_DIST: float = 20.0
 const BOUNCE_DURATION: float = 0.45
 

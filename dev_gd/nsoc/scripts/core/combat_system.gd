@@ -3,6 +3,13 @@ extends Node
 
 # 战斗动画与伤害结算。
 
+## ── 细粒度动作信号（重构文档.md §4.2「细粒度逐动作事件」）──────────────────
+## 客户端可以据此逐步播动画；**服务器权威端把它们转成 auth/event 下发给客户端**。
+## 纯增量：不接信号时行为与以前逐字相同。
+signal damage_dealt(payload: Dictionary)     # 一次攻击的伤害结果（双方血量）
+signal units_died(payload: Dictionary)       # 本次攻击造成的阵亡名单
+signal move_resolved(payload: Dictionary)    # 一次移动的结果（起点 → 终点）
+
 const HERO_HIT_FADE: float = 0.5
 const ATTACK_HIT_DELAY: float = 0.45
 const DEATH_DELAY: float = 0.45
@@ -17,6 +24,14 @@ var _play_controller: PlayController        # 死亡时回调（牌入墓/除外
 # 退出到菜单时置 true，所有 await 后检查此 flag 并提前 return，避免 invalid 引用报错。
 var aborted: bool = false
 
+## 表现开关（§3.4-6：服务器复用同一份战斗规则的关键一道缝）。
+##   true  = 客户端：挥击 / 受击闪烁 / 血量标签 / 死亡动画 + 按动画时长等待
+##   false = 无头（服务器权威端 / 无头测试）：只做纯结算 + 死亡清算（入墓 / 除外 / on_kill），
+##           **不碰任何视图、不建 tween、不等待**
+## 与 `Game.instant_battle` 正交：后者只把等待压到 0（客户端"跳过动画"用），
+## 本开关才是不产生表现的语义开关。默认 true，客户端行为逐字不变。
+var presentation_enabled: bool = true
+
 func setup(root: Control, cell_scene: PackedScene, play_controller: PlayController) -> void:
 	_root = root
 	_cell_scene = cell_scene
@@ -29,11 +44,26 @@ func abort() -> void:
 # 旧 API 兼容：英雄受伤面板闪红已下沉到 BoardSlot.damage_hero。
 # 调用方应改为通过 slot.hero_resolver / slot.damage_hero。
 
-func attack_cells(attacker, defender_data_list: Array) -> void:
-	var a_atk: int = attacker.attack
-	var dead_cells: Array = []
+# ── 纯结算（无表现）────────────────────────────────────────────────────────
+# 重构文档.md §3.4-6：伤害数学必须与动画/计时器分离，服务器才能无头复用同一份规则。
+# 本函数不碰场景树、不创建 tween、不刷新任何 UI 标签。
 
-	attacker.play_attack_effect()
+## 任一面 <= 0 即阵亡（通用规则，与特效无关）。
+static func is_cell_dead(cell) -> bool:
+	if cell == null or not is_instance_valid(cell):
+		return false
+	for s in Orientation.SIDES:
+		if int(cell.health.get(s, 0)) <= 0:
+			return true
+	return false
+
+
+## 把一次攻击应用到 defender_data_list（元素形如 {"cell":..., "opp_dir":...}）。
+## 返回本次阵亡的 cell 列表（含被"疑兵"反伤致死的攻击者）。
+## 注意：只改数据，不产生任何表现。
+static func resolve_attack(attacker, defender_data_list: Array) -> Array:
+	var a_atk: int = int(attacker.attack) if attacker != null and is_instance_valid(attacker) else 0
+
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
 		# defender_data.opp_dir 为屏幕绝对方向（top/bottom/left/right），
@@ -57,47 +87,71 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 				defender.health[s] = 0
 			if attacker != null and is_instance_valid(attacker) and attacker.has_card:
 				for s in Orientation.SIDES:
-					attacker.health[s] = max(attacker.health[s] - 2, 0)
-				attacker._update_hp_labels()
-				attacker.play_damage_effect()
-		defender._update_hp_labels()
-		defender.play_damage_effect()
+					attacker.health[s] = max(int(attacker.health[s]) - 2, 0)
 
-	await get_tree().create_timer(ATTACK_HIT_DELAY).timeout
-	# 退出到菜单时 aborted=true 或节点已被 free，协程 resume 后立即返回
-	if aborted or not is_instance_valid(self):
-		return
-
+	var dead_cells: Array = []
 	for defender_data in defender_data_list:
 		var defender = defender_data.cell
 		if not is_instance_valid(defender):
 			continue
-		# 任意一面 <=0 即视为阵亡（通用规则，与 frail 特效无关）
-		var dead: bool = false
-		for s in Orientation.SIDES:
-			if defender.health[s] <= 0:
-				dead = true
-				break
-		if dead and not dead_cells.has(defender):
+		if is_cell_dead(defender) and not dead_cells.has(defender):
 			dead_cells.append(defender)
 
 	# 攻击者也可能因为攻击疑兵被反伤致死（任一面 <=0），同步纳入死亡清算。
-	if attacker != null and is_instance_valid(attacker) and attacker.has_card:
-		var attacker_dead: bool = false
-		for s in Orientation.SIDES:
-			if attacker.health[s] <= 0:
-				attacker_dead = true
-				break
-		if attacker_dead and not dead_cells.has(attacker):
-			dead_cells.append(attacker)
+	if attacker != null and is_instance_valid(attacker) and attacker.has_card \
+			and is_cell_dead(attacker) and not dead_cells.has(attacker):
+		dead_cells.append(attacker)
 
-	if dead_cells.size() > 0:
-		for dc in dead_cells:
-			dc.play_death_effect()
-		await get_tree().create_timer(DEATH_DELAY).timeout
-		# 退出到菜单时 aborted=true 或节点已被 free
+	return dead_cells
+
+
+## 攻击结算 + 表现（挥击、受击闪烁、血量标签、死亡动画、入墓清算）。
+## 规则部分完全委托给 resolve_attack，本函数只负责"怎么演"和时序。
+func attack_cells(attacker, defender_data_list: Array) -> void:
+	var attacker_valid: bool = attacker != null and is_instance_valid(attacker) and attacker.has_card
+	var attacker_hp_before: Dictionary = attacker.health.duplicate() if attacker_valid else {}
+
+	# ① 纯结算
+	var dead_cells: Array = resolve_attack(attacker, defender_data_list)
+
+	# ①b 细粒度事件：伤害结果（此时阵亡格还没被清空，血量是"打完"的值）
+	_emit_damage_dealt(attacker, attacker_valid, defender_data_list)
+
+	# ② 表现：挥击 + 逐格受击闪烁/血量刷新（无头/服务器模式整段跳过）
+	if presentation_enabled:
+		if attacker != null and is_instance_valid(attacker):
+			attacker.play_attack_effect()
+		for defender_data in defender_data_list:
+			var defender = defender_data.cell
+			if is_instance_valid(defender):
+				defender._update_hp_labels()
+				defender.play_damage_effect()
+
+		# 攻击者只有真的掉血（疑兵反伤）才闪红，避免每次攻击都误闪
+		if attacker_valid:
+			var took_damage: bool = false
+			for s in Orientation.SIDES:
+				if int(attacker.health.get(s, 0)) != int(attacker_hp_before.get(s, 0)):
+					took_damage = true
+					break
+			if took_damage:
+				attacker._update_hp_labels()
+				attacker.play_damage_effect()
+
+		await Game.wait_delay(ATTACK_HIT_DELAY)
+		# 退出到菜单时 aborted=true 或节点已被 free，协程 resume 后立即返回
 		if aborted or not is_instance_valid(self):
 			return
+
+	# ③ 死亡表现 + 清算（清算是规则，两种模式都必须执行）
+	if dead_cells.size() > 0:
+		if presentation_enabled:
+			for dc in dead_cells:
+				dc.play_death_effect()
+			await Game.wait_delay(DEATH_DELAY)
+			# 退出到菜单时 aborted=true 或节点已被 free
+			if aborted or not is_instance_valid(self):
+				return
 		# 收集 victim 快照（card_name / is_enemy / owner_slot_id / origin）供 handle_kills 使用，
 		# 因 clear_card 会清空这些字段。owner_slot_id / origin 用于 terrify 等 on_kill 效果
 		# 准确路由到对应墓地（跨盘冲锋单位 cell.slot_id 已变，不能再用）。
@@ -110,14 +164,52 @@ func attack_cells(attacker, defender_data_list: Array) -> void:
 				"owner_slot_id": dc.owner_slot_id,
 				"slot_id": dc.slot_id,
 				"origin": dc.origin,
+				# 落点：客户端播阵亡动画 / 服务器定位死亡格都要用（纯增量字段）
+				"row": int(dc.row),
+				"col": int(dc.col),
 			}
 			_play_controller.handle_unit_death(dc)
 			if dc.has_card:
 				dc.clear_card()
 			victims.append(snap)
+		# 细粒度事件：本次阵亡名单（用 clear 之前拍好的快照）
+		units_died.emit({"kind": "death", "deaths": victims.duplicate()})
 		# 攻击者击杀回调（冲阵等）。attacker 自身可能因警戒等被打死，需校验 has_card。
 		if attacker != null and attacker.has_card:
 			await _play_controller.handle_kills(attacker, victims)
+
+## 细粒度事件：一次攻击的伤害结果（双方血量快照，JSON 友好、只读）。
+func _emit_damage_dealt(attacker, attacker_valid: bool, defender_data_list: Array) -> void:
+	var defenders: Array = []
+	for defender_data in defender_data_list:
+		var d = defender_data.cell
+		if d == null or not is_instance_valid(d):
+			continue
+		defenders.append(_cell_snapshot(d))
+	var payload: Dictionary = {
+		"kind": "attack",
+		"attacker": _cell_snapshot(attacker) if attacker_valid else {},
+		"defenders": defenders,
+	}
+	damage_dealt.emit(payload)
+
+
+## 把一格的状态拍成 JSON 友好的快照（含落点与四维；血量是拷贝，不会被后续清空影响）。
+func _cell_snapshot(cell) -> Dictionary:
+	if cell == null or not is_instance_valid(cell):
+		return {}
+	return {
+		"slot_id": String(cell.slot_id),
+		"row": int(cell.row),
+		"col": int(cell.col),
+		"card": String(cell.card_name),
+		"attack": int(cell.attack),
+		"health": (cell.health as Dictionary).duplicate(),
+		"is_enemy": bool(cell.is_enemy),
+		"team_id": String(cell.team_id),
+		"owner_slot_id": String(cell.owner_slot_id),
+	}
+
 
 func move_card(start, end) -> void:
 	var cname: String = start.card_name
@@ -129,6 +221,24 @@ func move_card(start, end) -> void:
 	# 跨盘移动时也保留单位"原属盘"和"出处"，死亡按归属/出处入墓
 	var owner_id: String = start.owner_slot_id
 	var origin_str: String = start.origin
+	# 队伍归属跨盘不变：Cell 会在 set_card 里按 owner_slot_id 反查 registry，
+	# 而无头/服务器侧的 CellData 没有 registry 可查，必须显式透传（否则跨盘即掉队伍）。
+	# PVE 下 team_id 为空串，保持原样，行为不变。
+	var moved_team: String = start.team_id
+
+	# 服务器/无头瞬时模式：跳过位移动画与 tween 等待，直接完成数据转移。
+	# 状态转移与下面的动画路径逐字一致（只是不等 tween.finished）。
+	# 见 game_context.gd 的 instant_battle 说明：两条黄金路径在两种模式下哈希必须相同。
+	# presentation_enabled=false（无头/服务器）也走这条：此时没有 cell_scene / _root 可用。
+	if Game.instant_battle or not presentation_enabled:
+		start.clear_card()
+		if is_instance_valid(end):
+			end.set_card(cname, atk, hp, is_e, effs, owner_id, origin_str)
+			if moved_team != "":
+				end.team_id = moved_team
+			end.has_charged = charged
+			_emit_move_resolved(cname, start, end)
+		return
 
 	var visual = _cell_scene.instantiate()
 	_root.add_child(visual)
@@ -176,4 +286,17 @@ func move_card(start, end) -> void:
 		return
 
 	end.set_card(cname, atk, hp, is_e, effs, owner_id, origin_str)
+	if moved_team != "":
+		end.team_id = moved_team
 	end.has_charged = charged
+	_emit_move_resolved(cname, start, end)
+
+
+## 细粒度事件：一次移动的结果（起点格此时已空，终点格已有单位）。
+func _emit_move_resolved(cname: String, start, end) -> void:
+	move_resolved.emit({
+		"kind": "move",
+		"card": cname,
+		"from": _cell_snapshot(start),
+		"to": _cell_snapshot(end),
+	})

@@ -8,8 +8,6 @@ var _agents: Dictionary = {}   # slot_id -> AiAgent
 func register(slot_id: String, agent: AiAgent) -> void:
 	_agents[slot_id] = agent
 
-func get_agent(slot_id: String) -> AiAgent:
-	return _agents.get(slot_id)
 
 func all_agents() -> Array:
 	# 过滤掉已被 free 的节点（场景切换时 Agent 先于 AiManager 销毁）

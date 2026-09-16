@@ -6,8 +6,11 @@ extends Node
 # 旧 main.gd 中散落的 player_health / current_mana / draw_pile / autophagy_counter
 # 全部迁移到此处或对应子系统。
 
-signal cards_loaded(cards: Array)
-signal level_loaded(level: Dictionary)
+# 多队伍 PVP 结算信号。任一英雄阵亡即判定对方获胜（见 board_slot._on_hero_died）。
+# 本信号由本端确定性模拟直接触发 —— 所有客户端跑同一份锁步状态，必然得到同一结果，
+# 因此结算 UI **不再依赖网络回声 game/end**（服务器已把 game/end 列为服务器专属消息，
+# 客户端发来会被中继层丢弃；见重构文档 §4.1）。
+signal match_result_decided(winning_team: String, loser_pid: String)
 
 var deck: DeckManager
 var mana: ManaSystem
@@ -26,9 +29,61 @@ var manas: Dictionary = {}        # player_id -> ManaSystem
 # 当前本地玩家身份。PVE 固定 "player_main"；PVP 由 NetworkManager 在握手时注入 uuid。
 var local_player_id: String = "player_main"
 
+# 显式对局模式（BattleMode.Kind）。由 bootstrap() / bootstrap_pvp() 设置，
+# 取代过去分散的隐式判断（见 scripts/core/battle_mode.gd 的语义说明）。
+var battle_mode: int = BattleMode.Kind.CAMPAIGN
+
 # PVP 模式开关。bootstrap() 末尾置 false；bootstrap_pvp() 置 true。
 # 业务模块据此跳过 spawner / spell_caster / scripted_events / dialogue 等 PVE 专属流程。
 var is_pvp: bool = false
+
+# ── 规则随机源（重构文档.md §3.4-7）─────────────────────────────────────
+# 所有"影响对局结果"的随机都必须走这里，不再使用全局 randi() / Array.shuffle()：
+#   - PVP：由服务器下发的种子（bootstrap_pvp 的 rng_seed）决定 → 可复现、且客户端无法挑选
+#   - PVE：pending_battle_seed 为 0 时 randomize()；测试/回放可显式指定种子
+# 这样"随机由谁掌握"就不再是隐式的全局状态，服务器权威可以直接接管。
+var battle_rng := RandomNumberGenerator.new()
+var pending_battle_seed: int = 0
+
+
+## 设定本局规则随机种子。seed_value == 0 表示不指定（随机化）。
+func seed_battle_rng(seed_value: int = 0) -> void:
+	if seed_value == 0:
+		battle_rng.randomize()
+	else:
+		battle_rng.seed = seed_value
+
+
+## 取 [0, n) 的随机下标（n <= 0 时返回 0，调用方保证数组非空才有意义）。
+func rand_index(n: int) -> int:
+	if n <= 0:
+		return 0
+	return battle_rng.randi_range(0, n - 1)
+
+
+## 就地洗牌（确定性，走 battle_rng）。取代 Array.shuffle()。
+func shuffle_in_place(arr: Array) -> void:
+	for i in range(arr.size() - 1, 0, -1):
+		var j: int = battle_rng.randi_range(0, i)
+		var tmp = arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp
+
+
+# ── 动画等待入口（重构文档.md §3.4-6）────────────────────────────────────
+# 规则推进需要"等动画放完"的节拍，但服务器/无头批量结算不该真的等：
+#   - 客户端：instant_battle = false → 按动画时长等待（表现与原来完全一致）
+#   - 服务器/CI：instant_battle = true → 立即返回，瞬时推进
+# 只跳过"等待"，不改变任何状态转移 —— 两种模式下两条黄金路径的状态哈希必须相同。
+var instant_battle: bool = false
+
+
+## 等待一段动画时长；instant_battle 时立即返回。
+## 规则层的所有等待都必须走这里，不再直接 create_timer（由 CI 分层检查约束）。
+func wait_delay(seconds: float) -> void:
+	if instant_battle:
+		return
+	await get_tree().create_timer(seconds).timeout
 
 # ── PVP 回合状态 ────────────────────────────────────────────────────────
 # action_order：游戏开始时服务器分配的行动顺序（uuid 数组）。
@@ -40,6 +95,15 @@ var pvp_room_id:      String = ""
 # PVP 共同随机种子：由房主生成并在 game/start 中下发，
 # 双方用相同种子初始化各自的 DeckManager，保证洗牌顺序一致。
 var pvp_rng_seed:     int    = 0
+
+# ── v2 权威模式：**已整体删除** ───────────────────────────────────────────
+# 原 `v2_authority` / `v2`（V2BattleClient）字段与 `enable_v2_authority()` /
+# `disable_v2_authority()` / `_on_auth_*` 处理器随联机层一起移除，配套的
+# `V2BattleClient` / `AuthBoardRenderer` / 权威裁判进程也已删除。
+# 详见 docs/archive/multiplayer-removal.md。
+#
+# 恢复联机时：除取回上述文件外，还需在 test_main 重新接上 `auth/state` 渲染
+# （手牌 / 装备 / 费用 / 回合按钮）。
 
 # ── 1v3 / 多队伍扩展字段 ─────────────────────────────────────────────
 # 当前对局类型："1v1" / "1v3"；空串 = PVE。
@@ -94,20 +158,34 @@ func team_of_player(pid: String) -> String:
 func players_of_team(team_id: String) -> Array:
 	return pvp_teams.get(team_id, [])
 
-func is_player_alive(pid: String) -> bool:
-	return not pvp_dead_players.has(pid)
 
 func mark_player_dead(pid: String) -> void:
 	if not pvp_dead_players.has(pid):
 		pvp_dead_players.append(pid)
 
 # ── 胜负广播 ────────────────────────────────────────────────────────
+# 任一落败队伍 → 返回获胜队伍 id（pvp_teams 中第一个非落败队伍）。
+# 测试期简化规则，兼容 1v3（defender/attacker）与 3v3（team_a/team_b）。
+# 落败队伍未知 / 只有一支队伍时返回空串。
+func winning_team_for(loser_team: String) -> String:
+	if loser_team == "":
+		return ""
+	for tid in pvp_teams.keys():
+		if tid != loser_team:
+			return String(tid)
+	return ""
+
 # 房主调用：广播 game/end 并本端转结算 UI。
 # winning_team: "defender" / "attacker" / pid（1v1 兼容时传 winner pid）
 # loser_pid:    触发结算的阵亡玩家 uuid
+#
+# 注意：**本端先行结算**（emit match_result_decided），网络消息只作为对端兜底。
+# 所有客户端都在本地确定性模拟同一批阵亡，因此即使 game/end 被中继层丢弃，
+# 每端也能自行得出正确胜负 —— 结算画面不依赖任何对端消息。
 func pvp_end_game(winning_team: String, loser_pid: String) -> void:
 	if not is_pvp:
 		return
+	match_result_decided.emit(winning_team, loser_pid)
 	Net.send_to_room("game/end", pvp_room_id, {
 		"winning_team": winning_team,
 		"loser_pid": loser_pid,
@@ -299,12 +377,59 @@ func _install_default_font() -> void:
 				return
 	push_warning("Game: 未找到中文字体，安卓端中文将显示为方块。请放置 NotoSansSC 到 res://assets/fonts/")
 
+# ── 三段装配共用的私有步骤（重构文档.md §3.4-4：先消除重复，再抽 BattleSession）──
+# 背景：bootstrap（PVE）/ _bootstrap_empire / bootstrap_pvp 原本各自复制了同一批
+# "清旧状态"、"装载 card_db"、"清一次性输入"代码。这里先收敛为单一实现，
+# 行为保持不变（冒烟 STATE_HASH 逐位一致可证）。
+
+## 清旧子系统状态。必须在装配 deck / mana 之前调用。
+func _reset_battle_subsystems() -> void:
+	counters.clear()
+	# 重置英雄技能回合用量（防止上局退出时 reset_turn_usage 未执行导致残留）
+	if has_node("/root/HeroAbilities"):
+		HeroAbilities.reset_turn_usage()
+	# 清空玩家装备（防止上局残留）
+	if has_node("/root/Equipments"):
+		Equipments.clear_all()
+	# 重置回合系统运行状态（防止上局退出时 is_running 残留为 true）
+	if turn != null:
+		turn.is_running = false
+		turn.turn_number = 0
+
+
+## 装载卡牌原型库到 card_db。
+## cards 为空 → 从 all_cards.json 读（PVE / 帝国）；非空 → 用调用方给的实例（PVP 由服务器下发）。
+func _load_card_db(cards: Array = []) -> void:
+	var source: Array = cards
+	if source.is_empty():
+		source = DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
+	card_db.clear()
+	for c in source:
+		card_db[c.name] = c
+
+
+## 清空一次性输入：pending 关卡字段与场景注入的选择器引用。
+## 避免战斗结束返回主菜单后，再次进入战斗时误用上一局的配置 / 悬空引用。
+func _clear_pending_inputs() -> void:
+	pending_chapter_config = ""
+	pending_level_path = ""
+	pending_battle_seed = 0
+	_target_selector_node = null
+	_hand_picker_node     = null
+
+
 func bootstrap() -> void:
+	# 规则随机源：pending_battle_seed 为 0 时随机化（测试/回放可显式指定）
+	seed_battle_rng(pending_battle_seed)
 	# 帝国模式出征：在所有标准 PVE 装载之前走专属分支
 	if not pending_empire_battle.is_empty():
+		battle_mode = BattleMode.Kind.EMPIRE
 		_bootstrap_empire(pending_empire_battle)
 		pending_empire_battle = {}
 		return
+	# 显式模式：脚本化关卡（章节/关卡 JSON）为 CAMPAIGN，否则为 SKIRMISH。
+	# 该判断与 main.gd 既有的 _is_campaign 完全等价，保证行为不变。
+	battle_mode = BattleMode.from_pending(pending_chapter_config, pending_level_path, false)
 	# 战斗启动：
 	#   1. 关卡：先解析 level（含战役章节专属字段 hero_key / initial_mana）
 	#   2. 玩家英雄 = hero.json[hero_key]，hero_key 来自章节 JSON；缺失回退 BATTLE_HERO_KEY
@@ -360,14 +485,7 @@ func bootstrap() -> void:
 	var deck_cards := DataLoader.load_cards(DataLoader.BATTLE_CARDS_JSON)
 	# card_db 装载所有卡片原型（all_cards.json），供关卡 initial_units / spawners
 	# 按名字反查（test_level.json 仅存卡名索引）。deck 只装玩家牌组。
-	var all_cards := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
-	card_db.clear()
-	for c in all_cards:
-		card_db[c.name] = c
-	cards_loaded.emit(deck_cards)
-
-	# ③ level 装载完成，发信号（顺序保留：listener 期望 cards_loaded 在前）
-	level_loaded.emit(level)
+	_load_card_db()
 
 	deck.setup(deck_cards)
 	# 战役章节起始费（仅覆盖首回合 max=current=N，第二回合按正常 +1 走）
@@ -380,17 +498,8 @@ func bootstrap() -> void:
 	if max_cap <= 0:
 		max_cap = ManaSystem.MAX_MANA_CAP
 	mana.setup(start_mana, max_cap)
-	counters.clear()
-	# 重置英雄技能回合用量（防止上局退出时 HeroAbilities.reset_turn_usage 未执行导致残留）
-	if has_node("/root/HeroAbilities"):
-		HeroAbilities.reset_turn_usage()
-	# 清空玩家装备（防止上局残留）
-	if has_node("/root/Equipments"):
-		Equipments.clear_all()
-	# 重置回合系统运行状态（防止上局退出时 is_running 残留为 true）
-	if turn != null:
-		turn.is_running = false
-		turn.turn_number = 0
+	# 清旧子系统状态（counters / 技能回合用量 / 装备 / 回合运行态）
+	_reset_battle_subsystems()
 
 	# 装载战役章节胜利目标（无 objective 字段时清空，按默认胜负规则走）
 	if has_node("/root/Objectives"):
@@ -400,14 +509,8 @@ func bootstrap() -> void:
 	if has_node("/root/Events"):
 		Events.setup_for_battle(level_data)
 
-	# 一次性消费：清空 pending 字段，避免战斗结束返回主菜单后
-	# 再次进入战斗（玩家牌组）误用上一局的配置。
-	pending_chapter_config = ""
-	pending_level_path = ""
-	# 清空上一局场景注入的选择器引用，防止场景 free 后引用悬空。
-	# 新场景在 _install_controllers 末尾会重新调 register_selectors 注入。
-	_target_selector_node = null
-	_hand_picker_node     = null
+	# 一次性消费：清空 pending 字段与选择器引用（防止误用上一局配置 / 引用悬空）
+	_clear_pending_inputs()
 
 	# PVE 模式：清掉上局 PVP 残留的额外 deck/mana 实例；本地玩家保留为别名。
 	is_pvp = false
@@ -441,6 +544,7 @@ const _EMPIRE_ENABLE_BY_N: Dictionary = {
 
 
 func _bootstrap_empire(ctx: Dictionary) -> void:
+	battle_mode = BattleMode.Kind.EMPIRE
 	is_pvp = false
 	local_player_id = "player_main"
 	clear_extra_decks_and_manas()
@@ -527,28 +631,16 @@ func _bootstrap_empire(ctx: Dictionary) -> void:
 	}
 
 	# card_db：原型库走 all_cards.json（spawner 与卡片回退同源）
-	var all_cards := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
-	card_db.clear()
-	for c in all_cards:
-		card_db[c.name] = c
+	_load_card_db()
 
 	# 玩家牌组：从 EmpireDeckStorage 拿主将的卡组配置，反查 empire_cards.json 原型，
 	# 写入 user://battle_cards.json。仅主将卡组生效（其余攻方仅 spawner）。
 	DataLoader.generate_battle_cards_from_empire(main_hero_key)
 	var deck_cards := DataLoader.load_cards(DataLoader.BATTLE_CARDS_JSON)
-	cards_loaded.emit(deck_cards)
-	level_loaded.emit(level_data)
 
 	deck.setup(deck_cards)
 	mana.setup(1, ManaSystem.MAX_MANA_CAP)
-	counters.clear()
-	if has_node("/root/HeroAbilities"):
-		HeroAbilities.reset_turn_usage()
-	if has_node("/root/Equipments"):
-		Equipments.clear_all()
-	if turn != null:
-		turn.is_running = false
-		turn.turn_number = 0
+	_reset_battle_subsystems()
 
 	# 帝国模式不走章节胜利目标 / 脚本化事件
 	if has_node("/root/Objectives"):
@@ -556,10 +648,7 @@ func _bootstrap_empire(ctx: Dictionary) -> void:
 	if has_node("/root/Events"):
 		Events.setup_for_battle(level_data)
 
-	pending_chapter_config = ""
-	pending_level_path = ""
-	_target_selector_node = null
-	_hand_picker_node     = null
+	_clear_pending_inputs()
 
 
 # ── PVP 战斗装配（联机入口）──────────────────────────────────────────
@@ -585,20 +674,18 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 		match_type: String = "1v1",           # "1v1" / "1v3"
 		teams_map: Dictionary = {},           # { team_id: [pid,...] }，空=自动推断
 		slot_layout: Array = []) -> void:     # [{ slot_id, owner_pid, team_id, slot_index }]
+	battle_mode = BattleMode.Kind.PVP
 	is_pvp = true
 	local_player_id = p_local_pid
+	# 规则随机源：PVP 由服务器下发的种子决定（可复现、客户端无法挑选）
+	seed_battle_rng(rng_seed)
 
 	# card_db 装载：PVP 模式服务器只下发牌组，客户端仍需 all_cards.json 解卡牌静态属性。
 	if all_cards_db.size() > 0:
-		card_db.clear()
-		for c in all_cards_db:
-			card_db[c.name] = c
+		_load_card_db(all_cards_db)
 	elif card_db.size() == 0:
 		# 客户端本地仍有 all_cards.json，自行加载兜底
-		var loaded := DataLoader.load_cards(DataLoader.ALL_CARDS_JSON)
-		card_db.clear()
-		for c in loaded:
-			card_db[c.name] = c
+		_load_card_db()
 
 	# 兼容旧调用：第三参数为 Array 时视为所有玩家共用同一套牌组
 	var deck_map: Dictionary = {}
@@ -610,20 +697,9 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 		for pid_raw in all_player_ids:
 			deck_map[String(pid_raw)] = shared
 
-	# cards_loaded 信号：发本地玩家的牌组（HandView / 旧订阅方只关心本地牌）
-	var local_cards: Array = deck_map.get(p_local_pid, [])
-	cards_loaded.emit(local_cards)
-
-	# 清旧
+	# 清旧：额外 deck/mana 实例 + 子系统状态
 	clear_extra_decks_and_manas()
-	counters.clear()
-	if has_node("/root/HeroAbilities"):
-		HeroAbilities.reset_turn_usage()
-	if has_node("/root/Equipments"):
-		Equipments.clear_all()
-	if turn != null:
-		turn.is_running = false
-		turn.turn_number = 0
+	_reset_battle_subsystems()
 
 	# 逐玩家建 deck + mana，每人使用自己的牌组。
 	# PVP 模式下每位玩家用 (rng_seed + slot_index) 作为确定性种子，
@@ -665,16 +741,13 @@ func bootstrap_pvp(p_local_pid: String, all_player_ids: Array,
 
 	# level_data：PVP 不走章节关卡，留空让装配方按 is_pvp 走 PVP 专属布局。
 	level_data = {}
-	pending_chapter_config = ""
-	pending_level_path = ""
-	_target_selector_node = null
-	_hand_picker_node     = null
+	_clear_pending_inputs()
 	# PVP 回合状态初始化
 	pvp_action_order = []
 	for pid_raw in all_player_ids:
 		pvp_action_order.append(String(pid_raw))
 	pvp_active_idx = 0
-	# pvp_room_id 由 pvp_lobby 在切场景前单独注入 Net，这里取回做镜像
+	# pvp_room_id 由 sparring_panel 在切场景前单独注入 Net，这里取回做镜像
 	pvp_room_id = Net.get_current_room_id()
 
 	# ── 1v3 多人字段初始化 ────────────────────────────────────────────
