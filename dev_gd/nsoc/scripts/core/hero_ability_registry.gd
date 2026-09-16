@@ -63,41 +63,42 @@ func ids() -> Array:
 	return out
 
 
+# ── 取值口 ───────────────────────────────────────────────────────────────
+# 这里**不再用 has_method() 探测**（分层规则禁止反射）；所有技能脚本都
+# `extends HeroAbility`，基类为每个钩子声明了默认值，因此调用永远有定义。
+# 未注册的 id 仍按老样子返回默认值（实例为 null）。
+
 func get_display_name(ability_id: String) -> String:
-	var inst = _instances.get(ability_id)
-	if inst and inst.has_method("display_name"):
-		return inst.display_name()
-	return ability_id
+	var inst: HeroAbility = _instances.get(ability_id)
+	return inst.display_name() if inst != null else ability_id
 
 func get_description(ability_id: String) -> String:
-	var inst = _instances.get(ability_id)
-	if inst and inst.has_method("description"):
-		return inst.description()
-	return ""
+	var inst: HeroAbility = _instances.get(ability_id)
+	return inst.description() if inst != null else ""
 
 
+## 能否激活。实例缺失 → false（与以前一致）。
+## can_activate 的默认实现就在基类里（含费用/每回合/回合运行中等校验），
+## 权威端通过 ctx 注入自己的 mana_system / turn_running 覆盖之。
 func can_activate(ability_id: String, ctx) -> bool:
-	var inst = _instances.get(ability_id)
+	var inst: HeroAbility = _instances.get(ability_id)
 	if inst == null:
 		return false
-	if inst.has_method("can_activate"):
-		return bool(inst.can_activate(ctx))
-	return true
+	return bool(inst.can_activate(ctx))
 
 # 激活技能。返回 true 表示已成功激活并扣费由 ability 自行负责。
 func activate(ability_id: String, ctx) -> bool:
-	var inst = _instances.get(ability_id)
+	var inst: HeroAbility = _instances.get(ability_id)
 	if inst == null:
 		return false
 	if not can_activate(ability_id, ctx):
 		return false
 	if not Game.mana.spend(int(inst.cost())):
 		return false
-	if inst.has_method("once_per_turn") and bool(inst.once_per_turn()):
+	if bool(inst.once_per_turn()):
 		_used_this_turn[ability_id] = true
 	ability_used.emit(ability_id)
-	if inst.has_method("on_activate"):
-		await inst.on_activate(ctx)
+	await inst.on_activate(ctx)
 	return true
 
 # 是否本回合已用过。

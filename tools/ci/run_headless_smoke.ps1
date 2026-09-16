@@ -87,9 +87,11 @@ function Get-SmokeResult {
         $turns[[int]$m.Groups[1].Value] = $m.Groups[2].Value
     }
     $state = [regex]::Match($Text, '(?m)^STATE_HASH\s+([0-9a-f]{64})\s*$').Groups[1].Value
-    # Accepts smoke (SMOKE_RESULT) / authority (AUTHORITY_RESULT) / multi-board (TESTBATTLE_RESULT)
-    # / rules-on-data (ROD_RESULT) / pvp paths (PVP_RESULT) / hero-equip render (HRENDER_RESULT).
-    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|AUTHORITY|TESTBATTLE|ROD|PVP|HRENDER)_RESULT\s+(\S+)\s*(.*)$')
+    # Accepts smoke (SMOKE_RESULT) / multi-board (TESTBATTLE_RESULT)
+    # / rules-on-data (ROD_RESULT) / campaign etc.
+    # NOTE: the former AUTHORITY / PVP / HRENDER paths were deleted with the
+    # multiplayer + authority layer (see docs/archive/multiplayer-removal.md).
+    $res = [regex]::Match($Text, '(?m)^(?:SMOKE|TESTBATTLE|ROD|RULES|RULESON|BOARD|CELLVIEW|HSETUP|HCOMBAT|SCENE)_RESULT\s+(\S+)\s*(.*)$')
     return [pscustomobject]@{
         TurnHashes = $turns
         StateHash  = $state
@@ -163,8 +165,8 @@ try {
         exit 1
     }
     Write-Host "[PASS] smoke ok, STATE_HASH=$($first.Parsed.StateHash)" -ForegroundColor Green
-    # Echo per-case lines (authority test) so failures/successes are visible in CI logs.
-    ($first.Raw -split "`n" | Where-Object { $_ -match 'AUTHORITY_CASE|AUTHORITY_RESULT|ROD_CASE|ROD_RESULT|PVP_CASE|PVP_RESULT|SMOKE_SUMMARY' }) |
+    # Echo per-case lines (rules-on-data etc.) so failures/successes are visible in CI logs.
+    ($first.Raw -split "`n" | Where-Object { $_ -match 'ROD_CASE|ROD_RESULT|RULES_CASE|RULES_RESULT|SMOKE_SUMMARY' }) |
         ForEach-Object { Write-Host "    $($_.Trim())" -ForegroundColor DarkGray }
     foreach ($k in ($first.Parsed.TurnHashes.Keys | Sort-Object)) {
         Write-Host ("    turn {0}: {1}" -f $k, $first.Parsed.TurnHashes[$k]) -ForegroundColor DarkGray

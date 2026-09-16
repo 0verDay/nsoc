@@ -135,9 +135,8 @@ func _test_effect_paths() -> void:
 
 	_check("效果: 目标格仍可被查询（未被误清理）",
 		cell != null and slot.board.get_cell(Vector2(2, 1)) == cell)
-	# destroy_unit 走的是标准死亡流程：需要 Game.play（权威进程里指向自己的 PlayController），
+	# destroy_unit 走的是标准死亡流程：需要 Game.play（由场景装配方注入自己的 PlayController），
 	# 否则会"清空格子但不入墓"（静默漏结算）。这里用一块干净盘验证死亡清算确实发生。
-	# 死亡清算走 Game.play（权威进程里由 BattleSimHost 指向自己的 PlayController）。
 	# 本测试同样需要一个 PlayController 才能验证"入墓"这一步确实发生。
 	if Game.play == null:
 		var pc := PlayController.new()

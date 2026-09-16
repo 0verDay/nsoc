@@ -43,9 +43,10 @@ static func default_uses_ai(mode: int) -> bool:
 	return mode == Kind.SKIRMISH or mode == Kind.EMPIRE
 
 
-## 该模式是否由服务器权威驱动（阶段 1 的 BattleAuthority 只服务 PVP）。
+## 该模式是否由服务器权威驱动。
+## ⚠️ 联机已移除：权威裁判进程与协议层已删除，本方法恒为 false（PVP 只作死代码保留）。
 static func is_authoritative(mode: int) -> bool:
-	return mode == Kind.PVP
+	return false
 
 
 ## 由 pending_* 输入派生模式（仅用于 PVE 侧；PVP 由 bootstrap_pvp 显式指定）。

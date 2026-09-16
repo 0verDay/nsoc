@@ -25,6 +25,12 @@ var hero: HeroState = null           # 本次激活的 HeroState
 var mana_system = null               # ManaSystem：权威端为该玩家构造的费用镜像
 var turn_running = null              # bool：权威端是否正在跑行动阶段（默认 false）
 var ability_used_this_turn = null    # bool：该技能本回合是否已用过（权威端的表）
+## Callable：权威端的**手牌动作**通道（默认 null = 客户端行为不变）。
+## 客户端有 `hand_view` 节点可以直接改手牌；服务器没有，手牌是权威私有状态，
+## 因此"再起"这类会动到手牌的技能，在权威端必须走这条回调而不是 `hand_view`。
+## 签名：func(action: String, payload: Dictionary) -> Dictionary
+## 目前支持 action = "restart_hand"（弃掉全部手牌 → 补满 hand_cap 张）。
+var hand_action: Callable = Callable()
 
 func _init(p_game: Node) -> void:
 	game = p_game

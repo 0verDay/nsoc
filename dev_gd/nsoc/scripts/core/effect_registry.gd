@@ -76,51 +76,48 @@ func ids() -> Array:
 	return out
 
 
+# ── 取值口 ───────────────────────────────────────────────────────────────
+# 这里**不再用 has_method() 探测**（分层规则禁止反射，见 tools/ci/check_layers.py）。
+# 之所以能直接调用：所有效果脚本都 `extends Effect`，而 `Effect` 基类为每个可选钩子
+# 都声明了空实现/cost() 之类的默认值（scripts/core/effect.gd），所以这些调用永远有定义。
+# 未注册的 id 仍然按老样子返回默认值（实例为 null）。
+
 func get_display_name(eff_id: String) -> String:
-	var inst = _instances.get(eff_id)
-	if inst and inst.has_method("display_name"):
-		return inst.display_name()
-	return eff_id
+	var inst: Effect = _instances.get(eff_id)
+	return inst.display_name() if inst != null else eff_id
 
 func get_description(eff_id: String) -> String:
-	var inst = _instances.get(eff_id)
-	if inst and inst.has_method("description"):
-		return inst.description()
-	return eff_id
+	var inst: Effect = _instances.get(eff_id)
+	return inst.description() if inst != null else eff_id
 
 # 取 effect 声明的目标类型（"" / "enemy_unit" / "friendly_unit" / "any_unit"）。
 func get_target(eff_id: String) -> String:
-	var inst = _instances.get(eff_id)
-	if inst and inst.has_method("target"):
-		return String(inst.target())
-	return ""
+	var inst: Effect = _instances.get(eff_id)
+	return inst.target() if inst != null else ""
 
 # 返回 true = 执行成功；false = 玩家主动取消（装备不扣耐久）。
 # on_play 可能是协程（含 await），必须 await 调用，否则 Godot 4 报警告且无法拿到返回值。
 func trigger_play(eff_id: String, card_data, ctx) -> bool:
-	var inst = _instances.get(eff_id)
-	if inst and inst.has_method("on_play"):
-		var result = await inst.on_play(card_data, ctx)
-		# 兼容旧 on_play 返回 void（Callable 返回 null）
-		if result == null or result == true:
-			return true
-		return false
-	return true
-
-func trigger_death(eff_id: String, card_data, ctx) -> bool:
-	var inst = _instances.get(eff_id)
-	if inst and inst.has_method("on_death"):
-		return inst.on_death(card_data, ctx)
+	var inst: Effect = _instances.get(eff_id)
+	if inst == null:
+		return true
+	var result = await inst.on_play(card_data, ctx)
+	# 兼容旧 on_play 返回 void（Callable 返回 null）
+	if result == null or result == true:
+		return true
 	return false
 
+func trigger_death(eff_id: String, card_data, ctx) -> bool:
+	var inst: Effect = _instances.get(eff_id)
+	return inst.on_death(card_data, ctx) if inst != null else false
+
 func trigger_kill(eff_id: String, attacker_cell, victim_cells: Array, ctx) -> void:
-	var inst = _instances.get(eff_id)
-	if inst and inst.has_method("on_kill"):
-		await inst.on_kill(attacker_cell, victim_cells, ctx)
+	var inst: Effect = _instances.get(eff_id)
+	if inst == null:
+		return
+	await inst.on_kill(attacker_cell, victim_cells, ctx)
 
 # 法术结算去向，返回 "" 时由调用者使用默认（入墓）。
 func resolve_destination(eff_id: String, card_data, ctx) -> String:
-	var inst = _instances.get(eff_id)
-	if inst and inst.has_method("resolve_destination"):
-		return inst.resolve_destination(card_data, ctx)
-	return ""
+	var inst: Effect = _instances.get(eff_id)
+	return inst.resolve_destination(card_data, ctx) if inst != null else ""

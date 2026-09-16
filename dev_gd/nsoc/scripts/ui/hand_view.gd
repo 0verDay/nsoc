@@ -19,14 +19,11 @@ var _hand_card_scene: PackedScene
 var _animation_root: Control                          # 飞入动画 visual 的挂载点（屏内但脱离 Container 布局）
 var _card_counter: int = 1
 
-func setup(container: Container, hand_card_scene: PackedScene, animation_root: Control = null) -> void:
-	_container = container
-	_hand_card_scene = hand_card_scene
-	_animation_root = animation_root if animation_root != null else container
 
-# 供外部（HandPickerController）访问手牌容器，遍历当前手牌。
-func get_hand_container() -> Container:
-	return _container
+## 手牌来源：**本地牌堆**（`Game.deck.draw_card()`）。
+## 原 v2 权威模式下的"手牌只能来自服务器"约束（`_is_authoritative()` 及其守卫）
+## 随联机层一起删除；`replace_hand_with()` 也已移除。
+## 详见 docs/archive/multiplayer-removal.md。
 
 # 启动初始填充：无动画一次补足。
 func ensure_min_hand_size() -> void:
@@ -44,6 +41,14 @@ func draw_initial_with_anim(interval: float = 0.15) -> void:
 	# 最后一张可能尚在飞入中，等其动画余量。
 	await get_tree().create_timer(DRAW_ANIM_DURATION).timeout
 
+func setup(container: Container, hand_card_scene: PackedScene, animation_root: Control = null) -> void:
+	_container = container
+	_hand_card_scene = hand_card_scene
+	_animation_root = animation_root if animation_root != null else container
+
+# 供外部（HandPickerController）访问手牌容器，遍历当前手牌。
+func get_hand_container() -> Container:
+	return _container
 
 # 直接 append 一张到 container 末尾，并在屏外飞入。
 # 与 _play_draw_animation 的差异：无占位卡（container 子数 < MIN_HAND_SIZE 时调用），
@@ -102,19 +107,6 @@ func _spawn_card_at(slot_index: int) -> void:
 	if data == null:
 		data = CardSpell.new("虚空", 1, ["autophagy"])
 	_append_card(data, slot_index)
-
-
-## 按**权威手牌**重建手牌区（v2 权威模式：手牌由服务器说了算，客户端只照着画）。
-## 逐张用卡库原型建卡；先清空再按顺序补上，保证与 auth/state 一致。
-func replace_hand_with(card_names: Array) -> void:
-	for child in _container.get_children().duplicate():
-		_container.remove_child(child)
-		child.queue_free()
-	for name_raw in card_names:
-		var data = Game.get_card(String(name_raw))
-		if data == null:
-			continue
-		_append_card(data, -1)
 
 
 ## 建一张手牌节点并接好信号（无动画）。

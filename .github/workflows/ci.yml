@@ -1,7 +1,12 @@
 name: CI
 
 # 重构文档.md §7 阶段 0：CI 骨架
-# 三项检查：分层规则（棘轮）/ 内容一致性 / Godot 脚本解析
+# 三项检查：分层规则（棘轮）/ 内容一致性 / Godot 脚本解析 + 无头 PVE 回归
+#
+# ⚠️  联机（中继服务端 / 权威裁判进程 / 客户端 v2 权威接线）已整体删除，
+#     对应的 go-server job 与联机测试步骤一并移除，
+#     另有 hero-render / pvp 步骤随其被测模块删除。
+#     详见 docs/archive/multiplayer-removal.md。
 
 on:
   push:
@@ -28,25 +33,6 @@ jobs:
 
       - name: 内容与数据一致性检查
         run: python tools/ci/check_content.py
-
-  go-server:
-    name: Go 中继服务（编译 + 安全策略测试）
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: 安全策略测试（重构文档 §4.1 止血）
-        run: go test -v ./...
 
   godot-import:
     name: Godot 导入与脚本解析
@@ -118,6 +104,23 @@ jobs:
             exit 1
           fi
 
+      - name: 生成版本三件套（version.json + 内容清单，无需导出模板）
+        run: |
+          set -euo pipefail
+          pwsh -NoProfile -File tools/ci/build_release.ps1 -SkipExport -OutDir "$RUNNER_TEMP/nsoc-release"
+          cat dev_gd/nsoc/version.json
+
+      - name: 内容哈希一致性（构建侧 PowerShell vs 引擎 GDScript）
+        run: |
+          set -euo pipefail
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/ContentHashTest.tscn > chash.log 2>&1 || true
+          if ! grep -q "CHASH_RESULT PASS" chash.log; then
+            grep -E "CHASH_CASE FAIL|CHASH_RESULT" chash.log || true
+            echo "::error::内容哈希一致性测试未通过（构建侧与引擎实现不一致）"
+            exit 1
+          fi
+          grep -E "CHASH_RESULT|^CONTENT_HASH" chash.log
+
       - name: 冒烟 + 确定性校验（跑两次比对哈希）
         run: |
           set -euo pipefail
@@ -141,17 +144,6 @@ jobs:
             exit 1
           fi
 
-      - name: 权威化测试（反作弊断言）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/AuthorityTest.tscn > authority.log 2>&1 || true
-          if ! grep -q "AUTHORITY_RESULT PASS" authority.log; then
-            grep -E "AUTHORITY_CASE FAIL|AUTHORITY_RESULT" authority.log || true
-            echo "::error::权威化测试未通过"
-            exit 1
-          fi
-          grep -E "AUTHORITY_RESULT" authority.log
-
       - name: 场景装配冒烟（全部 .tscn 可 load + instantiate）
         run: |
           set -euo pipefail
@@ -173,72 +165,6 @@ jobs:
             exit 1
           fi
           grep -E "RULES_RESULT" rules.log
-
-      - name: 权威手牌渲染测试（按 card_names 重建手牌区）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HandRenderTest.tscn > hr.log 2>&1 || true
-          if ! grep -q "HR_RESULT PASS" hr.log; then
-            grep -E "HR_CASE FAIL|HR_RESULT" hr.log || true
-            echo "::error::权威手牌渲染测试未通过"
-            exit 1
-          fi
-          grep -E "HR_RESULT" hr.log
-
-      - name: v2 接线测试（auth/* → 镜像 + 本地盘面重绘）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/V2WiringTest.tscn > v2w.log 2>&1 || true
-          if ! grep -q "V2W_RESULT PASS" v2w.log; then
-            grep -E "V2W_CASE FAIL|V2W_RESULT" v2w.log || true
-            echo "::error::v2 接线测试未通过"
-            exit 1
-          fi
-          grep -E "V2W_RESULT" v2w.log
-
-      - name: 权威盘面渲染测试（按 auth/state 重绘本地棋盘）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/AuthBoardRenderTest.tscn > abr.log 2>&1 || true
-          if ! grep -q "ABR_RESULT PASS" abr.log; then
-            grep -E "ABR_CASE FAIL|ABR_RESULT" abr.log || true
-            echo "::error::权威盘面渲染测试未通过"
-            exit 1
-          fi
-          grep -E "ABR_RESULT" abr.log
-
-      - name: v2 战斗客户端测试（意图构造 + 权威镜像）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/V2BattleClientTest.tscn > v2bc.log 2>&1 || true
-          if ! grep -q "V2BC_RESULT PASS" v2bc.log; then
-            grep -E "V2BC_CASE FAIL|V2BC_RESULT" v2bc.log || true
-            echo "::error::v2 战斗客户端测试未通过"
-            exit 1
-          fi
-          grep -E "V2BC_RESULT" v2bc.log
-
-      - name: 权威进程入口测试（注册/开局/意图/tick，无需真实网络）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/AuthorityMainTest.tscn > amain.log 2>&1 || true
-          if ! grep -q "AMAIN_RESULT PASS" amain.log; then
-            grep -E "AMAIN_CASE FAIL|AMAIN_RESULT" amain.log || true
-            echo "::error::权威进程入口测试未通过"
-            exit 1
-          fi
-          grep -E "AMAIN_RESULT" amain.log
-
-      - name: 客户端 v2 传输层测试（意图/权威分发，无需网络）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/NetV2Test.tscn > netv2.log 2>&1 || true
-          if ! grep -q "NETV2_RESULT PASS" netv2.log; then
-            grep -E "NETV2_CASE FAIL|NETV2_RESULT" netv2.log || true
-            echo "::error::客户端 v2 传输层测试未通过"
-            exit 1
-          fi
-          grep -E "NETV2_RESULT" netv2.log
 
       - name: 无头棋盘测试（纯数据规则，不建 UI 节点）
         run: |
@@ -262,7 +188,7 @@ jobs:
           fi
           grep -E "CELLVIEW_RESULT" cellview.log
 
-      - name: 无视图装配测试（服务器装配路径）
+      - name: 无视图装配测试
         run: |
           set -euo pipefail
           timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeadlessSetupTest.tscn > hsetup.log 2>&1 || true
@@ -283,28 +209,6 @@ jobs:
             exit 1
           fi
           grep -E "HCOMBAT_RESULT" hcombat.log
-
-      - name: 权威端棋盘结算测试（服务器裁决落子）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/AuthorityBoardTest.tscn > aboard.log 2>&1 || true
-          if ! grep -q "ABOARD_RESULT PASS" aboard.log; then
-            grep -E "ABOARD_CASE FAIL|ABOARD_RESULT" aboard.log || true
-            echo "::error::权威端棋盘结算测试未通过"
-            exit 1
-          fi
-          grep -E "ABOARD_RESULT" aboard.log
-
-      - name: 服务器会话层测试（反向验证反作弊边界）
-        run: |
-          set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/ServerSessionTest.tscn > server.log 2>&1 || true
-          if ! grep -q "SERVER_RESULT PASS" server.log; then
-            grep -E "SERVER_CASE FAIL|SERVER_RESULT" server.log || true
-            echo "::error::服务器会话层测试未通过"
-            exit 1
-          fi
-          grep -E "SERVER_RESULT" server.log
 
       - name: 多棋盘 PVE 冒烟（TestMain + 6 盘 + AI）
         run: |
@@ -336,42 +240,16 @@ jobs:
           fi
           grep -E "ROD_RESULT" rod.log
 
-      - name: 权威装备渲染测试（auth/state → 英雄装备栏）
+      - name: 演武切磋入口冒烟（可进入 / 不可创建 / 不可加入）
         run: |
           set -euo pipefail
-          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeroRenderTest.tscn > hrender.log 2>&1 || true
-          if ! grep -q "HRENDER_RESULT PASS" hrender.log; then
-            grep -E "HRENDER_CASE FAIL|HRENDER_RESULT" hrender.log || true
-            echo "::error::权威装备渲染测试未通过"
+          timeout 300 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/SparringPanelTest.tscn > sparring.log 2>&1 || true
+          if ! grep -q "SPARRING_RESULT PASS" sparring.log; then
+            grep -E "SPARRING_CASE FAIL|SPARRING_RESULT" sparring.log || true
+            echo "::error::演武切磋入口冒烟未通过（联机移除后的入口契约被破坏？）"
             exit 1
           fi
-          grep -E "HRENDER_RESULT" hrender.log
-
-      - name: PVP 三路径冒烟（1v1 / 1v3 / 3v3，真实 TestMain 场景 + 确定性替身）
-        run: |
-          set -euo pipefail
-          run_pvp() {
-            timeout 600 "$GODOT_BIN" --headless --path dev_gd/nsoc res://tests/HeadlessPvp.tscn -- \
-              --turns=2 --watchdog=480 > "$1" 2>&1 || true
-          }
-          run_pvp pvp1.log
-          run_pvp pvp2.log
-          grep -q "PVP_RESULT PASS" pvp1.log || {
-            grep -E "PVP_CASE FAIL|PVP_RESULT" pvp1.log || true
-            tail -n 40 pvp1.log
-            echo "::error::PVP 三路径冒烟未通过"
-            exit 1
-          }
-          grep -q "PVP_RESULT PASS" pvp2.log || { tail -n 40 pvp2.log; echo "::error::PVP 冒烟第二次未通过"; exit 1; }
-          for c in 1v1 1v3 3v3; do
-            H1="$(grep -E "^PVP_HASH $c " pvp1.log | awk '{print $3}')"
-            H2="$(grep -E "^PVP_HASH $c " pvp2.log | awk '{print $3}')"
-            echo "PVP $c STATE_HASH $H1 / $H2"
-            if [ -z "$H1" ] || [ "$H1" != "$H2" ]; then
-              echo "::error::PVP $c 两次运行状态哈希不一致"
-              exit 1
-            fi
-          done
+          grep -E "SPARRING_RESULT" sparring.log
 
       - name: 上传冒烟日志
         if: always()
@@ -382,25 +260,15 @@ jobs:
             smoke_import.log
             run1.log
             run2.log
-            authority.log
             scene.log
             rules.log
-            hr.log
-            v2w.log
-            abr.log
-            v2bc.log
-            amain.log
-            netv2.log
             board.log
             cellview.log
             hsetup.log
             hcombat.log
-            aboard.log
-            server.log
             rod.log
-            hrender.log
-            pvp1.log
-            pvp2.log
+            sparring.log
             tb1.log
             tb2.log
+            chash.log
           if-no-files-found: ignore

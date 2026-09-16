@@ -338,12 +338,6 @@ func _wire_signals() -> void:
 	hand_view.hand_card_long_press_canceled.connect(detail_panel.cancel_long_press)
 	play_controller.hand_consumed.connect(hand_view.draw_into_slot)
 
-	# v2 权威模式：手牌 / 费用 / 回合按钮都按 auth/state 渲染（服务器说了算）。
-	# 注意 Game 已在 enable_v2_authority() 里连过 auth_state（先更新镜像），
-	# 这里的处理器后跑，因此读到的是刚更新的镜像。
-	if Game.v2_authority and not Net.auth_state.is_connected(_on_auth_state_render):
-		Net.auth_state.connect(_on_auth_state_render)
-
 	# HeroActionBar 自连 turn / mana / abilities / equipments；不再重复连。
 
 	# 装备拖拽高亮
@@ -390,10 +384,7 @@ func _on_pvp_surrender() -> void:
 	var slots: Array = Game.registry.by_role(BoardSlot.ROLE_MAIN_PLAYER)
 	if slots.is_empty():
 		return
-	# v2 权威模式：只发意图，等服务器的 auth/verdict / auth/state 决定结果
-	if Game.is_pvp and Game.v2_authority and Game.v2 != null:
-		Game.v2.surrender()
-		return
+	# v2 权威模式已删除：投降不再有"只发意图、等服务器裁决"这条分支。
 	# 投降无法通过卡牌/动作锁步同步（"本地触发伤害"对端推算不出来），必须显式走网络。
 	if Game.is_pvp and Game.pvp_room_id != "":
 		Net.send_to_room("action/surrender", Game.pvp_room_id, {
@@ -434,15 +425,6 @@ func _apply_match_result(winning_team: String, winner_id: String) -> void:
 # ── 回合 ─────────────────────────────────────────────────────────────
 func _on_end_turn_pressed() -> void:
 	if Game.is_pvp:
-		if Game.v2_authority and Game.v2 != null:
-			# v2 权威模式：只发意图 —— 单位行动、费用、回合推进全部由服务器裁决，
-			# 客户端等 auth/state / auth/event 回来再重绘（不再本地 run_pvp_phase）。
-			end_turn_btn.disabled = true
-			end_turn_btn.text = "结算中"
-			if Game.v2.end_turn():
-				return
-			end_turn_btn.disabled = false
-			return
 		if not Game.pvp_is_my_turn():
 			return
 		end_turn_btn.disabled = true
@@ -497,32 +479,6 @@ func _wire_cell(cell: Node) -> void:
 	cell.effects_changed.connect(EffectBadgeFactory.refresh_from_cell.bind(cell))
 	cell.card_dropped.connect(_on_cell_card_dropped)
 	cell.cleared.connect(_on_cell_cleared)
-
-# v2 权威模式：把 auth/state 渲染到本端 UI。
-#   - 手牌：按 you.hand 重建（不再依赖 Game.deck 的本地抽牌）
-#   - 装备：按 you.equipments 重建英雄装备栏（AuthEquipRenderer，无变化不重写）
-#   - 费用：按 you.mana 覆盖本地 ManaSystem 并刷新 UI
-#   - 回合按钮：只有轮到我且未终局时可点
-# 盘面由 Game._on_auth_state → AuthBoardRenderer 负责，这里不重复。
-func _on_auth_state_render(payload: Dictionary) -> void:
-	var v2 = Game.v2
-	if v2 == null:
-		return
-	hand_view.replace_hand_with(v2.hand)
-	var you = payload.get("you", {})
-	if typeof(you) == TYPE_DICTIONARY:
-		# 装备是公开信息，服务器说了算：本端只在**权威列表变化**时重建（避免按钮动画重播）
-		AuthEquipRenderer.apply((you as Dictionary).get("equipments", []))
-	if Game.mana != null:
-		Game.mana.current = int(v2.mana.get("current", Game.mana.current))
-		Game.mana.maximum = int(v2.mana.get("maximum", Game.mana.maximum))
-		_on_mana_changed(Game.mana.current, Game.mana.maximum)
-	if is_instance_valid(hero_action_bar):
-		hero_action_bar._refresh_all()
-	if is_instance_valid(end_turn_btn):
-		end_turn_btn.disabled = not v2.is_my_turn(Game.local_player_id)
-		if not end_turn_btn.disabled:
-			end_turn_btn.text = "结束回合"
 
 # cell 被清空时刷新所属盘的 phantom 预告（避免残留）
 # ── 输入路由 ─────────────────────────────────────────────────────────

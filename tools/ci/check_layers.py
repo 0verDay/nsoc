@@ -27,25 +27,23 @@ SCRIPTS = PROJECT / "scripts"
 BASELINE_PATH = Path(__file__).resolve().parent / "layer_baseline.json"
 
 # ── 层定义：目录 → 层名（阶段 2 归位后更新）─────────────────────────────
+# 注：原 ("server", SCRIPTS / "server") 与 ("host", PROJECT / "server") 两条已随
+#     联机移除删除（权威裁判进程与运行时宿主目录不再存在），见
+#     docs/archive/multiplayer-removal.md。目录缺失时下面的遍历会自然跳过。
 LAYER_DIRS: list[tuple[str, Path]] = [
     ("core", SCRIPTS / "core"),
     ("rules", SCRIPTS / "effects"),
     ("rules", SCRIPTS / "abilities"),
     ("rules", SCRIPTS / "actions"),
     ("rules", SCRIPTS / "objectives"),
-    ("server", SCRIPTS / "server"),
     ("ai", SCRIPTS / "ai"),
     ("net", SCRIPTS / "net"),
     ("client", SCRIPTS / "ui"),
     ("app", SCRIPTS / "app"),  # 场景控制器：main / test_main / main_menu / splash
-    # 运行时宿主层（Godot headless 入口 / BattleSimHost）：**允许**碰场景树 ——
-    # 它本身就是"把节点挂进树"的那一层。scripts/server 因此得以保持场景树无关。
-    ("host", PROJECT / "server"),
 ]
 
 # 必须保持"纯规则"的层：不得出现 UI / 场景树 / 反射 / 资源路径。
-# server 层同样必须在无头环境可运行，因此与 core / rules 同规。
-SHARED_LAYERS = {"core", "rules", "server"}
+SHARED_LAYERS = {"core", "rules"}
 
 # 纯规则层中禁止出现的代码符号（只查代码，不查注释与字符串字面量）
 BANNED_SYMBOLS: list[tuple[str, str]] = [

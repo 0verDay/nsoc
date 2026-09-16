@@ -380,9 +380,6 @@ func _teardown() -> void:
 		await get_tree().process_frame
 	_main = null
 	Game.is_pvp = false
-	Game.v2_authority = false
-	if has_node("/root/Net"):
-		Net.use_v2 = false
 	if has_node("/root/AiManager"):
 		AiManager.clear()
 	_front_row_resolved = 0

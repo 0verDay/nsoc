@@ -45,13 +45,6 @@ func handle_equip(data) -> void:
 	var full = data.get("full_data")
 	if not (full is CardEquipment):
 		return
-	# v2 权威模式：**不本地扣费、不本地装备** —— 装备是服务器状态，
-	# 服务器裁决后由 auth/state.you.equipments 把英雄装备栏画回来（AuthEquipRenderer）。
-	if Game.v2_authority and Game.v2 != null:
-		if Game.v2.play_equip(String(full.name)):
-			var src_v2 = data.get("source_card")
-			hand_consumed.emit(_consume_src_card(src_v2), src_v2)
-		return
 	if not Game.mana.spend(int(data.cost)):
 		return
 	var src = data.get("source_card")
@@ -132,10 +125,6 @@ func handle_drop(cell, data) -> void:
 	# 落地最后一次校验，避免拖拽期间状态变化
 	if not can_play_at(cell, data):
 		return
-	# v2 权威模式：**不本地结算**，只把操作变成意图；盘面等 auth/state 回来再重绘
-	if Game.v2_authority and Game.v2 != null:
-		_v2_send_play_intent(cell, data)
-		return
 	Game.mana.spend(data.cost)
 
 	var drop_global_pos: Vector2 = cell.global_position + cell.size / 2.0
@@ -166,7 +155,6 @@ func handle_drop(cell, data) -> void:
 		_pvp_broadcast_play_card(cell, data)
 
 ## 把拖拽源手牌标记为"已消耗"（隐藏 + 不再响应鼠标），返回其索引（无效 = -1）。
-## v1 落地与 v2 发意图共用，避免两处重复写同一段 UI 处理。
 func _consume_src_card(src) -> int:
 	if src == null or not is_instance_valid(src):
 		return -1
@@ -176,23 +164,6 @@ func _consume_src_card(src) -> int:
 	# 标记为已消耗，避免 HandCard._notification(DRAG_END) 把 modulate.a 改回 1
 	src.set_meta("consumed", true)
 	return slot_index
-
-
-## v2 权威模式：把一次出牌变成 intent/*（单位 / 法术共用 INTENT_PLAY_CARD + 落点）。
-## 本地**不扣费、不落子、不广播** —— 服务器裁决后通过 auth/state 把结果画回来。
-func _v2_send_play_intent(cell, data) -> void:
-	var card_name := String(data.get("card_name", ""))
-	if card_name == "":
-		return
-	var slot_id := String(cell.slot_id) if cell != null else ""
-	var row: int = int(cell.row) if cell != null else -1
-	var col: int = int(cell.col) if cell != null else -1
-	if String(data.get("type", "")) == "法术":
-		Game.v2.play_spell(card_name, slot_id, row, col)
-	else:
-		Game.v2.play_unit(card_name, slot_id, row, col)
-	# 手牌 UI 先乐观收起（权威手牌随后由 auth/state 校正；被拒时见 Game.v2.last_reject）
-	hand_consumed.emit(_consume_src_card(data.get("source_card")), data.get("source_card"))
 
 
 func _animate_drop(cell, data, drop_global_pos: Vector2, effs: Array) -> void:

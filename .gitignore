@@ -15,3 +15,12 @@ __pycache__/
 # CI / 工具本地输出
 /tmp/
 .github/local/
+
+# 构建 / CI 产物（`/dist/` 全部不入库：导出成品、无头矩阵日志、历史 authority-bundle）
+/dist/
+
+# 版本三件套的生成物（tools/ci/build_release.ps1 产出；真值来自构建，不入库）
+# 注意：dev_gd/nsoc/data/ 下其余 JSON 是游戏内容，必须入库；只有这两个是派生产物。
+dev_gd/nsoc/version.json
+dev_gd/nsoc/data/content_manifest.json
+dev_gd/nsoc/data/content_hash_check.json
