@@ -14,25 +14,6 @@ https://github.com/qfwj-lyy/soc
 
 - 轶名 @yuyi-yutie
 
-## 文档
-
-现行规范统一放在 `docs/`（根目录不再散装文档）：
-
-| 文档 | 内容 |
-|---|---|
-| [`docs/HANDOFF.md`](docs/HANDOFF.md) | **交接一页**：现在的状态、你要做的事、不需要你做的事 |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 目录与分层、核心子系统、扩展点、对局模式、确定性、测试矩阵、常见陷阱 |
-| [`docs/NEXT.md`](docs/NEXT.md) | **下一步工作清单**：哪些需要你出手、哪些我可以直接做、每步的验收门槛 |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | 重构路线与**实时进度**、剩余工作、验收清单 |
-| [`docs/archive/multiplayer-removal.md`](docs/archive/multiplayer-removal.md) | **联机移除清单**：删了什么、在哪里、将来怎么照单恢复（含云上残留服务停用命令） |
-| [`重构文档.md`](重构文档.md) | 完整重构方案（评审稿）：目标架构、清理清单、实施计划（**含联机历史设计，原样保留**） |
-| [`docs/ARCHIVE-INDEX.md`](docs/ARCHIVE-INDEX.md) | 历史设计稿归档索引（`docs/archive/`）与已删除文件记录 |
-
-> ⚠️ **本项目已转为纯本地**（战役 + 自由对战 + 演义）。主菜单「演武切磋」仍可进入，
-> 但**无法创建房间、无法加入房间**——页面会明确提示"联机功能暂未开放"。
-> 联机层、中继服务端与权威裁判进程已整体删除，清单与恢复方法见上表最后一份文档。
-
-
 ## dev_gd
 
 ### 2026.5.18更新
@@ -204,50 +185,7 @@ https://github.com/qfwj-lyy/soc
 4. 更改了调试分辨率
 5. 修复了帝国模式中地点详情界面展开与收回逻辑错误的bug
 
-### 2026.9.15仓库整理与联机收尾
-1. 删除 `dev1/`（旧 JS 原型，功能已全部由 `dev_gd/nsoc/` 取代；对照物保留在 git 历史里）
-2. 中继上线腾讯云真机（Windows Server + NSSM 服务 `nsoc-server`），并修掉"一个权威进程只能服务一局"
-3. 新增 `docs/OPERATOR-TODO.md`：需要人工执行的部署与验收清单
-4. 新增 `server/deploy/`：中继与权威进程的启动脚本、服务安装脚本
-5. 新增 `tools/ci/run_e2e_cloud.ps1`：跨公网端到端验收脚本
-
-### 2026.9.16权威进程上云
-1. **权威进程（裁判）搬上腾讯云，与中继同机常驻**（NSSM 服务 `nsoc-authority`，开机自启、崩溃自动重启），不再依赖任何人开着的电脑
-2. 新增 `tools/ci/build_authority_bundle.ps1`：一条命令产出上云所需的全部产物（`dist/authority-bundle/`），
-   并在打包前跑一次 headless `--import` 刷新 `.godot` 类名缓存 —— 手工搬目录会把过期缓存带过去，
-   导致服务器上所有 `class_name` 解析失败
-3. 云上端到端复验通过：`authoritative=true` → `auth/hello`/`auth/state` → `intent/end_turn` → 两端 `auth/event`
-4. 部署步骤、落位、排障与运维命令已同步进 `docs/OPERATOR-TODO.md` 待办 1 与 `docs/DEPLOY.md` §3.1
-5. **权威状态哈希落地**（A1 验收判据 1）：`BattleAuthority.state_hash()` + 权威进程每回合打印
-   `[authority] state_hash <sha256> turn=N active=<pid>` —— 真机对局也能自证"服务器只持有一份真相"
-6. 新增 `tools/ci/run_headless_matrix.ps1`：一条命令跑完整套无头验收矩阵（结果/哈希/失败用例汇总）
-7. **版本三件套落地（`docs/NEXT.md` B5 主体）**：`tools/ci/build_release.ps1` 一条命令产出
-   `version.json`（`PROTOCOL_VERSION` / `CONTENT_HASH` / `BUILD_ID`）+ `content_manifest.json`
-   + `RELEASE.txt`（缺导出预设/模板时优雅跳过并记录）；新增 `tests/ContentHashTest`（5 条断言）
-   把**构建侧 PowerShell 的 CONTENT_HASH 与引擎 `NetProtocol.content_hash()` 钉死**，
-   CI 先构建再校验 —— 它当场抓出"双重哈希 + `sha256_text()` 不补 NUL"两个实现陷阱（见 `重构文档.md` 阶段 0 踩坑 8）
-
-### 2026.9.16联机功能移除，项目转为纯本地
-1. **多人模式暂时阉割**：主菜单「演武切磋」**仍可进入**，四个模式页（我的房间/加入房间/随机匹配/随机排位）
-   都能切换，但**无法创建房间、无法加入房间** —— 这两页只显示「联机功能暂未开放」
-2. **删除全部联机逻辑**：
-   - 客户端权威层：`V2BattleClient`、`AuthBoardRenderer`、`AuthEquipRenderer`、`ProfileManager`
-   - 服务端：`scripts/server/`（`BattleAuthority` / `BattleServerSession` / `AuthorityBoard`）、
-     `dev_gd/nsoc/server/`（权威进程入口 `AuthorityMain` + `BattleSimHost`）、根目录 `server/`（Go 中继）
-   - 部署链：`tools/ci/build_authority_bundle.ps1`、`run_e2e_local.ps1`、`run_e2e_cloud.ps1`、`server/deploy/`
-   - 联机测试 10 套（权威 / 会话 / v2 接线 / 盘面与装备渲染 / 手牌渲染 / PVP 三路径）+ `E2ERelayProbe`
-   - 联机专用数据 `data/test_multiplayer_deck.json`
-3. **降级而非删除**（按决策保留可解析性）：
-   - autoload `Net`（`scripts/net/network_manager.gd`）→ **空壳**：无 WebSocket、无 socket、
-     `is_connected_to_server()` 恒 false、所有发送静默丢弃
-   - `NetProtocol`（`scripts/core/net/protocol.gd`）→ **常量表**：保留 `VERSION`（构建脚本读它写
-     `version.json`）与 `content_hash()`（`ContentHashTest` 用它钉死两侧实现）
-   - **PVP 回合/队伍内核保留为死代码**（`Game.bootstrap_pvp` / `pvp_*` / `run_pvp_phase*` / 队伍工具），
-     无入口、不可达，将来恢复联机时复用
-4. **CI 同步收缩**：删除 `go-server` job 与 10 个联机测试步骤；无头矩阵从 21 个场景裁到 10 个本地 PVE 场景
-5. **文档同步**：`README` / `ARCHITECTURE` / `NEXT` / `ROADMAP` / `HANDOFF` 改为本地口径；
-   `PROTOCOL.md` / `DEPLOY.md` / `TWO-PC-CHECKLIST.md` / `OPERATOR-TODO.md` 移入 `docs/archive/`（各加归档横幅）；
-   新增 **`docs/archive/multiplayer-removal.md`**：逐条记录删了什么、在哪里、将来怎么照单恢复
-6. **需要人工收尾**：云上 `nsoc-server` / `nsoc-authority` 两个 NSSM 服务不会自己停 ——
-   停用/卸载命令见 `docs/HANDOFF.md` §2① 与 `docs/archive/multiplayer-removal.md` §6
-
+### 2026.9.15/16收缩
+1. 删掉了联机模式，待后续框架成熟再考虑添加
+2. 解耦了部分本地模块，填了以前opus写的大坑
+3. 熬了一下夜
